@@ -17,6 +17,8 @@ class NautilusBarBacktestPipeline:
         engine_config,
         price_type: str = "LAST",
         source: str = "EXTERNAL",
+        timestamp_unit: str | None = None,
+        source_timezone: str | None = None,
     ):
         self.data_source = data_source
         self.field_mapping = field_mapping
@@ -26,6 +28,8 @@ class NautilusBarBacktestPipeline:
         self.engine_config = engine_config
         self.price_type = price_type
         self.source = source
+        self.timestamp_unit = timestamp_unit
+        self.source_timezone = source_timezone
 
         self.raw_df = None
         self.bar_df = None
@@ -35,7 +39,11 @@ class NautilusBarBacktestPipeline:
 
     def prepare_data(self):
         self.raw_df = self.data_source.load()
-        self.bar_df = BarDataAdapter(self.field_mapping).normalize(self.raw_df)
+        self.bar_df = BarDataAdapter(
+            self.field_mapping,
+            timestamp_unit=self.timestamp_unit,
+            source_timezone=self.source_timezone,
+        ).normalize(self.raw_df)
         self.instrument = InstrumentBuilder.require_existing_instrument(self.instrument)
         self.bar_type = BarTypeFactory.create(
             instrument=self.instrument,
