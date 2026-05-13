@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
+"""
+CSV bar pipeline example for the internal Nautilus extension layer.
+
+This extension does not modify NautilusTrader source code. It only adapts
+internal bar data into NautilusTrader data objects and then delegates execution
+to the native BacktestEngine. Strategies must still be native NautilusTrader
+Strategy instances, or callables which return one after the BarType is known.
+"""
+
 from decimal import Decimal
 
 from nautilus_ext.adapters import BarFieldMapping
-from nautilus_ext.builders import BarTypeFactory
 from nautilus_ext.data_sources import CsvDataSource
 from nautilus_ext.pipeline import NautilusBarBacktestPipeline
 from nautilus_ext.runners import EngineRunConfig
@@ -29,6 +37,8 @@ class NoopStrategy(Strategy):
 
 
 if __name__ == "__main__":
+    # Template path only: replace this with a real internal CSV export.
+    # Expected columns below are timestamp, open, high, low, close, volume.
     csv_file_path = "path/to/your_1min_bars.csv"
 
     instrument = TestInstrumentProvider.eurusd_future(
@@ -50,12 +60,8 @@ if __name__ == "__main__":
         volume="volume",
     )
 
-    preview_bar_type = BarTypeFactory.create(
-        instrument=instrument,
-        timeframe="1-MINUTE",
-    )
-    strategy = NoopStrategy(preview_bar_type)
-
+    # EngineRunConfig intentionally receives Nautilus native objects, not strings:
+    # Venue(...), OmsType.NETTING, AccountType.MARGIN/CASH, Money(...).
     engine_config = EngineRunConfig(
         venue=Venue("XCME"),
         oms_type=OmsType.NETTING,
@@ -66,6 +72,8 @@ if __name__ == "__main__":
         log_level="INFO",
     )
 
+    # Passing a callable avoids a chicken-and-egg problem: the pipeline creates
+    # the BarType during prepare_data(), then calls this factory with that BarType.
     pipeline = NautilusBarBacktestPipeline(
         data_source=data_source,
         field_mapping=field_mapping,

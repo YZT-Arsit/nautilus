@@ -47,7 +47,7 @@ class NautilusBarBacktestPipeline:
         return self.bars
 
     def run(self):
-        if self.bars is None:
+        if self.bars is None or self.bar_type is None:
             self.prepare_data()
 
         strategy = self._build_strategy()
