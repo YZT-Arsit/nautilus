@@ -22,6 +22,8 @@ class NautilusStrategySpec:
     def __post_init__(self):
         if not self.name:
             raise ValueError("Strategy spec name must be non-empty.")
+        if not callable(self.factory):
+            raise TypeError("Strategy spec factory must be callable.")
         if self.params is None:
             object.__setattr__(self, "params", {})
 
@@ -31,6 +33,22 @@ class NautilusStrategySpec:
 
         strategy = self.factory(context)
         if strategy is None:
-            raise ValueError(f"Strategy factory for {self.name!r} returned None.")
+            raise ValueError(
+                f"Strategy factory for {self.name!r} must return a Nautilus Strategy instance."
+            )
 
         return strategy
+
+    @staticmethod
+    def from_callable(
+        name: str,
+        factory,
+        params: dict | None = None,
+        enabled: bool = True,
+    ):
+        return NautilusStrategySpec(
+            name=name,
+            factory=factory,
+            params=params,
+            enabled=enabled,
+        )

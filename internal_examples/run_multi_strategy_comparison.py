@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-A/B compatibility example using the multi-strategy runner.
+Run an independent N-strategy comparison.
 
-A and B share the connector's cached data, but each strategy run receives a
-fresh strategy instance and a fresh native BacktestEngine.
+Each strategy uses the same connector data cache, but receives a fresh native
+Nautilus BacktestEngine and a fresh Strategy instance.
 """
 
 from decimal import Decimal
@@ -39,28 +39,43 @@ class NoopStrategyA(Strategy):
     def __init__(self, bar_type):
         super().__init__()
         self.bar_type = bar_type
+        self.count = 0
 
     def on_start(self):
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar):
-        pass
+        self.count += 1
 
 
 class NoopStrategyB(Strategy):
     def __init__(self, bar_type):
         super().__init__()
         self.bar_type = bar_type
+        self.count = 0
 
     def on_start(self):
         self.subscribe_bars(self.bar_type)
 
     def on_bar(self, bar):
-        pass
+        self.count += 1
+
+
+class NoopStrategyC(Strategy):
+    def __init__(self, bar_type):
+        super().__init__()
+        self.bar_type = bar_type
+        self.count = 0
+
+    def on_start(self):
+        self.subscribe_bars(self.bar_type)
+
+    def on_bar(self, bar):
+        self.count += 1
 
 
 if __name__ == "__main__":
-    # This test-kit instrument only validates the adaptation and comparison chain.
+    # This test-kit instrument only validates the adaptation and runner chain.
     # Real Binance futures backtests should pass the matching internal Binance
     # futures Nautilus instrument.
     instrument = TestInstrumentProvider.eurusd_future(
@@ -80,10 +95,17 @@ if __name__ == "__main__":
         NautilusStrategySpec(
             name="noop_a",
             factory=lambda ctx: NoopStrategyA(ctx.bar_type),
+            params={"tag": "A"},
         ),
         NautilusStrategySpec(
             name="noop_b",
             factory=lambda ctx: NoopStrategyB(ctx.bar_type),
+            params={"tag": "B"},
+        ),
+        NautilusStrategySpec(
+            name="noop_c",
+            factory=lambda ctx: NoopStrategyC(ctx.bar_type),
+            params={"tag": "C"},
         ),
     ]
 
@@ -97,17 +119,20 @@ if __name__ == "__main__":
         log_level="INFO",
     )
 
-    comparison_runner = NautilusMultiStrategyRunner(
+    runner = NautilusMultiStrategyRunner(
         data_connector=connector,
         engine_config=engine_config,
         strategies=strategies,
-        output_dir="internal_examples/output/strategy_ab_comparison",
+        output_dir="outputs/multi_strategy_comparison",
     )
+    results = runner.run_all()
 
-    results = comparison_runner.run_all()
     for result in results:
         print(f"run_id: {result.run_id}")
         print(f"strategy_name: {result.strategy_name}")
         print(f"bars_count: {result.bars_count}")
         print(f"report_dir: {result.report_dir}")
+        print(f"metrics: {result.metrics}")
         result.engine.dispose()
+
+    print(f"comparison_summary: {runner.comparison_report_files}")

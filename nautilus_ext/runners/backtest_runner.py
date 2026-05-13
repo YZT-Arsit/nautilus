@@ -1,12 +1,10 @@
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from nautilus_ext.connectors.auto_bar_data_connector import NautilusAutoBarDataConnector
-from nautilus_ext.reports.result_exporter import ResultExporter
-from nautilus_ext.runners.engine_runner import EngineRunConfig
-from nautilus_ext.runners.engine_runner import NautilusEngineRunner
+from nautilus_ext.results.result_reporter import NautilusResultReporter
 from nautilus_ext.strategies.strategy_spec import NautilusStrategySpec
 from nautilus_ext.strategies.strategy_spec import StrategyContext
 
@@ -19,13 +17,18 @@ class BacktestRunResult:
     bar_type: object
     bars_count: int
     output_dir: str | None = None
+    report_dir: str | None = None
+    report_files: dict | None = None
+    metrics: dict | None = None
+    status: str = "completed"
+    error: str | None = None
 
 
 class NautilusBacktestRunner:
     def __init__(
         self,
-        data_connector: NautilusAutoBarDataConnector,
-        engine_config: EngineRunConfig,
+        data_connector,
+        engine_config,
         output_dir: str | None = None,
     ):
         self.data_connector = data_connector
@@ -48,6 +51,8 @@ class NautilusBacktestRunner:
         )
         strategy = strategy_spec.build_strategy(context)
 
+        from nautilus_ext.runners.engine_runner import NautilusEngineRunner
+
         engine = NautilusEngineRunner(self.engine_config).run(
             instrument=self.data_connector.instrument,
             data=bars,
@@ -55,9 +60,23 @@ class NautilusBacktestRunner:
         )
 
         run_output_dir = None
+        report_files = None
+        metrics = {"available": False}
         if self.output_dir is not None:
             run_output_dir = str(Path(self.output_dir) / run_id)
-            ResultExporter(engine).export_placeholder(run_output_dir)
+            result = BacktestRunResult(
+                run_id=run_id,
+                strategy_name=strategy_spec.name,
+                engine=engine,
+                bar_type=bar_type,
+                bars_count=len(bars),
+                output_dir=self.output_dir,
+                report_dir=run_output_dir,
+                metrics=metrics,
+            )
+            report_files = NautilusResultReporter(result).export(run_output_dir)
+            result.report_files = report_files
+            return result
 
         return BacktestRunResult(
             run_id=run_id,
@@ -65,7 +84,10 @@ class NautilusBacktestRunner:
             engine=engine,
             bar_type=bar_type,
             bars_count=len(bars),
-            output_dir=run_output_dir,
+            output_dir=self.output_dir,
+            report_dir=run_output_dir,
+            report_files=report_files,
+            metrics=metrics,
         )
 
     @staticmethod
@@ -77,5 +99,5 @@ class NautilusBacktestRunner:
         if not safe_name:
             safe_name = "strategy"
 
-        timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d_%H%M%S_%f")
-        return f"{safe_name}_{timestamp}"
+        timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d_%H%M%S")
+        return f"{safe_name}_{timestamp}_{uuid4().hex[:8]}"
