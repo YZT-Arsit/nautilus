@@ -25,3 +25,9 @@ except NotImplementedError as exc:
 else:
     print(f"instrument: {instrument}")
     print(f"instrument_id: {instrument.id}")
+    print(f"price_precision: {instrument.price_precision}")
+    print(f"size_precision: {instrument.size_precision}")
+    print(f"price_increment: {instrument.price_increment}")
+    print(f"size_increment: {instrument.size_increment}")
+    assert "BCHUSDT" in str(instrument.id)
+    assert "BINANCE" in str(instrument.id)

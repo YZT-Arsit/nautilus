@@ -61,6 +61,13 @@ class NautilusInstrumentFactory:
 
     @staticmethod
     def build(profile: InstrumentProfile):
+        if profile.instrument_type == "crypto_perpetual":
+            from nautilus_ext.instruments.constructor_adapters import (
+                build_crypto_perpetual_from_profile,
+            )
+
+            return build_crypto_perpetual_from_profile(profile)
+
         class_names = NautilusInstrumentFactory._CLASS_BY_TYPE.get(profile.instrument_type)
         if not class_names:
             raise NotImplementedError(

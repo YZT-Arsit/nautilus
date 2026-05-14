@@ -29,10 +29,10 @@ class StrategyTemplate(Strategy):
 
 class CountingStrategyTemplate(Strategy):
     """
-    Slightly different template which records how many bars were seen.
+    Optional compatibility example which records how many bars were seen.
 
-    Keep this simple; real order logic belongs in your own Nautilus Strategy,
-    not in this example template.
+    This is not a strategy switching controller. For regime/logic switching
+    inside one Strategy, see strategy_switching_template.py.
     """
 
     def __init__(self, bar_type, **params):

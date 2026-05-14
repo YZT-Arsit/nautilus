@@ -29,6 +29,32 @@ $env:PYTHONPATH="D:\nautilus"
 python internal_examples\run_user_strategies.py
 ```
 
+## Multi-Strategy Independent Comparison
+
+To compare several strategies, add multiple `NautilusStrategySpec` entries to
+`USER_STRATEGIES` in `run_user_strategies.py`. Each strategy receives:
+
+- a fresh Nautilus `BacktestEngine`
+- a fresh strategy instance created by its factory
+- the same cached bars from the data connector
+
+This is for horizontal comparison. It is not multiple strategies trading
+together in the same account or the same engine.
+
+## Strategy Switching Template
+
+Use `strategy_switching_template.py` when you want one Nautilus Strategy to
+switch internal logic by market regime. That template keeps switching logic
+inside one strategy:
+
+- `detect_regime()`
+- `run_trend_logic()`
+- `run_mean_reversion_logic()`
+- `run_neutral_logic()`
+
+This is different from `NautilusMultiStrategyRunner`, which runs independent
+strategies separately for comparison.
+
 ## Outputs
 
 Reports are written under:
@@ -87,3 +113,17 @@ python internal_examples\test_instrument_type_inference.py
 python internal_examples\test_auto_instrument_profile.py
 python internal_examples\test_auto_instrument_builder.py
 ```
+
+## Engine Auto Config
+
+`AutoEngineConfigBuilder` creates `EngineRunConfig` from the instrument profile.
+It maps the venue string into Nautilus `Venue`, maps account/OMS strings into
+Nautilus enums, and chooses account currency automatically:
+
+1. explicit `ACCOUNT_CURRENCY`
+2. `instrument_profile.settlement_currency`
+3. `instrument_profile.quote_currency`
+4. `USD` fallback with a warning
+
+Users generally do not need to write `USDT`/`USD`, `Money`, `Venue`,
+`AccountType`, or `OmsType` logic in `run_user_strategies.py`.

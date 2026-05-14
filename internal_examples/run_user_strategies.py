@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from decimal import Decimal
 from pathlib import Path
 import sys
 
@@ -7,24 +6,14 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from internal_examples.strategy_template import CountingStrategyTemplate
 from internal_examples.strategy_template import StrategyTemplate
 
+from nautilus_ext.config import AutoEngineConfigBuilder
 from nautilus_ext.connectors import NautilusAutoBarDataConnector
 from nautilus_ext.instruments import AutoInstrumentBuilder
-from nautilus_ext.runners import EngineRunConfig
+from nautilus_ext.instruments import AutoInstrumentProfileBuilder
 from nautilus_ext.runners import NautilusMultiStrategyRunner
 from nautilus_ext.strategies import NautilusStrategySpec
-
-from nautilus_trader.model.currencies import USD
-from nautilus_trader.model.enums import AccountType
-from nautilus_trader.model.enums import OmsType
-from nautilus_trader.model.identifiers import Venue
-from nautilus_trader.model.objects import Money
-try:
-    from nautilus_trader.model.currencies import USDT
-except ImportError:
-    USDT = USD
 
 
 # =============================================================================
@@ -36,21 +25,17 @@ DATA_ROOT = (
     r"\TLine\BinanceCryptoFutures_TODKLine_0060S"
 )
 SYMBOL = "BCHUSDT"
-VENUE = "BINANCE"
 MAX_FILES = 1
 OUTPUT_DIR = "outputs/user_strategies"
 USE_TEST_INSTRUMENT_FALLBACK = False
+STARTING_BALANCE = 1_000_000
+ACCOUNT_CURRENCY = None  # None means infer from instrument profile.
 
 USER_STRATEGIES = [
     NautilusStrategySpec(
         name="template_a",
         factory=lambda ctx: StrategyTemplate(ctx.bar_type, **ctx.params),
         params={"tag": "A"},
-    ),
-    NautilusStrategySpec(
-        name="template_b",
-        factory=lambda ctx: CountingStrategyTemplate(ctx.bar_type, **ctx.params),
-        params={"tag": "B"},
     ),
 ]
 
@@ -59,6 +44,13 @@ USER_STRATEGIES = [
 # Usually no need to edit below this line
 # =============================================================================
 
+def build_instrument_profile():
+    return AutoInstrumentProfileBuilder.build_profile(
+        symbol=SYMBOL,
+        data_root=DATA_ROOT,
+    )
+
+
 def build_instrument():
     # Default is a real auto instrument build. If you set
     # USE_TEST_INSTRUMENT_FALLBACK=True, it is only for interface-chain testing
@@ -66,25 +58,27 @@ def build_instrument():
     return AutoInstrumentBuilder.build(
         symbol=SYMBOL,
         data_root=DATA_ROOT,
-        venue=VENUE,
         allow_test_fallback=USE_TEST_INSTRUMENT_FALLBACK,
     )
 
 
-def build_engine_config():
-    account_currency = USDT if USDT is not USD else USD  # TODO: prefer true USDT for Binance.
-    return EngineRunConfig(
-        venue=Venue(VENUE),
-        oms_type=OmsType.NETTING,
-        account_type=AccountType.MARGIN,
-        starting_balances=[Money(1_000_000, account_currency)],
-        base_currency=account_currency,
-        default_leverage=Decimal("1"),
+def build_engine_config(instrument_profile):
+    return AutoEngineConfigBuilder.build(
+        venue=instrument_profile.venue,
+        instrument_profile=instrument_profile,
+        starting_balance=STARTING_BALANCE,
+        account_currency=ACCOUNT_CURRENCY,
         log_level="INFO",
     )
 
 
 if __name__ == "__main__":
+    instrument_profile = build_instrument_profile()
+    print(f"instrument_type: {instrument_profile.instrument_type}")
+    print(f"venue: {instrument_profile.venue}")
+    print(f"instrument_id: {instrument_profile.instrument_id}")
+    print(f"settlement_currency: {instrument_profile.settlement_currency}")
+
     connector = NautilusAutoBarDataConnector(
         root_path=DATA_ROOT,
         instrument=build_instrument(),
@@ -93,7 +87,7 @@ if __name__ == "__main__":
     )
     runner = NautilusMultiStrategyRunner(
         data_connector=connector,
-        engine_config=build_engine_config(),
+        engine_config=build_engine_config(instrument_profile),
         strategies=USER_STRATEGIES,
         output_dir=OUTPUT_DIR,
     )
