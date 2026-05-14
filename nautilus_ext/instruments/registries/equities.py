@@ -11,9 +11,12 @@ def load_profiles() -> list[InstrumentProfile]:
             raw_symbol="AAPL",
             asset_class="equity",
             exchange="NASDAQ",
-            quote_currency="USD",
+            currency="USD",
+            price_precision=2,
+            size_precision=0,
             price_increment="0.01",
             size_increment="1",
+            lot_size="1",
             source="registry:equities",
             confidence=0.4,
             metadata={

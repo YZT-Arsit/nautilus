@@ -5,7 +5,6 @@ from nautilus_ext.instruments.instrument_profile import InstrumentProfile
 from nautilus_ext.instruments.instrument_registry import InstrumentRegistry
 from nautilus_ext.instruments.instrument_type_inferencer import InstrumentTypeInferencer
 from nautilus_ext.instruments.nautilus_instrument_factory import NautilusInstrumentFactory
-from nautilus_ext.instruments.registries.generic import load_all_default_profiles
 
 
 class AutoInstrumentProfileBuilder:
@@ -34,8 +33,6 @@ class AutoInstrumentProfileBuilder:
         )
 
         registry = InstrumentRegistry()
-        for profile in load_all_default_profiles():
-            registry.register(profile)
 
         try:
             profile = registry.get(
@@ -43,6 +40,19 @@ class AutoInstrumentProfileBuilder:
                 venue=inference.get("venue"),
                 instrument_type=inference.get("instrument_type"),
             )
+        except ValueError:
+            if str(inference.get("venue") or "").upper() == "UNKNOWN":
+                try:
+                    profile = registry.get(
+                        symbol=normalized_symbol,
+                        instrument_type=inference.get("instrument_type"),
+                    )
+                except ValueError:
+                    profile = None
+            else:
+                profile = None
+
+        if profile is not None:
             metadata = dict(profile.metadata or {})
             metadata["inference"] = inference
             return replace(
@@ -51,8 +61,6 @@ class AutoInstrumentProfileBuilder:
                 confidence=max(profile.confidence, inference.get("confidence", 0.0)),
                 metadata=metadata,
             )
-        except ValueError:
-            pass
 
         inferred_type = inference.get("instrument_type", "unknown")
         inferred_venue = str(inference.get("venue") or "UNKNOWN").upper()
@@ -78,8 +86,34 @@ class AutoInstrumentProfileBuilder:
                 inferred_type,
             ),
             raw_symbol=normalized_symbol,
+            base_currency=merged_hints.get("base_currency"),
+            quote_currency=merged_hints.get("quote_currency"),
+            settlement_currency=merged_hints.get("settlement_currency"),
+            currency=merged_hints.get("currency"),
             asset_class=inference.get("asset_class"),
-            source="path",
+            exchange=merged_hints.get("exchange"),
+            exchange_symbol=merged_hints.get("exchange_symbol"),
+            price_precision=merged_hints.get("price_precision"),
+            size_precision=merged_hints.get("size_precision"),
+            price_increment=merged_hints.get("price_increment"),
+            size_increment=merged_hints.get("size_increment"),
+            maker_fee=merged_hints.get("maker_fee"),
+            taker_fee=merged_hints.get("taker_fee"),
+            margin_init=merged_hints.get("margin_init"),
+            margin_maint=merged_hints.get("margin_maint"),
+            multiplier=merged_hints.get("multiplier"),
+            lot_size=merged_hints.get("lot_size"),
+            expiry=merged_hints.get("expiry"),
+            activation_ns=merged_hints.get("activation_ns"),
+            expiration_ns=merged_hints.get("expiration_ns"),
+            option_kind=merged_hints.get("option_kind"),
+            strike_price=merged_hints.get("strike_price"),
+            underlying=merged_hints.get("underlying"),
+            settlement_type=merged_hints.get("settlement_type"),
+            is_inverse=merged_hints.get("is_inverse"),
+            synthetic_formula=merged_hints.get("synthetic_formula"),
+            components=merged_hints.get("components"),
+            source="inferred_partial",
             confidence=inference.get("confidence", 0.0),
             metadata={"inference": inference, "hints": merged_hints},
         )

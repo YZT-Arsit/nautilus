@@ -35,6 +35,7 @@ class InstrumentProfile:
     base_currency: str | None = None
     quote_currency: str | None = None
     settlement_currency: str | None = None
+    currency: str | None = None
 
     asset_class: str | None = None
     exchange: str | None = None
@@ -51,6 +52,7 @@ class InstrumentProfile:
     margin_init: str | None = None
     margin_maint: str | None = None
     multiplier: str | None = None
+    lot_size: str | None = None
 
     expiry: str | None = None
     activation_ns: int | None = None
@@ -62,6 +64,9 @@ class InstrumentProfile:
     underlying: str | None = None
     settlement_type: str | None = None
     is_inverse: bool | None = None
+
+    synthetic_formula: str | None = None
+    components: list[str] | None = None
 
     source: str = "unknown"
     confidence: float = 0.0
@@ -76,3 +81,11 @@ class InstrumentProfile:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    def missing_required_fields(self, requirements: list[str]) -> list[str]:
+        missing = []
+        for field in requirements:
+            value = getattr(self, field, None)
+            if value is None:
+                missing.append(field)
+        return missing

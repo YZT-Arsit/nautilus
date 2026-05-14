@@ -7,6 +7,7 @@ __all__ = [
     "AutoEngineConfigBuilder",
     "EngineConfigProfile",
     "InstrumentProfile",
+    "InstrumentRegistry",
     "NautilusAutoBarDataConnector",
     "NautilusBacktestRunner",
     "NautilusComparisonReporter",
@@ -36,17 +37,20 @@ def __getattr__(name: str):
         "AutoInstrumentBuilder",
         "AutoInstrumentProfileBuilder",
         "InstrumentProfile",
+        "InstrumentRegistry",
         "SUPPORTED_INSTRUMENT_TYPES",
     }:
         from nautilus_ext.instruments import AutoInstrumentBuilder
         from nautilus_ext.instruments import AutoInstrumentProfileBuilder
         from nautilus_ext.instruments import InstrumentProfile
+        from nautilus_ext.instruments import InstrumentRegistry
         from nautilus_ext.instruments import SUPPORTED_INSTRUMENT_TYPES
 
         return {
             "AutoInstrumentBuilder": AutoInstrumentBuilder,
             "AutoInstrumentProfileBuilder": AutoInstrumentProfileBuilder,
             "InstrumentProfile": InstrumentProfile,
+            "InstrumentRegistry": InstrumentRegistry,
             "SUPPORTED_INSTRUMENT_TYPES": SUPPORTED_INSTRUMENT_TYPES,
         }[name]
     if name in {

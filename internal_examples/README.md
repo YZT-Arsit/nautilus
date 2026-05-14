@@ -127,3 +127,70 @@ Nautilus enums, and chooses account currency automatically:
 
 Users generally do not need to write `USDT`/`USD`, `Money`, `Venue`,
 `AccountType`, or `OmsType` logic in `run_user_strategies.py`.
+
+## Instrument Adapter and Registry Coverage
+
+The instrument layer now uses one shared framework for all Nautilus instrument
+families:
+
+1. infer an instrument type from `DATA_ROOT`, `SYMBOL`, and optional hints
+2. look up a static or internal metadata registry
+3. produce an `InstrumentProfile`
+4. dispatch to a constructor adapter for the selected Nautilus instrument class
+
+Current real-construction focus:
+
+- `crypto_perpetual` / Nautilus `CryptoPerpetual`
+
+The framework also includes profile, registry, requirements, and adapter
+skeletons for:
+
+- `currency_pair`
+- `equity`
+- `commodity`
+- `index`
+- `futures_contract`
+- `futures_spread`
+- `crypto_future`
+- `perpetual_contract`
+- `option_contract`
+- `option_spread`
+- `crypto_option`
+- `binary_option`
+- `cfd`
+- `betting`
+- `synthetic`
+
+Supporting a type in the framework does not mean all real market metadata is
+bundled in this repository. Production onboarding should:
+
+1. connect the company's instrument metadata source
+2. emit `InstrumentProfile` records
+3. register them in `InstrumentRegistry`
+4. complete or verify the constructor adapter for that instrument type
+
+If automatic inference is not precise enough, use `INSTRUMENT_HINTS` in
+`run_user_strategies.py`, for example:
+
+```python
+INSTRUMENT_HINTS = {
+    "instrument_type": "equity",
+    "venue": "XNAS",
+    "currency": "USD",
+}
+```
+
+or:
+
+```python
+INSTRUMENT_HINTS = {
+    "instrument_type": "option_contract",
+    "venue": "OPRA",
+    "underlying": "AAPL",
+    "expiry": "20250117",
+    "strike_price": "200",
+    "option_kind": "CALL",
+}
+```
+
+Do not use `TestInstrumentProvider` for real backtests.

@@ -30,6 +30,7 @@ OUTPUT_DIR = "outputs/user_strategies"
 USE_TEST_INSTRUMENT_FALLBACK = False
 STARTING_BALANCE = 1_000_000
 ACCOUNT_CURRENCY = None  # None means infer from instrument profile.
+INSTRUMENT_HINTS = {}
 
 USER_STRATEGIES = [
     NautilusStrategySpec(
@@ -48,6 +49,7 @@ def build_instrument_profile():
     return AutoInstrumentProfileBuilder.build_profile(
         symbol=SYMBOL,
         data_root=DATA_ROOT,
+        hints=INSTRUMENT_HINTS,
     )
 
 
@@ -58,6 +60,7 @@ def build_instrument():
     return AutoInstrumentBuilder.build(
         symbol=SYMBOL,
         data_root=DATA_ROOT,
+        hints=INSTRUMENT_HINTS,
         allow_test_fallback=USE_TEST_INSTRUMENT_FALLBACK,
     )
 

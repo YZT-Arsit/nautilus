@@ -38,6 +38,8 @@ def _profile(
         taker_fee="0.0004",
         margin_init="0",
         margin_maint="0",
+        multiplier="1",
+        lot_size="1",
         settlement_type="linear",
         is_inverse=False,
         source="registry:binance_futures",

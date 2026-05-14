@@ -7,6 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from nautilus_ext.instruments import AutoInstrumentBuilder
+from nautilus_ext.instruments import AutoInstrumentProfileBuilder
 
 
 DATA_ROOT = (
@@ -31,3 +32,11 @@ else:
     print(f"size_increment: {instrument.size_increment}")
     assert "BCHUSDT" in str(instrument.id)
     assert "BINANCE" in str(instrument.id)
+
+currency_pair_profile = AutoInstrumentProfileBuilder.build_profile(symbol="EUR/USD")
+assert currency_pair_profile.instrument_type == "currency_pair"
+try:
+    AutoInstrumentBuilder.build(symbol="EUR/USD")
+except NotImplementedError as exc:
+    print("CurrencyPair profile works; constructor adapter may still need completion.")
+    print(exc)

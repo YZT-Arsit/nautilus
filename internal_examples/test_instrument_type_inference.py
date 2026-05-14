@@ -25,11 +25,24 @@ result = InstrumentTypeInferencer.infer_from_path_and_symbol(r"D:\Data\Equity", 
 assert result["instrument_type"] == "equity"
 
 result = InstrumentTypeInferencer.infer_from_path_and_symbol(
+    r"D:\Data\Futures",
+    "ESM4",
+    hints={"venue": "XCME"},
+)
+assert result["instrument_type"] == "futures_contract"
+
+result = InstrumentTypeInferencer.infer_from_path_and_symbol(
     r"D:\Data\Options",
     "AAPL240621C00190000",
     hints={"expiry": "2024-06-21", "strike_price": "190", "venue": "OPRA"},
 )
 assert result["instrument_type"] == "option_contract"
+
+result = InstrumentTypeInferencer.infer_from_path_and_symbol(r"D:\Data\Commodity", "XAUUSD")
+assert result["instrument_type"] == "commodity"
+
+result = InstrumentTypeInferencer.infer_from_path_and_symbol(r"D:\Data\CFD", "US500")
+assert result["instrument_type"] == "cfd"
 
 result = InstrumentTypeInferencer.infer_from_path_and_symbol(r"D:\Unknown", "MYSTERY")
 assert result["instrument_type"] == "unknown"

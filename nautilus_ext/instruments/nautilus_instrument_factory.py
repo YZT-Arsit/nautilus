@@ -1,116 +1,56 @@
-import inspect
-
 from nautilus_ext.instruments.instrument_profile import InstrumentProfile
+from nautilus_ext.instruments.metadata_requirements import missing_fields_for_profile
 
 
 class NautilusInstrumentFactory:
-    _CLASS_BY_TYPE = {
-        "crypto_perpetual": ("CryptoPerpetual", "PerpetualContract"),
-        "perpetual_contract": ("PerpetualContract",),
-        "currency_pair": ("CurrencyPair",),
-        "equity": ("Equity",),
-        "futures_contract": ("FuturesContract",),
-        "crypto_future": ("CryptoFuture",),
-        "option_contract": ("OptionContract",),
-        "crypto_option": ("CryptoOption",),
-        "cfd": ("Cfd",),
-        "commodity": ("Commodity",),
-        "index": ("IndexInstrument",),
-        "futures_spread": ("FuturesSpread",),
-        "option_spread": ("OptionSpread",),
-        "binary_option": ("BinaryOption",),
-        "betting": ("BettingInstrument",),
-        "synthetic": ("SyntheticInstrument",),
+    _ADAPTERS = {
+        "crypto_perpetual": "build_crypto_perpetual_from_profile",
+        "currency_pair": "build_currency_pair_from_profile",
+        "equity": "build_equity_from_profile",
+        "futures_contract": "build_futures_contract_from_profile",
+        "crypto_future": "build_crypto_future_from_profile",
+        "option_contract": "build_option_contract_from_profile",
+        "crypto_option": "build_crypto_option_from_profile",
+        "cfd": "build_cfd_from_profile",
+        "commodity": "build_commodity_from_profile",
+        "index": "build_index_from_profile",
+        "synthetic": "build_synthetic_from_profile",
     }
-
-    _REQUIRED_FIELD_HINTS = {
-        "crypto_perpetual": [
-            "instrument_id",
-            "raw_symbol",
-            "base_currency",
-            "quote_currency",
-            "settlement_currency",
-            "price_precision",
-            "size_precision",
-            "price_increment",
-            "size_increment",
-            "maker_fee",
-            "taker_fee",
-        ],
-        "currency_pair": [
-            "instrument_id",
-            "raw_symbol",
-            "base_currency",
-            "quote_currency",
-            "price_precision",
-            "size_precision",
-            "price_increment",
-            "size_increment",
-        ],
-        "equity": ["instrument_id", "raw_symbol", "currency", "price_increment", "lot_size"],
-        "futures_contract": [
-            "expiry",
-            "multiplier",
-            "price_increment",
-            "size_increment",
-            "underlying",
-            "settlement_currency",
-        ],
-        "option_contract": ["underlying", "expiry", "strike_price", "option_kind"],
+    _NOT_IMPLEMENTED_TYPES = {
+        "futures_spread",
+        "option_spread",
+        "binary_option",
+        "betting",
+        "perpetual_contract",
+        "unknown",
     }
 
     @staticmethod
     def build(profile: InstrumentProfile):
-        if profile.instrument_type == "crypto_perpetual":
-            from nautilus_ext.instruments.constructor_adapters import (
-                build_crypto_perpetual_from_profile,
+        if profile.instrument_type in NautilusInstrumentFactory._NOT_IMPLEMENTED_TYPES:
+            raise NotImplementedError(
+                f"Instrument construction is not implemented for "
+                f"instrument_type={profile.instrument_type!r}. "
+                f"missing_fields={missing_fields_for_profile(profile)}, "
+                f"profile={profile.to_dict()}"
             )
 
-            return build_crypto_perpetual_from_profile(profile)
-
-        class_names = NautilusInstrumentFactory._CLASS_BY_TYPE.get(profile.instrument_type)
-        if not class_names:
+        adapter_name = NautilusInstrumentFactory._ADAPTERS.get(profile.instrument_type)
+        if adapter_name is None:
             raise NotImplementedError(
-                f"Instrument type {profile.instrument_type!r} is not mapped to a Nautilus class. "
+                f"Instrument type {profile.instrument_type!r} is not mapped to an adapter. "
                 f"Profile: {profile.to_dict()}"
             )
 
-        cls = NautilusInstrumentFactory._resolve_first_available_class(class_names, profile)
-        signature = NautilusInstrumentFactory._signature_for(cls)
-        raise NotImplementedError(
-            "Automatic Nautilus instrument construction is not yet safely implemented for "
-            f"instrument_type={profile.instrument_type!r}, selected_class={cls.__name__!r}. "
-            f"Constructor signature: {signature}. "
-            f"Profile: {profile.to_dict()}. "
-            "Needed fields: "
-            f"{NautilusInstrumentFactory._REQUIRED_FIELD_HINTS.get(profile.instrument_type, [])}. "
-            "Add an explicit constructor adapter for this class before production use."
-        )
+        if profile.instrument_type != "crypto_perpetual":
+            missing = missing_fields_for_profile(profile)
+            if missing:
+                raise NotImplementedError(
+                    f"Missing required metadata for instrument_type={profile.instrument_type!r}: "
+                    f"{missing}. profile={profile.to_dict()}"
+                )
 
-    @staticmethod
-    def _resolve_first_available_class(class_names: tuple[str, ...], profile: InstrumentProfile):
-        try:
-            import nautilus_trader.model.instruments as instruments
-        except Exception as exc:
-            raise NotImplementedError(
-                "Unable to import Nautilus instrument classes in the current environment. "
-                f"instrument_type={profile.instrument_type!r}, requested_classes={class_names}, "
-                f"profile={profile.to_dict()}, original_error={exc}"
-            ) from exc
+        import nautilus_ext.instruments.constructor_adapters as adapters
 
-        for class_name in class_names:
-            cls = getattr(instruments, class_name, None)
-            if cls is not None:
-                return cls
-
-        raise NotImplementedError(
-            f"No Nautilus instrument class found for instrument_type={profile.instrument_type!r}. "
-            f"Tried classes: {class_names}. Profile: {profile.to_dict()}"
-        )
-
-    @staticmethod
-    def _signature_for(cls) -> str:
-        try:
-            return str(inspect.signature(cls))
-        except Exception as exc:
-            return f"<signature unavailable: {exc}>"
+        adapter = getattr(adapters, adapter_name)
+        return adapter(profile)

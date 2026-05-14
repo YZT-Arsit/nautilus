@@ -26,7 +26,7 @@ class InstrumentTypeInferencer:
                 "reason": "instrument_type provided explicitly in hints",
             }
 
-        if "option" in combined_lower and (
+        if ("option" in combined_lower or hints.get("option_kind") is not None) and (
             hints.get("strike_price") is not None or hints.get("expiry") is not None
         ):
             is_crypto = "crypto" in combined_lower or InstrumentTypeInferencer._looks_crypto(symbol_text)
@@ -36,6 +36,15 @@ class InstrumentTypeInferencer:
                 "asset_class": "crypto" if is_crypto else hints.get("asset_class"),
                 "confidence": 0.85,
                 "reason": "option path/symbol with strike or expiry hints",
+            }
+
+        if any(token in combined_lower for token in ["synthetic", "basket", "spread_formula"]):
+            return {
+                "instrument_type": "synthetic",
+                "venue": str(hinted_venue or "UNKNOWN").upper(),
+                "asset_class": hints.get("asset_class"),
+                "confidence": 0.55,
+                "reason": "synthetic/basket token",
             }
 
         has_crypto_future_path = (
@@ -113,7 +122,7 @@ class InstrumentTypeInferencer:
                 "reason": "CFD token",
             }
 
-        if "index" in combined_lower:
+        if any(token in combined_lower for token in ["index", "spx", "nasdaq100", "ndx"]):
             return {
                 "instrument_type": "index",
                 "venue": str(hinted_venue or "UNKNOWN").upper(),
@@ -122,7 +131,7 @@ class InstrumentTypeInferencer:
                 "reason": "index token",
             }
 
-        if "commodity" in combined_lower:
+        if any(token in combined_lower for token in ["commodity", "xau", "gold", "cl", "wti"]):
             return {
                 "instrument_type": "commodity",
                 "venue": str(hinted_venue or "UNKNOWN").upper(),
