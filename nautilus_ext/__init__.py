@@ -2,6 +2,9 @@
 
 __all__ = [
     "BacktestRunResult",
+    "AutoInstrumentBuilder",
+    "AutoInstrumentProfileBuilder",
+    "InstrumentProfile",
     "NautilusAutoBarDataConnector",
     "NautilusBacktestRunner",
     "NautilusComparisonReporter",
@@ -9,6 +12,7 @@ __all__ = [
     "NautilusResultReporter",
     "NautilusStrategyComparisonRunner",
     "NautilusStrategySpec",
+    "SUPPORTED_INSTRUMENT_TYPES",
     "StrategyContext",
 ]
 
@@ -18,6 +22,23 @@ def __getattr__(name: str):
         from nautilus_ext.connectors import NautilusAutoBarDataConnector
 
         return NautilusAutoBarDataConnector
+    if name in {
+        "AutoInstrumentBuilder",
+        "AutoInstrumentProfileBuilder",
+        "InstrumentProfile",
+        "SUPPORTED_INSTRUMENT_TYPES",
+    }:
+        from nautilus_ext.instruments import AutoInstrumentBuilder
+        from nautilus_ext.instruments import AutoInstrumentProfileBuilder
+        from nautilus_ext.instruments import InstrumentProfile
+        from nautilus_ext.instruments import SUPPORTED_INSTRUMENT_TYPES
+
+        return {
+            "AutoInstrumentBuilder": AutoInstrumentBuilder,
+            "AutoInstrumentProfileBuilder": AutoInstrumentProfileBuilder,
+            "InstrumentProfile": InstrumentProfile,
+            "SUPPORTED_INSTRUMENT_TYPES": SUPPORTED_INSTRUMENT_TYPES,
+        }[name]
     if name in {
         "BacktestRunResult",
         "NautilusBacktestRunner",

@@ -3,8 +3,6 @@ from pathlib import Path
 import pandas as pd
 
 from nautilus_ext.adapters.bar_adapter import BarDataAdapter
-from nautilus_ext.builders.bar_builder import NautilusBarBuilder
-from nautilus_ext.builders.bar_type_factory import BarTypeFactory
 from nautilus_ext.builders.instrument_builder import InstrumentBuilder
 from nautilus_ext.discovery.data_type_inferencer import DataTypeInferencer
 from nautilus_ext.discovery.dataset_profile import DatasetProfile
@@ -144,6 +142,10 @@ class NautilusAutoBarDataConnector:
         raw_df = self.load_raw_data()
         self.instrument = InstrumentBuilder.require_existing_instrument(self.instrument)
         self.bar_df = BarDataAdapter(profile.field_mapping).normalize(raw_df)
+
+        from nautilus_ext.builders.bar_builder import NautilusBarBuilder
+        from nautilus_ext.builders.bar_type_factory import BarTypeFactory
+
         self.bar_type = BarTypeFactory.create(
             instrument=self.instrument,
             timeframe=profile.timeframe,

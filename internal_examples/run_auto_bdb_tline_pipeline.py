@@ -10,6 +10,12 @@ known.
 """
 
 from decimal import Decimal
+from pathlib import Path
+import sys
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from nautilus_ext.pipeline import NautilusAutoBarPipeline
 from nautilus_ext.reports import ResultExporter
