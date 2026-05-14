@@ -1,16 +1,6 @@
 from nautilus_trader.trading.strategy import Strategy
 
-
 class StrategySwitchingTemplate(Strategy):
-    """
-    Template for a single Nautilus Strategy that switches internal logic
-    according to market regime.
-
-    This is different from NautilusMultiStrategyRunner:
-    - MultiStrategyRunner runs multiple strategies independently for comparison.
-    - StrategySwitchingTemplate is one strategy with internal switching logic.
-    """
-
     def __init__(self, bar_type, **params):
         super().__init__()
         self.bar_type = bar_type

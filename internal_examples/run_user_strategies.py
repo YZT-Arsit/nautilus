@@ -1,8 +1,5 @@
-#!/usr/bin/env python3
 from pathlib import Path
 import sys
-
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -14,7 +11,6 @@ from nautilus_ext.instruments import AutoInstrumentBuilder
 from nautilus_ext.instruments import AutoInstrumentProfileBuilder
 from nautilus_ext.runners import NautilusMultiStrategyRunner
 from nautilus_ext.strategies import NautilusStrategySpec
-
 
 # =============================================================================
 # User-editable area
@@ -40,9 +36,8 @@ USER_STRATEGIES = [
     ),
 ]
 
-
 # =============================================================================
-# Usually no need to edit below this line
+# No need to edit below this line
 # =============================================================================
 
 def build_instrument_profile():
@@ -52,18 +47,13 @@ def build_instrument_profile():
         hints=INSTRUMENT_HINTS,
     )
 
-
 def build_instrument():
-    # Default is a real auto instrument build. If you set
-    # USE_TEST_INSTRUMENT_FALLBACK=True, it is only for interface-chain testing
-    # and must not be used for production backtests.
     return AutoInstrumentBuilder.build(
         symbol=SYMBOL,
         data_root=DATA_ROOT,
         hints=INSTRUMENT_HINTS,
         allow_test_fallback=USE_TEST_INSTRUMENT_FALLBACK,
     )
-
 
 def build_engine_config(instrument_profile):
     return AutoEngineConfigBuilder.build(
@@ -73,7 +63,6 @@ def build_engine_config(instrument_profile):
         account_currency=ACCOUNT_CURRENCY,
         log_level="INFO",
     )
-
 
 if __name__ == "__main__":
     instrument_profile = build_instrument_profile()
