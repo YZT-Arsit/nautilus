@@ -3,6 +3,13 @@ from pathlib import Path
 
 
 class InstrumentTypeInferencer:
+    """
+    Optional helper for diagnostics and legacy mode.
+
+    Production entrypoints require explicit instrument_type and venue by default;
+    this inferencer is only used when callers opt in with allow_inference=True.
+    """
+
     @staticmethod
     def infer_from_path_and_symbol(
         path: str | Path | None,

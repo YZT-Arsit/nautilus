@@ -1,3 +1,4 @@
+from dataclasses import fields
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,108 +16,99 @@ class AutoInstrumentProfileBuilder:
         instrument_type: str | None = None,
         venue: str | None = None,
         hints: dict | None = None,
+        require_explicit_type: bool = True,
+        allow_inference: bool = False,
     ) -> InstrumentProfile:
         if not symbol:
-            raise ValueError("symbol is required for automatic instrument profile inference.")
+            raise ValueError("symbol is required for instrument profile construction.")
 
         merged_hints = dict(hints or {})
-        if instrument_type is not None:
-            merged_hints["instrument_type"] = instrument_type
-        if venue is not None:
-            merged_hints["venue"] = venue
+        hinted_type = instrument_type or merged_hints.get("instrument_type")
+        hinted_venue = venue or merged_hints.get("venue")
+
+        if require_explicit_type and hinted_type is None:
+            raise ValueError(
+                "instrument_type must be provided explicitly. "
+                "Automatic instrument type inference is disabled by default."
+            )
+        if hinted_venue is None:
+            raise ValueError("venue must be provided explicitly.")
 
         normalized_symbol = AutoInstrumentProfileBuilder._normalize_symbol(symbol)
-        inference = InstrumentTypeInferencer.infer_from_path_and_symbol(
-            path=data_root,
-            symbol=normalized_symbol,
-            hints=merged_hints,
-        )
+        inference = None
+        if hinted_type is None and allow_inference:
+            inference = InstrumentTypeInferencer.infer_from_path_and_symbol(
+                path=data_root,
+                symbol=normalized_symbol,
+                hints=merged_hints,
+            )
+            hinted_type = inference.get("instrument_type")
+            hinted_venue = hinted_venue or inference.get("venue")
+
+        instrument_type_value = str(hinted_type).lower() if hinted_type is not None else "unknown"
+        venue_value = str(hinted_venue).upper()
 
         registry = InstrumentRegistry()
-
+        profile = None
         try:
             profile = registry.get(
                 symbol=normalized_symbol,
-                venue=inference.get("venue"),
-                instrument_type=inference.get("instrument_type"),
+                venue=venue_value,
+                instrument_type=instrument_type_value,
             )
         except ValueError:
-            if str(inference.get("venue") or "").upper() == "UNKNOWN":
-                try:
-                    profile = registry.get(
-                        symbol=normalized_symbol,
-                        instrument_type=inference.get("instrument_type"),
-                    )
-                except ValueError:
-                    profile = None
-            else:
-                profile = None
+            profile = None
 
+        metadata = {
+            "data_root": str(data_root) if data_root is not None else None,
+            "hints": merged_hints,
+            "inference": inference,
+        }
         if profile is not None:
-            metadata = dict(profile.metadata or {})
-            metadata["inference"] = inference
-            return replace(
-                profile,
-                source=f"{profile.source}+inference",
-                confidence=max(profile.confidence, inference.get("confidence", 0.0)),
-                metadata=metadata,
+            registry_metadata = dict(profile.metadata or {})
+            registry_metadata.update(metadata)
+            return AutoInstrumentProfileBuilder._apply_hints(
+                replace(
+                    profile,
+                    source="manual+registry",
+                    metadata=registry_metadata,
+                ),
+                merged_hints,
             )
 
-        inferred_type = inference.get("instrument_type", "unknown")
-        inferred_venue = str(inference.get("venue") or "UNKNOWN").upper()
-        if inferred_type == "unknown":
-            return InstrumentProfile(
-                symbol=normalized_symbol,
-                venue=inferred_venue,
-                instrument_type="unknown",
-                instrument_id=f"{normalized_symbol}.{inferred_venue}",
-                raw_symbol=normalized_symbol,
-                source="path",
-                confidence=0.0,
-                metadata={"inference": inference},
-            )
-
-        return InstrumentProfile(
+        partial = InstrumentProfile(
             symbol=normalized_symbol,
-            venue=inferred_venue,
-            instrument_type=inferred_type,
+            venue=venue_value,
+            instrument_type=instrument_type_value,
             instrument_id=AutoInstrumentProfileBuilder._instrument_id(
                 normalized_symbol,
-                inferred_venue,
-                inferred_type,
+                venue_value,
+                instrument_type_value,
             ),
             raw_symbol=normalized_symbol,
-            base_currency=merged_hints.get("base_currency"),
-            quote_currency=merged_hints.get("quote_currency"),
-            settlement_currency=merged_hints.get("settlement_currency"),
-            currency=merged_hints.get("currency"),
-            asset_class=inference.get("asset_class"),
-            exchange=merged_hints.get("exchange"),
-            exchange_symbol=merged_hints.get("exchange_symbol"),
-            price_precision=merged_hints.get("price_precision"),
-            size_precision=merged_hints.get("size_precision"),
-            price_increment=merged_hints.get("price_increment"),
-            size_increment=merged_hints.get("size_increment"),
-            maker_fee=merged_hints.get("maker_fee"),
-            taker_fee=merged_hints.get("taker_fee"),
-            margin_init=merged_hints.get("margin_init"),
-            margin_maint=merged_hints.get("margin_maint"),
-            multiplier=merged_hints.get("multiplier"),
-            lot_size=merged_hints.get("lot_size"),
-            expiry=merged_hints.get("expiry"),
-            activation_ns=merged_hints.get("activation_ns"),
-            expiration_ns=merged_hints.get("expiration_ns"),
-            option_kind=merged_hints.get("option_kind"),
-            strike_price=merged_hints.get("strike_price"),
-            underlying=merged_hints.get("underlying"),
-            settlement_type=merged_hints.get("settlement_type"),
-            is_inverse=merged_hints.get("is_inverse"),
-            synthetic_formula=merged_hints.get("synthetic_formula"),
-            components=merged_hints.get("components"),
-            source="inferred_partial",
-            confidence=inference.get("confidence", 0.0),
-            metadata={"inference": inference, "hints": merged_hints},
+            source="manual_partial",
+            confidence=1.0 if not allow_inference else (inference or {}).get("confidence", 0.0),
+            metadata=metadata,
         )
+        return AutoInstrumentProfileBuilder._apply_hints(partial, merged_hints)
+
+    @staticmethod
+    def _apply_hints(profile: InstrumentProfile, hints: dict) -> InstrumentProfile:
+        if not hints:
+            return profile
+
+        profile_fields = {field.name for field in fields(InstrumentProfile)}
+        updates = {
+            key: value
+            for key, value in hints.items()
+            if key in profile_fields and key not in {"symbol", "venue", "instrument_type"}
+        }
+        if not updates:
+            return profile
+
+        metadata = dict(profile.metadata or {})
+        metadata["hint_overrides"] = updates
+        return replace(profile, **updates, metadata=metadata)
 
     @staticmethod
     def _normalize_symbol(symbol: str) -> str:
@@ -138,6 +130,8 @@ class AutoInstrumentBuilder:
         venue: str | None = None,
         hints: dict | None = None,
         allow_test_fallback: bool = False,
+        require_explicit_type: bool = True,
+        allow_inference: bool = False,
     ):
         profile = AutoInstrumentProfileBuilder.build_profile(
             symbol=symbol,
@@ -145,6 +139,8 @@ class AutoInstrumentBuilder:
             instrument_type=instrument_type,
             venue=venue,
             hints=hints,
+            require_explicit_type=require_explicit_type,
+            allow_inference=allow_inference,
         )
         try:
             return NautilusInstrumentFactory.build(profile)
@@ -153,7 +149,7 @@ class AutoInstrumentBuilder:
                 raise
             print(
                 "WARNING: Using TestInstrumentProvider fallback; this is not a real instrument "
-                "and should not be used for production backtests."
+                "and must not be used for production backtests."
             )
             return AutoInstrumentBuilder._test_fallback(profile)
 

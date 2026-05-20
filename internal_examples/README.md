@@ -55,6 +55,38 @@ inside one strategy:
 This is different from `NautilusMultiStrategyRunner`, which runs independent
 strategies separately for comparison.
 
+## Volume Weighted Momentum Short Strategy
+
+`nautilus_ext.strategies.volume_weighted_momentum_short` contains a Nautilus
+Strategy migration of TradeBlazer `VolumeWeightedMomentumSys_S`.
+
+Core logic:
+
+- `momentum = close_t - close_{t - mom_len}`
+- `VWM = EMA(volume * momentum, avg_len)`
+- `BearSetup = VWM` crosses under zero
+- `BullSetup = VWM` crosses over zero
+- entry: after `BearSetup`, keep a short stop trigger valid for `setup_len`
+  bars at `se_price - atr_pcnt * ATR`
+- exit: after `BullSetup`, cover an existing short with a BUY market order
+
+This strategy only consumes OHLCV `Bar` data. It should not be run directly on
+TradeTick, QuoteTick, OrderBookDelta, OrderBookSnapshot, MarkPriceUpdate, or
+FundingRateUpdate data. Those feeds must be aggregated into OHLCV bars first.
+If bar volume is missing, always zero, or synthetic, the strategy semantics
+change because volume is part of the signal.
+
+The Nautilus implementation uses stop-market and market orders. This may not
+match TradeBlazer's historical bar-internal fill model exactly, where entry is
+expressed as `SellShort(..., Min(Open, trigger_price))`.
+
+Example:
+
+```powershell
+python internal_examples\test_vwm_short_signal.py
+python internal_examples\run_vwm_short_example.py
+```
+
 ## Outputs
 
 Reports are written under:
@@ -73,11 +105,52 @@ wrapper interface chain. Real Binance futures backtests should replace that
 instrument with the company's internal Binance futures instrument builder or a
 real Binance futures Nautilus instrument.
 
-## Instrument Auto Builder
+## Manual Instrument Configuration
 
-The data connector automatically identifies market data layout. The instrument
-auto layer separately infers the Nautilus instrument profile from `DATA_ROOT`,
-`SYMBOL`, explicit hints, and static metadata registries.
+The data connector still automatically identifies market data layout. Instrument
+type selection is deliberately manual in production. In `run_user_strategies.py`
+you must set:
+
+```python
+INSTRUMENT_TYPE = "crypto_perpetual"
+VENUE = "BINANCE"
+```
+
+Other common examples:
+
+```python
+INSTRUMENT_TYPE = "currency_pair"
+VENUE = "SIM"
+
+INSTRUMENT_TYPE = "equity"
+VENUE = "XNAS"
+
+INSTRUMENT_TYPE = "futures_contract"
+VENUE = "XCME"
+
+INSTRUMENT_TYPE = "option_contract"
+VENUE = "OPRA"
+```
+
+`INSTRUMENT_HINTS` fills gaps or overrides registry metadata:
+
+```python
+INSTRUMENT_HINTS = {
+    "price_precision": 2,
+    "size_precision": 3,
+    "price_increment": "0.01",
+    "size_increment": "0.001",
+}
+```
+
+If the registry already contains `SYMBOL + VENUE + INSTRUMENT_TYPE`, you usually
+only need to set those three values. If not, provide missing metadata such as
+currency, precision, increments, expiry, strike, or underlying in
+`INSTRUMENT_HINTS`.
+
+`InstrumentTypeInferencer` still exists as an optional diagnostic/legacy helper,
+but it is not used by the production default path. This avoids accidentally
+misclassifying equity, FX, futures, options, or crypto instruments.
 
 The unified instrument profile is designed for the main Nautilus instrument
 families, including:
@@ -99,16 +172,18 @@ families, including:
 - `betting`
 - `synthetic`
 
-For the current BDB/Futures/TLine/BinanceCryptoFutures data, `BCHUSDT` should
-infer as `crypto_perpetual` on venue `BINANCE`.
+For the current BDB/Futures/TLine/BinanceCryptoFutures data, set
+`INSTRUMENT_TYPE = "crypto_perpetual"` and `VENUE = "BINANCE"`.
 
 Production should use the company's official instrument metadata registry. The
 test fallback is disabled by default and must not be used for real backtests.
 
 If `run_user_strategies.py` fails because a Nautilus constructor adapter is not
-complete yet, first verify inference separately:
+complete yet, first verify profile and builder behavior separately:
 
 ```powershell
+python internal_examples\test_manual_instrument_profile.py
+python internal_examples\test_manual_instrument_required.py
 python internal_examples\test_instrument_type_inference.py
 python internal_examples\test_auto_instrument_profile.py
 python internal_examples\test_auto_instrument_builder.py
@@ -133,7 +208,7 @@ Users generally do not need to write `USDT`/`USD`, `Money`, `Venue`,
 The instrument layer now uses one shared framework for all Nautilus instrument
 families:
 
-1. infer an instrument type from `DATA_ROOT`, `SYMBOL`, and optional hints
+1. read explicit `INSTRUMENT_TYPE`, `VENUE`, and optional hints
 2. look up a static or internal metadata registry
 3. produce an `InstrumentProfile`
 4. dispatch to a constructor adapter for the selected Nautilus instrument class
@@ -169,13 +244,13 @@ bundled in this repository. Production onboarding should:
 3. register them in `InstrumentRegistry`
 4. complete or verify the constructor adapter for that instrument type
 
-If automatic inference is not precise enough, use `INSTRUMENT_HINTS` in
-`run_user_strategies.py`, for example:
+Use `INSTRUMENT_HINTS` in `run_user_strategies.py` when the registry is missing
+fields, for example:
 
 ```python
+INSTRUMENT_TYPE = "equity"
+VENUE = "XNAS"
 INSTRUMENT_HINTS = {
-    "instrument_type": "equity",
-    "venue": "XNAS",
     "currency": "USD",
 }
 ```
@@ -183,9 +258,9 @@ INSTRUMENT_HINTS = {
 or:
 
 ```python
+INSTRUMENT_TYPE = "option_contract"
+VENUE = "OPRA"
 INSTRUMENT_HINTS = {
-    "instrument_type": "option_contract",
-    "venue": "OPRA",
     "underlying": "AAPL",
     "expiry": "20250117",
     "strike_price": "200",
