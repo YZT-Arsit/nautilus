@@ -1,5 +1,4 @@
 from nautilus_trader.trading.strategy import Strategy
-
 class StrategySwitchingTemplate(Strategy):
     def __init__(self, bar_type, **params):
         super().__init__()
@@ -17,7 +16,6 @@ class StrategySwitchingTemplate(Strategy):
         self.prices.append(float(bar.close))
 
         regime = self.detect_regime(bar)
-
         if regime != self.active_regime:
             self.on_regime_change(self.active_regime, regime)
             self.active_regime = regime

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from pathlib import Path
 import sys
 
@@ -52,9 +51,17 @@ STARTING_BALANCE = 1_000_000
 
 USER_STRATEGIES = [
     NautilusStrategySpec(
-        name="template_a",
+        name="vwm_short",
         factory=lambda ctx: StrategyTemplate(ctx.bar_type, **ctx.params),
-        params={"tag": "A"},
+        params={
+            "strategy_kind": "vwm_short",
+            "mom_len": 5,
+            "avg_len": 20,
+            "atr_len": 5,
+            "atr_pcnt": 0.5,
+            "setup_len": 5,
+            "trade_size": 1,
+        },
     ),
 ]
 

@@ -17,9 +17,7 @@ __all__ = [
     "NautilusStrategySpec",
     "SUPPORTED_INSTRUMENT_TYPES",
     "StrategyContext",
-    "VolumeWeightedMomentumShortConfig",
     "VolumeWeightedMomentumShortSignalEngine",
-    "VolumeWeightedMomentumShortStrategy",
 ]
 
 
@@ -93,13 +91,5 @@ def __getattr__(name: str):
         from nautilus_ext.strategies import VolumeWeightedMomentumShortSignalEngine
 
         return VolumeWeightedMomentumShortSignalEngine
-    if name in {"VolumeWeightedMomentumShortConfig", "VolumeWeightedMomentumShortStrategy"}:
-        from nautilus_ext.strategies import VolumeWeightedMomentumShortConfig
-        from nautilus_ext.strategies import VolumeWeightedMomentumShortStrategy
-
-        return {
-            "VolumeWeightedMomentumShortConfig": VolumeWeightedMomentumShortConfig,
-            "VolumeWeightedMomentumShortStrategy": VolumeWeightedMomentumShortStrategy,
-        }[name]
 
     raise AttributeError(f"module 'nautilus_ext' has no attribute {name!r}")
