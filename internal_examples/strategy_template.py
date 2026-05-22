@@ -6,6 +6,7 @@ from nautilus_ext.strategies.strategy_registry import build_signal_engine
 class StrategyTemplate(BaseBarStrategy):
     def __init__(self, bar_type, **params):
         strategy_kind = params.get("strategy_kind", "vwm_short")
+        
         signal_engine = build_signal_engine(strategy_kind, params)
         super().__init__(
             bar_type=bar_type,
