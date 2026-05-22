@@ -2,6 +2,9 @@ from nautilus_ext.strategies.strategy_spec import NautilusStrategySpec
 from nautilus_ext.strategies.strategy_spec import StrategyContext
 from nautilus_ext.strategies.signal_types import BarInput
 from nautilus_ext.strategies.signal_types import SignalResult
+from nautilus_ext.strategies.strategy_registry import available_signal_engines
+from nautilus_ext.strategies.strategy_registry import build_signal_engine
+from nautilus_ext.strategies.strategy_registry import register_signal_engine
 from nautilus_ext.strategies.tradeblazer_helpers import MomentumState
 from nautilus_ext.strategies.tradeblazer_helpers import cross_over
 from nautilus_ext.strategies.tradeblazer_helpers import cross_under
@@ -16,8 +19,11 @@ __all__ = [
     "VolumeWeightedMomentumShortSignalEngine",
     "VwmShortBarInput",
     "VwmShortSignalConfig",
+    "available_signal_engines",
+    "build_signal_engine",
     "cross_over",
     "cross_under",
+    "register_signal_engine",
 ]
 
 
