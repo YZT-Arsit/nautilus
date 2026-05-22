@@ -1,9 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from math import fsum
+from nautilus_trader.indicators import AverageTrueRange
+from nautilus_trader.indicators import ExponentialMovingAverage
 from nautilus_ext.strategies.signal_types import BarInput
 from nautilus_ext.strategies.signal_types import SignalResult
-
+from nautilus_ext.strategies.tradeblazer_helpers import MomentumState
+from nautilus_ext.strategies.tradeblazer_helpers import cross_over
+from nautilus_ext.strategies.tradeblazer_helpers import cross_under
 
 @dataclass(frozen=True)
 class VwmShortSignalConfig:
@@ -27,24 +30,20 @@ class VwmShortSignalConfig:
 VwmShortBarInput = BarInput
 VwmShortSignalResult = SignalResult
 
-
 class VolumeWeightedMomentumShortSignalEngine:
     def __init__(self, config: VwmShortSignalConfig) -> None:
         self.config = config
-        self._alpha = 2.0 / (config.avg_len + 1.0)
-        self._closes: list[float] = []
-        self._true_ranges: list[float] = []
+        self.momentum = MomentumState(config.mom_len)
+        self.vwm_ema = ExponentialMovingAverage(config.avg_len)
+        self.atr = AverageTrueRange(config.atr_len)
 
         self.current_bar = 0
-        self.prev_close: float | None = None
         self.prev_vwm: float | None = None
         self.prev_atr: float | None = None
         self.prev_se_price: float | None = None
         self.prev_s_setup = 0
         self.prev_bull_setup = False
 
-        self.vwm: float | None = None
-        self.atr: float | None = None
         self.se_price: float | None = None
         self.s_setup = 0
 
@@ -70,23 +69,23 @@ class VolumeWeightedMomentumShortSignalEngine:
         if not external_position and self.position == -1:
             active_bars_since_entry += 1
 
-        prev_vwm = self.vwm
-        prev_atr = self.atr
+        prev_vwm = self.vwm_ema.value if self.vwm_ema.has_inputs else None
+        prev_atr = self.atr.value if self.atr.initialized else None
         prev_se_price = self.se_price
         prev_s_setup = self.s_setup
         prev_bull_setup = self.prev_bull_setup
 
         self.current_bar += 1
-        true_range = self._true_range(bar)
-        self._true_ranges.append(true_range)
-        self._closes.append(bar.close)
 
-        momentum = self._momentum()
-        curr_vwm = self._update_vwm(bar.volume, momentum)
-        curr_atr = self._update_atr()
+        momentum = self.momentum.update(bar.close)
+        self.atr.update_raw(bar.high, bar.low, bar.close)
+        curr_atr = self.atr.value if self.atr.initialized else None
+        if momentum is not None:
+            self.vwm_ema.update_raw(bar.volume * momentum)
+        curr_vwm = self.vwm_ema.value if self.vwm_ema.has_inputs else None
 
-        bull_setup = prev_vwm is not None and curr_vwm is not None and prev_vwm <= 0 < curr_vwm
-        bear_setup = prev_vwm is not None and curr_vwm is not None and prev_vwm >= 0 > curr_vwm
+        bull_setup = cross_over(prev_vwm, curr_vwm, 0.0)
+        bear_setup = cross_under(prev_vwm, curr_vwm, 0.0)
 
         if bear_setup:
             curr_se_price = bar.close
@@ -131,14 +130,11 @@ class VolumeWeightedMomentumShortSignalEngine:
         if exit_signal:
             reason = "exit_short"
 
-        self.prev_close = bar.close
         self.prev_vwm = prev_vwm
         self.prev_atr = prev_atr
         self.prev_se_price = prev_se_price
         self.prev_s_setup = prev_s_setup
         self.prev_bull_setup = bull_setup
-        self.vwm = curr_vwm
-        self.atr = curr_atr
         self.se_price = curr_se_price
         self.s_setup = curr_s_setup
 
@@ -173,34 +169,6 @@ class VolumeWeightedMomentumShortSignalEngine:
                 "entry_setup_active": entry_setup_active,
                 "entry_trigger_price": entry_trigger_price,
             },
-        )
-
-    def _momentum(self) -> float | None:
-        if len(self._closes) <= self.config.mom_len:
-            return None
-        return self._closes[-1] - self._closes[-1 - self.config.mom_len]
-
-    def _update_vwm(self, volume: float, momentum: float | None) -> float | None:
-        if momentum is None:
-            return self.vwm
-        raw_vwm = volume * momentum
-        if self.vwm is None:
-            return raw_vwm
-        return self.vwm + self._alpha * (raw_vwm - self.vwm)
-
-    def _update_atr(self) -> float | None:
-        if len(self._true_ranges) < self.config.atr_len:
-            return None
-        window = self._true_ranges[-self.config.atr_len :]
-        return fsum(window) / self.config.atr_len
-
-    def _true_range(self, bar: BarInput) -> float:
-        if self.prev_close is None:
-            return bar.high - bar.low
-        return max(
-            bar.high - bar.low,
-            abs(bar.high - self.prev_close),
-            abs(bar.low - self.prev_close),
         )
 
     @staticmethod

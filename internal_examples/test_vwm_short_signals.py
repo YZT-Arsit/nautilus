@@ -6,6 +6,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from nautilus_ext.strategies.signal_types import BarInput
+from nautilus_ext.strategies.tradeblazer_helpers import MomentumState
+from nautilus_ext.strategies.tradeblazer_helpers import cross_over
+from nautilus_ext.strategies.tradeblazer_helpers import cross_under
 from nautilus_ext.strategies.vwm_short_signals import VwmShortSignalConfig
 from nautilus_ext.strategies.vwm_short_signals import VolumeWeightedMomentumShortSignalEngine
 
@@ -18,6 +21,19 @@ def bar(open_, high, low, close, volume=1.0):
         close=float(close),
         volume=float(volume),
     )
+
+
+def test_tradeblazer_helpers():
+    momentum = MomentumState(period=3)
+    assert momentum.update(10) is None
+    assert momentum.update(11) is None
+    assert momentum.update(13) is None
+    assert momentum.update(16) == 6
+
+    assert cross_over(-1, 1, 0) is True
+    assert cross_over(1, 2, 0) is False
+    assert cross_under(1, -1, 0) is True
+    assert cross_under(-1, -2, 0) is False
 
 
 def test_entry_setup_and_trigger():
@@ -74,6 +90,7 @@ def test_exit_uses_previous_bull_setup():
 
 
 if __name__ == "__main__":
+    test_tradeblazer_helpers()
     test_entry_setup_and_trigger()
     test_cancel_entry_after_setup_expires()
     test_exit_uses_previous_bull_setup()

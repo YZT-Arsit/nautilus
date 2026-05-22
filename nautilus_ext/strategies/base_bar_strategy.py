@@ -1,20 +1,14 @@
 from __future__ import annotations
-
 from decimal import Decimal
-
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.enums import TimeInForce
 from nautilus_trader.model.enums import TriggerType
 from nautilus_trader.model.objects import Quantity
 from nautilus_trader.trading.strategy import Strategy
-
 from nautilus_ext.strategies.signal_types import BarInput
 from nautilus_ext.strategies.signal_types import SignalResult
-
-
 class BaseBarStrategy(Strategy):
     """Reusable Nautilus glue for OHLCV bar-based signal engines."""
-
     def __init__(
         self,
         bar_type,

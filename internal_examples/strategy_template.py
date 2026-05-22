@@ -1,17 +1,8 @@
 from __future__ import annotations
-
 from nautilus_ext.strategies.base_bar_strategy import BaseBarStrategy
 from nautilus_ext.strategies.vwm_short_signals import VwmShortSignalConfig
 from nautilus_ext.strategies.vwm_short_signals import VolumeWeightedMomentumShortSignalEngine
-
-
 class StrategyTemplate(BaseBarStrategy):
-    """User-facing VWM short strategy template.
-
-    Keep this class small: edit params or replace the signal engine for a new
-    strategy, while ``BaseBarStrategy`` handles Nautilus bar/order glue.
-    """
-
     def __init__(self, bar_type, **params):
         strategy_kind = params.get("strategy_kind", "vwm_short")
         if strategy_kind != "vwm_short":

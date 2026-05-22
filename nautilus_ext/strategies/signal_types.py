@@ -1,8 +1,5 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
-
-
 @dataclass(frozen=True)
 class BarInput:
     open: float
@@ -10,8 +7,6 @@ class BarInput:
     low: float
     close: float
     volume: float
-
-
 @dataclass(frozen=True)
 class SignalResult:
     entry_side: str | None = None
