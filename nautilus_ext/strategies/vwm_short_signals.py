@@ -1,6 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from math import fsum
+from nautilus_ext.strategies.signal_types import BarInput
+from nautilus_ext.strategies.signal_types import SignalResult
+
+
 @dataclass(frozen=True)
 class VwmShortSignalConfig:
     mom_len: int = 5
@@ -20,29 +24,10 @@ class VwmShortSignalConfig:
             raise ValueError("atr_pcnt must be >= 0.")
         if self.setup_len < 1:
             raise ValueError("setup_len must be >= 1.")
-@dataclass(frozen=True)
-class VwmShortBarInput:
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-@dataclass(frozen=True)
-class VwmShortSignalResult:
-    current_bar: int
-    momentum: float | None
-    vwm: float | None
-    atr: float | None
-    bull_setup: bool
-    bear_setup: bool
-    se_price: float | None
-    s_setup: int
-    entry_signal: bool
-    exit_signal: bool
-    entry_setup_active: bool
-    entry_trigger_price: float | None
-    cancel_entry: bool
-    reason: str | None = None
+VwmShortBarInput = BarInput
+VwmShortSignalResult = SignalResult
+
+
 class VolumeWeightedMomentumShortSignalEngine:
     def __init__(self, config: VwmShortSignalConfig) -> None:
         self.config = config
@@ -71,10 +56,10 @@ class VolumeWeightedMomentumShortSignalEngine:
 
     def update(
         self,
-        bar: VwmShortBarInput,
+        bar: BarInput,
         position: int | None = None,
         bars_since_entry: int | None = None,
-    ) -> VwmShortSignalResult:
+    ) -> SignalResult:
         self._validate_bar(bar)
 
         external_position = position is not None
@@ -167,21 +152,27 @@ class VolumeWeightedMomentumShortSignalEngine:
             else:
                 self.bars_since_entry = active_bars_since_entry
 
-        return VwmShortSignalResult(
-            current_bar=self.current_bar,
-            momentum=momentum,
-            vwm=curr_vwm,
-            atr=curr_atr,
-            bull_setup=bull_setup,
-            bear_setup=bear_setup,
-            se_price=curr_se_price,
-            s_setup=curr_s_setup,
-            entry_signal=entry_signal,
-            exit_signal=exit_signal,
-            entry_setup_active=entry_setup_active,
-            entry_trigger_price=entry_trigger_price,
+        return SignalResult(
+            entry_side="SELL" if entry_setup_active else None,
+            entry_order_type="stop_market" if entry_setup_active else None,
+            entry_price=entry_trigger_price if entry_setup_active else None,
+            exit_side="BUY" if exit_signal else None,
             cancel_entry=cancel_entry,
             reason=reason,
+            debug={
+                "current_bar": self.current_bar,
+                "momentum": momentum,
+                "vwm": curr_vwm,
+                "atr": curr_atr,
+                "bull_setup": bull_setup,
+                "bear_setup": bear_setup,
+                "se_price": curr_se_price,
+                "s_setup": curr_s_setup,
+                "entry_signal": entry_signal,
+                "exit_signal": exit_signal,
+                "entry_setup_active": entry_setup_active,
+                "entry_trigger_price": entry_trigger_price,
+            },
         )
 
     def _momentum(self) -> float | None:
@@ -203,7 +194,7 @@ class VolumeWeightedMomentumShortSignalEngine:
         window = self._true_ranges[-self.config.atr_len :]
         return fsum(window) / self.config.atr_len
 
-    def _true_range(self, bar: VwmShortBarInput) -> float:
+    def _true_range(self, bar: BarInput) -> float:
         if self.prev_close is None:
             return bar.high - bar.low
         return max(
@@ -213,7 +204,7 @@ class VolumeWeightedMomentumShortSignalEngine:
         )
 
     @staticmethod
-    def _validate_bar(bar: VwmShortBarInput) -> None:
+    def _validate_bar(bar: BarInput) -> None:
         if bar.high < bar.low:
             raise ValueError("bar.high must be >= bar.low.")
         if bar.volume < 0:
