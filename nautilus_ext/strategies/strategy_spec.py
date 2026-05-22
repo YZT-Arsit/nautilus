@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import Any
 from typing import Callable
 
-
 @dataclass(frozen=True)
 class StrategyContext:
     bar_type: object
@@ -10,7 +9,6 @@ class StrategyContext:
     strategy_name: str
     run_id: str
     params: dict[str, Any]
-
 
 @dataclass(frozen=True)
 class NautilusStrategySpec:
