@@ -1,15 +1,6 @@
-"""Pure signal logic for the TradeBlazer VWM short strategy migration.
-
-This module has no NautilusTrader runtime imports so the translated setup and
-crossing semantics can be unit tested without a running backtest engine.
-"""
-
 from __future__ import annotations
-
 from dataclasses import dataclass
 from math import fsum
-
-
 @dataclass(frozen=True)
 class VwmShortSignalConfig:
     mom_len: int = 5
@@ -29,8 +20,6 @@ class VwmShortSignalConfig:
             raise ValueError("atr_pcnt must be >= 0.")
         if self.setup_len < 1:
             raise ValueError("setup_len must be >= 1.")
-
-
 @dataclass(frozen=True)
 class VwmShortBarInput:
     open: float
@@ -38,8 +27,6 @@ class VwmShortBarInput:
     low: float
     close: float
     volume: float
-
-
 @dataclass(frozen=True)
 class VwmShortSignalResult:
     current_bar: int
@@ -52,26 +39,11 @@ class VwmShortSignalResult:
     s_setup: int
     entry_signal: bool
     exit_signal: bool
+    entry_setup_active: bool
     entry_trigger_price: float | None
     cancel_entry: bool
     reason: str | None = None
-
-
 class VolumeWeightedMomentumShortSignalEngine:
-    """State machine matching the TradeBlazer ``VolumeWeightedMomentumSys_S`` logic.
-
-    The engine computes:
-
-    - ``momentum_t = close_t - close_{t - mom_len}``
-    - ``raw_vwm_t = volume_t * momentum_t``
-    - ``vwm_t = EMA(raw_vwm_t, avg_len)`` with ``alpha = 2 / (avg_len + 1)``
-    - ATR as a simple moving average of True Range.
-
-    NautilusTrader provides native ATR/EMA indicators, but keeping this compact
-    implementation here makes the TradeBlazer ``[1]`` references directly
-    testable. The Strategy wrapper can then focus on order routing.
-    """
-
     def __init__(self, config: VwmShortSignalConfig) -> None:
         self.config = config
         self._alpha = 2.0 / (config.avg_len + 1.0)
@@ -103,12 +75,6 @@ class VolumeWeightedMomentumShortSignalEngine:
         position: int | None = None,
         bars_since_entry: int | None = None,
     ) -> VwmShortSignalResult:
-        """Update state and return the current signal decision.
-
-        ``position`` may be supplied by a Nautilus Strategy wrapper. If omitted,
-        this engine maintains a simple internal flat/short position for tests.
-        """
-
         self._validate_bar(bar)
 
         external_position = position is not None
@@ -147,6 +113,7 @@ class VolumeWeightedMomentumShortSignalEngine:
         entry_trigger_price = None
         entry_signal = False
         exit_signal = False
+        entry_setup_active = False
         cancel_entry = False
         reason = None
 
@@ -158,13 +125,13 @@ class VolumeWeightedMomentumShortSignalEngine:
         )
         if warmed_up:
             entry_trigger_price = prev_se_price - (self.config.atr_pcnt * prev_atr)
-            entry_signal = (
+            entry_setup_active = (
                 active_position == 0
                 and bar.volume > 0
-                and bar.low <= entry_trigger_price
                 and prev_s_setup <= self.config.setup_len
                 and curr_s_setup >= 1
             )
+            entry_signal = entry_setup_active and bar.low <= entry_trigger_price
             if entry_signal:
                 reason = "enter_short"
             elif prev_s_setup > self.config.setup_len:
@@ -211,6 +178,7 @@ class VolumeWeightedMomentumShortSignalEngine:
             s_setup=curr_s_setup,
             entry_signal=entry_signal,
             exit_signal=exit_signal,
+            entry_setup_active=entry_setup_active,
             entry_trigger_price=entry_trigger_price,
             cancel_entry=cancel_entry,
             reason=reason,
