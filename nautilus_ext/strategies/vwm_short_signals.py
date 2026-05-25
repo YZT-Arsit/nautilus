@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+from nautilus_ext.features.vwm_features import VwmFeatureConfig
+from nautilus_ext.features.vwm_features import VwmFeatureEngine
 from nautilus_ext.strategies.signal_types import BarInput
 from nautilus_ext.strategies.signal_types import SignalResult
-from nautilus_ext.strategies.tradeblazer_helpers import cross_over
-from nautilus_ext.strategies.tradeblazer_helpers import cross_under
-from nautilus_ext.strategies.vwm_short_components import VwmShortIndicators
 from nautilus_ext.strategies.vwm_short_components import VwmShortSignalConfig
 from nautilus_ext.strategies.vwm_short_components import VwmShortSnapshot
 
@@ -16,8 +15,13 @@ VwmShortSignalResult = SignalResult
 class VolumeWeightedMomentumShortSignalEngine:
     def __init__(self, config: VwmShortSignalConfig) -> None:
         self.config = config
-        self.indicators = VwmShortIndicators(config)
-        self.current_bar = 0
+        self.features = VwmFeatureEngine(
+            VwmFeatureConfig(
+                mom_len=config.mom_len,
+                avg_len=config.avg_len,
+                atr_len=config.atr_len,
+            ),
+        )
         self.prev_bull_setup = False
         self.se_price: float | None = None
         self.s_setup = 0
@@ -44,11 +48,8 @@ class VolumeWeightedMomentumShortSignalEngine:
             active_bars_since_entry += 1
 
         snapshot = self._snapshot()
-        self.current_bar += 1
-        values = self.indicators.update(bar)
-        bull_setup = cross_over(snapshot.prev_vwm, values.vwm)
-        bear_setup = cross_under(snapshot.prev_vwm, values.vwm)
-        curr_se_price, curr_s_setup = self._update_setup(bar, bear_setup, snapshot)
+        features = self.features.update(bar)
+        curr_se_price, curr_s_setup = self._update_setup(bar, features.bear_setup, snapshot)
 
         entry_trigger_price = None
         entry_signal = False
@@ -58,14 +59,14 @@ class VolumeWeightedMomentumShortSignalEngine:
         reason = None
 
         warmed_up = (
-            self.current_bar > self.config.avg_len
-            and values.momentum is not None
-            and snapshot.prev_atr is not None
+            features.current_bar > self.config.avg_len
+            and features.momentum is not None
+            and features.prev_atr is not None
             and snapshot.prev_se_price is not None
         )
         if warmed_up:
             entry_trigger_price = snapshot.prev_se_price - (
-                self.config.atr_pcnt * snapshot.prev_atr
+                self.config.atr_pcnt * features.prev_atr
             )
             entry_setup_active = (
                 active_position == 0
@@ -88,7 +89,7 @@ class VolumeWeightedMomentumShortSignalEngine:
         if exit_signal:
             reason = "exit_short"
 
-        self.prev_bull_setup = bull_setup
+        self.prev_bull_setup = features.bull_setup
         self.se_price = curr_se_price
         self.s_setup = curr_s_setup
 
@@ -107,12 +108,12 @@ class VolumeWeightedMomentumShortSignalEngine:
             cancel_entry=cancel_entry,
             reason=reason,
             debug={
-                "current_bar": self.current_bar,
-                "momentum": values.momentum,
-                "vwm": values.vwm,
-                "atr": values.atr,
-                "bull_setup": bull_setup,
-                "bear_setup": bear_setup,
+                "current_bar": features.current_bar,
+                "momentum": features.momentum,
+                "vwm": features.vwm,
+                "atr": features.atr,
+                "bull_setup": features.bull_setup,
+                "bear_setup": features.bear_setup,
                 "se_price": curr_se_price,
                 "s_setup": curr_s_setup,
                 "entry_signal": entry_signal,
@@ -123,10 +124,7 @@ class VolumeWeightedMomentumShortSignalEngine:
         )
 
     def _snapshot(self) -> VwmShortSnapshot:
-        prev_vwm, prev_atr = self.indicators.snapshot_values()
         return VwmShortSnapshot(
-            prev_vwm=prev_vwm,
-            prev_atr=prev_atr,
             prev_se_price=self.se_price,
             prev_s_setup=self.s_setup,
             prev_bull_setup=self.prev_bull_setup,
