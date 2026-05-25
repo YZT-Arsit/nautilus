@@ -36,7 +36,7 @@ def _normalize_kind(kind: str) -> str:
 
 
 def _build_vwm_short(params: dict) -> object:
-    from nautilus_ext.strategies.vwm_short_signals import VwmShortSignalConfig
+    from nautilus_ext.strategies.vwm_short_components import VwmShortSignalConfig
     from nautilus_ext.strategies.vwm_short_signals import (
         VolumeWeightedMomentumShortSignalEngine,
     )

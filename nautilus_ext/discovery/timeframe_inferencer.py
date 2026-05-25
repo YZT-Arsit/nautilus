@@ -27,4 +27,21 @@ class TimeframeInferencer:
             if timeframe is not None:
                 return timeframe
 
+        aliases = {
+            "min": "MINUTE",
+            "minute": "MINUTE",
+            "h": "HOUR",
+            "hour": "HOUR",
+            "d": "DAY",
+            "day": "DAY",
+        }
+        for match in re.finditer(
+            r"(?<!\d)(\d+)[_-]?(min|minute|h|hour|d|day)(?![a-z])",
+            path_text,
+            flags=re.IGNORECASE,
+        ):
+            count = int(match.group(1))
+            unit = aliases[match.group(2).lower()]
+            return f"{count}-{unit}"
+
         return None

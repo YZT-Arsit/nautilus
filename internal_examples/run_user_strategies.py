@@ -18,15 +18,16 @@ from nautilus_ext.strategies import NautilusStrategySpec
 # =============================================================================
 
 DATA_ROOT = (
-    r"D:\QuanHub\DataAtaw\unorganized\Crypto\src\raw_tbl\BDB\Futures"
-    r"\TLine\BinanceCryptoFutures_TODKLine_0060S"
+    r"D:\QuanHub\DataHome\DataTrans\nautilus_catalog"
 )
-SYMBOL = "BCHUSDT"
+# This catalog currently provides QuoteTick/instrument metadata for IH2303.
+# VWM requires an OHLCV Bar connector or preprocessing output before backtesting.
+SYMBOL = "IH2303.CFFEX"
 
 # Required manual instrument configuration.
 # Do not rely on automatic instrument type inference in production.
-INSTRUMENT_TYPE = "crypto_perpetual"
-VENUE = "BINANCE"
+INSTRUMENT_TYPE = "futures_contract"
+VENUE = "CFFEX"
 
 # Optional. If None, AutoEngineConfigBuilder may infer from instrument profile.
 ACCOUNT_CURRENCY = None
@@ -34,13 +35,13 @@ ACCOUNT_CURRENCY = None
 # Optional metadata override. Use this when registry metadata is incomplete.
 INSTRUMENT_HINTS = {
     # Examples:
-    # "base_currency": "BCH",
-    # "quote_currency": "USDT",
-    # "settlement_currency": "USDT",
-    # "price_precision": 2,
-    # "size_precision": 3,
-    # "price_increment": "0.01",
-    # "size_increment": "0.001",
+    # "currency": "CNY",
+    # "settlement_currency": "CNY",
+    # "price_precision": 1,
+    # "size_precision": 0,
+    # "price_increment": "0.2",
+    # "size_increment": "1",
+    # "multiplier": "300",
 }
 
 MAX_FILES = 1
