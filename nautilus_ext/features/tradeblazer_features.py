@@ -17,5 +17,11 @@ class RawMomentumFeature:
     def update(self, close: float) -> float | None:
         return self._state.update(close)
 
+    def state_dict(self) -> dict:
+        return self._state.state_dict()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._state.load_state_dict(state)
+
 
 __all__ = ["RawMomentumFeature", "cross_over", "cross_under"]

@@ -7,7 +7,11 @@ from nautilus_ext.strategies.signal_types import BarInput
 
 
 class EmaFeature:
-    """Thin streaming wrapper for Nautilus native EMA/XAverage behavior."""
+    """Thin streaming wrapper for Nautilus native EMA/XAverage behavior.
+
+    Native internal state is deliberately not accessed. Engines which need
+    restoration rebuild this wrapper by replaying saved warmup bars.
+    """
 
     def __init__(self, period: int) -> None:
         if period <= 0:
@@ -27,7 +31,11 @@ class EmaFeature:
 
 
 class AtrFeature:
-    """Thin streaming wrapper for Nautilus native AverageTrueRange."""
+    """Thin streaming wrapper for Nautilus native AverageTrueRange.
+
+    Native internal state is deliberately not accessed. Engines which need
+    restoration rebuild this wrapper by replaying saved warmup bars.
+    """
 
     def __init__(self, period: int) -> None:
         if period <= 0:

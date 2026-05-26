@@ -66,6 +66,40 @@ class TickToBarAggregator:
         self._window = None
         return bar
 
+    def state_dict(self) -> dict:
+        return {
+            "config": {
+                "interval": self.config.interval,
+                "price_mode": self.config.price_mode,
+                "volume_mode": self.config.volume_mode,
+            },
+            "instrument_id": self._instrument_id,
+            "window": self._window.isoformat() if self._window is not None else None,
+            "open": self._open,
+            "high": self._high,
+            "low": self._low,
+            "close": self._close,
+            "volume": self._volume,
+            "last_ts": self._last_ts.isoformat() if self._last_ts is not None else None,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        expected = {
+            "interval": self.config.interval,
+            "price_mode": self.config.price_mode,
+            "volume_mode": self.config.volume_mode,
+        }
+        if state.get("config") != expected:
+            raise ValueError("Bar aggregation config does not match checkpoint.")
+        self._instrument_id = state.get("instrument_id")
+        self._window = _from_iso(state.get("window"))
+        self._open = state.get("open")
+        self._high = state.get("high")
+        self._low = state.get("low")
+        self._close = state.get("close")
+        self._volume = float(state.get("volume", 0.0))
+        self._last_ts = _from_iso(state.get("last_ts"))
+
     def _start_bar(self, event: QuoteTickEvent, window: datetime) -> None:
         price = event.mid_price
         self._instrument_id = event.instrument_id
@@ -95,3 +129,7 @@ class TickToBarAggregator:
             source="quote_tick_mid",
             volume_type="synthetic_tick_count",
         )
+
+
+def _from_iso(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value is not None else None

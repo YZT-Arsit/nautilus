@@ -55,6 +55,8 @@ class StreamFeaturePipeline:
 
     def _feature_record(self, bar: BarEvent) -> FeatureRecord:
         snapshot = self.feature_engine.update(bar_event_to_bar_input(bar))
+        if hasattr(self.feature_engine, "set_last_ts_event"):
+            self.feature_engine.set_last_ts_event(bar.ts_event)
         self.emitted_bars += 1
         self._last_ts_event = bar.ts_event
         if (
@@ -72,18 +74,31 @@ class StreamFeaturePipeline:
 
     def _save_metadata(self) -> None:
         key = self.state_key or "stream_feature_pipeline"
-        self.last_state_path = self.state_store.save(
-            key,
-            {
+        state = {
+            "pipeline": {
                 "processed_events": self.processed_events,
                 "emitted_bars": self.emitted_bars,
                 "last_ts_event": (
                     self._last_ts_event.isoformat() if self._last_ts_event is not None else None
                 ),
                 "feature_engine_class": type(self.feature_engine).__name__,
-                "note": (
-                    "Metadata checkpoint only; native indicator internal state is not "
-                    "serialized yet."
-                ),
             },
+            "feature_state": (
+                self.feature_engine.state_dict()
+                if hasattr(self.feature_engine, "state_dict")
+                else None
+            ),
+            "aggregator_state": (
+                self.bar_aggregator.state_dict()
+                if hasattr(self.bar_aggregator, "state_dict")
+                else None
+            ),
+            "note": (
+                "Feature state restores native indicators by replaying checkpointed "
+                "warmup bars; no private native state is accessed."
+            ),
+        }
+        self.last_state_path = self.state_store.save(
+            key,
+            state,
         )

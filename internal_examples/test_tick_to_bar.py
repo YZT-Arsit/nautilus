@@ -52,3 +52,16 @@ def test_tick_to_bar_rejects_out_of_order_ticks():
         assert "ordered" in str(exc)
     else:
         raise AssertionError("Out-of-order QuoteTicks must be rejected.")
+
+
+def test_tick_to_bar_restores_open_window():
+    initial = TickToBarAggregator()
+    initial.update(tick("2023-01-03T09:30:01+00:00", 10, 12))
+    restored = TickToBarAggregator()
+    restored.load_state_dict(initial.state_dict())
+    restored.update(tick("2023-01-03T09:30:25+00:00", 12, 14))
+    bar = restored.flush()
+    assert bar is not None
+    assert bar.open == 11.0
+    assert bar.close == 13.0
+    assert bar.volume == 2.0

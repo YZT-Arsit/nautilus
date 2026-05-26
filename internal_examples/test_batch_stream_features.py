@@ -14,6 +14,7 @@ from nautilus_ext.data import QuoteTickEvent
 from nautilus_ext.pipelines import BatchFeaturePipeline
 from nautilus_ext.pipelines import StreamFeaturePipeline
 from nautilus_ext.state import JsonFeatureStateStore
+from nautilus_ext.state import build_feature_state_store
 
 
 class FakeSource:
@@ -83,6 +84,28 @@ def test_json_state_store_save_load_and_safe_key(tmp_path):
     assert path.parent == tmp_path
     assert store.exists("../unsafe key")
     assert store.load("../unsafe key") == {"emitted_bars": 2}
+    store.delete("../unsafe key")
+    assert not store.exists("../unsafe key")
+
+
+def test_state_store_factory_rejects_unknown_backend(tmp_path):
+    assert isinstance(build_feature_state_store("json", json_root_dir=str(tmp_path)), JsonFeatureStateStore)
+    try:
+        build_feature_state_store("unknown")
+    except ValueError as exc:
+        assert "json" in str(exc)
+        assert "redis" in str(exc)
+    else:
+        raise AssertionError("Unknown state backend must be rejected.")
+
+
+def test_redis_state_backend_is_optional_at_runtime():
+    try:
+        store = build_feature_state_store("redis", redis_url="redis://localhost:6379/0")
+    except ImportError as exc:
+        assert "pip install redis" in str(exc)
+    else:
+        assert type(store).__name__ == "RedisFeatureStateStore"
 
 
 def test_catalog_quote_source_decodes_orders_and_limits_rows(tmp_path):

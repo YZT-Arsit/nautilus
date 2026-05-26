@@ -41,6 +41,8 @@ class BatchFeaturePipeline:
 
     def _feature_record(self, bar: BarEvent) -> FeatureRecord:
         snapshot = self.feature_engine.update(bar_event_to_bar_input(bar))
+        if hasattr(self.feature_engine, "set_last_ts_event"):
+            self.feature_engine.set_last_ts_event(bar.ts_event)
         self.emitted_bars += 1
         return FeatureRecord(
             instrument_id=bar.instrument_id,
