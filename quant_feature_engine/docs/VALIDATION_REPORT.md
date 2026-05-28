@@ -1,12 +1,18 @@
-# quant_feature_engine — Validation Report
+# quant_feature_engine — Status & Validation
 
-**Status:** ✅ MVP validated for engineering correctness on Windows + real CFFEX
-catalog data.
+**Last verified:** 2026-05-28 on `D:\nautilus` (Windows 10, Python 3.13.13,
+polars 1.41.1, pyarrow 24.0.0).
+**Test suite:** 39/39 unit tests pass.
+**Real-data parity:** confirmed for `IH2303.CFFEX` and `IF2301.CFFEX`
+(`2023-01-03` only) across 7 chunk sizes within `1e-6` tolerance.
+**Not yet production-ready** — see [§7 Production-readiness gaps](#7-production-readiness-gaps)
+and [§8 Production backlog](#8-production-backlog) for the concrete work
+required before the framework can be relied on in a live trading or research
+pipeline.
 
-This document is the canonical evidence trail for "does the framework do what it
-claims to do?" It captures both synthetic and real-data validation runs, the
-exact environment they were executed in, and the limitations that scope what
-"validated" means in this context.
+This document is the evidence trail for what has been verified, the environment
+it was verified in, and the explicit list of work still required before the
+framework is production-grade.
 
 ---
 
@@ -50,23 +56,17 @@ macd_signal, macd_hist, vwm_20, vwm_zscore_60`).
 
 ---
 
-## 3. Engineering validation vs performance validation
+## 3. Validation scope (what the current evidence covers)
 
-This is the central distinction. **The runs in this report establish
-engineering correctness; they do not establish trading performance.**
-
-| What we validated | What we did **not** validate |
+| Verified | Not verified |
 |---|---|
-| Offline backfill and streaming replay produce identical features (within `1e-6`) on real catalog data. | Whether those features are profitable, predictive, or behave like the strategy expects in live trading. |
-| Per-symbol state isolation in `PerSymbolMixin` — features for symbol A do not leak into symbol B. | The economic meaningfulness of any feature value computed from `synthetic_tick_count` volume. |
-| Schema stability across micro-batch boundaries, including chunks aligned exactly to feature window lengths. | Latency under live ingestion load (tick rates, jitter). |
-| Hive-Parquet round-trip via `ParquetStore` — read filters prune to a single partition; partition columns don't pollute the result schema. | Behaviour at file-system limits, network filesystems, or cloud object stores. |
-| Manifest dedup so backfill is idempotent. | Concurrent-writer safety on the manifest. |
-| EOD archiver stage-then-commit semantics on idempotent re-runs. | EOD archiver under crash injection or partial writes across multi-day data. |
-
-The single line that summarises the position: **the framework moves data and
-computes features faithfully; whether those features matter is a separate
-question the framework does not try to answer.**
+| Offline backfill and streaming replay produce identical features (within `1e-6`) for real catalog data on Windows. | Live ingestion (latency, jitter, back-pressure, concurrent writers). |
+| Per-symbol state isolation in `PerSymbolMixin`. | Multi-symbol streaming on real data (only synthetic). |
+| Schema stability across micro-batch boundaries aligned to feature window lengths (1, 20, 26, 30, 60, 121, 242). | Cross-day rolling windows on real data (catalog has 1 day). |
+| Hive-Parquet partition pruning + column pruning via `ParquetStore`. | Network filesystems / cloud object stores; file-system limits. |
+| Manifest dedup is idempotent on re-run. | Concurrent-writer safety on the manifest. |
+| EOD archiver stage-then-commit on a happy-path single-day synthetic run. | EOD archiver under crash injection, partial writes, multi-day data, or Windows ACL edge cases. |
+| Feature output values agree to `1e-6` against an offline baseline. | Whether feature values are predictive of returns. That is a research question, not a framework question. |
 
 ---
 
@@ -265,106 +265,123 @@ Each script exits `0` on success, `1` on validation failure — suitable for CI.
 
 ---
 
-## 7. Limitations (scope of what "validated" means)
+## 7. Production-readiness gaps
 
-These limit how far the current evidence extends. None of them indicates a bug;
-each is a deliberately bounded scope.
+These are the items that must be closed before this framework is suitable for
+production use. They are not aspirational improvements; each is a known risk
+or operational hole.
 
-1. **Single trading date in the verified catalog.** All 16 CFFEX instruments
-   in `D:\QuanHub\DataHome\DataTrans\nautilus_catalog` cover only
-   `2023-01-03 01:29–07:00 UTC`. Cross-day rolling-window behaviour, the
-   `cross_day="reset"` policy, and EOD archive across days are exercised
-   only by the synthetic 2-date unit test
-   (`test_streaming_matches_offline_end_to_end`). True multi-day real-data
-   validation is blocked on catalog growth, not framework state.
+### 7.1 Data-coverage gaps (block real-data trust)
 
-2. **Synthetic tick-count volume.** The catalog stores L1 quote ticks, not
-   trade ticks. `TickToBarAggregator` uses
-   `volume_mode="tick_count"`, which counts the number of quotes per minute.
-   Every feature whose semantics depend on real share/contract volume —
-   `vwm_20`, `vwm_zscore_60`, any future VWAP/OBV — is computed against
-   this synthetic volume and is therefore **engineering-valid but not
-   performance-valid** per SKILL.md.
+| Gap | Risk | Closure requires |
+|---|---|---|
+| Single trading date in the catalog. | Cross-day rolling-window and `cross_day="reset"` paths are untested on real data. | More days in the upstream catalog; not a code change. |
+| Volume is synthetic tick count. | Any volume-weighted feature is engineering-valid only. Production strategy decisions would be wrong. | Ingest real trade-tick feed, or extend `TickToBarAggregator` with `volume_mode="trade_size"`. |
+| Session-start `01:29 UTC` bar is pre-open. | First-minute features per day are computed from ~30s of pre-open quotes. | Document the filter in feature consumers; do not change the aggregator. |
 
-3. **Session-start artifact.** Catalog files begin at `01:29:00 UTC`,
-   roughly 30 seconds before the CFFEX day session opens at `01:30:00`. The
-   aggregator produces a `01:29:00 → 01:30:00` minute bar containing a
-   handful of pre-open quotes (`volume = 1` is typical). Features warm-up
-   absorbs it without error, but downstream consumers that compare against
-   official session statistics should filter this first bar.
+### 7.2 Reproducibility gaps
 
-4. **EOD archiver not exercised against real data.** The
-   stage-then-commit, manifest-after-data, and `mode={"error","append",
-   "overwrite"}` semantics are covered by
-   `test_eod_archiver_writes_and_is_idempotent` using synthetic data only.
-   The archiver has not yet been driven against real-data partitions on
-   Windows under multi-day load.
+| Gap | Risk | Closure requires |
+|---|---|---|
+| `requirements.txt` uses floors (`polars>=0.20`). | Two installs days apart may resolve to different versions, producing different binary output. | Pin exact versions and ship a lockfile (`uv lock` or `pip-compile`). |
+| No checksum on input or output Parquet files. | Silent data drift goes undetected. | Add SHA256 to manifest rows; compare on read in `--strict` mode. |
+| `validate_qfe_real_data.py` writes features to a temp dir each run. | Re-runs are not comparable; cannot diff today vs yesterday. | Optional `--output-dir` (already implemented); add `--baseline-dir` flag that diffs against a frozen baseline. |
+| No deterministic seed for synthetic test data. | Currently fixed (seed=42 in `_make_day`), but no test asserts that the synthetic frame's hash matches a known value. | Add a `test_synthetic_baseline_unchanged` test pinning the SHA256 of the generated frame. |
 
-5. **No distributed (Ray) backend exercised.** `RayBatchEngine` exists in
-   `quant_feature_engine/execution/distributed.py` and mirrors the
-   single-machine `BatchEngine.run` contract, but no multi-node test has
-   been run. Single-machine offline (via `concurrent.futures.ProcessPool`
-   or `n_workers=1`) is fully covered.
+### 7.3 Remote / local consistency gaps
 
-6. **No live message-bus integration.** Streaming was driven by
-   `ReplayAdapter` (Parquet → micro-batches at machine speed). Wiring into
-   Nautilus's actual message bus, ZMQ, or Kafka is per
-   `INTEGRATION.md` but is not part of this evidence.
+| Gap | Risk | Closure requires |
+|---|---|---|
+| Sync to server is manual `scp`. | Local and server can drift; no audit trail; easy to forget a file. | Install git on the server (one-time `winget install Git.Git`), then sync via `git fetch origin && git checkout <branch>` per SKILL.md Mode A. |
+| Install on server was triggered as `pip install -r ...`. | Editable Nautilus install path is fragile; no record of what was installed. | Write `scripts/install_qfe.ps1` (and `.sh` for Linux); commit and run the same script on both ends. |
+| No automated check that local files = server files after sync. | Drift is invisible. | Add `scripts/verify_remote_parity.ps1` that hashes every `quant_feature_engine/*.py` on both sides and diffs. |
+| SSH key + host alias setup is undocumented. | Anyone new to the project re-learns it. | Add a `docs/REMOTE_ACCESS.md` (no secrets) covering: key generation, where to install on the server, SSH alias, fallback to password. |
 
-7. **Tolerance is `1e-6`, not exact.** Observed differences are usually
-   bit-identical in this run, but `1e-6` is the contract. Tightening to
-   `0.0` would require a guarantee that no future polars / pyarrow upgrade
-   introduces benign FMA reordering.
+### 7.4 Maintainability gaps
+
+| Gap | Risk | Closure requires |
+|---|---|---|
+| No CI. Tests only run when someone remembers. | Regressions ship to the server unnoticed. | GitHub Actions / equivalent: pytest on Linux and Windows, on every PR. Block merges on failure. |
+| No type checker, no lint, no formatter check. | Drift in code style; type errors land in production. | Add `mypy`, `ruff`, `ruff format` to CI. |
+| No coverage threshold. | A new module can land with zero tests. | `pytest --cov --cov-fail-under=80` (current measured coverage unknown — first measure, then set a floor). |
+| Logging is unstructured `logger.info(...)` calls. | Hard to grep in production; no structured fields for dashboards. | Move to `structlog` or `logging.config` JSON formatter for production deployments. |
+
+### 7.5 Operational gaps (only relevant once the framework runs in a live process)
+
+| Gap | Risk | Closure requires |
+|---|---|---|
+| `StreamingEngine.stats` is in-memory only. | No metrics visible to ops. | Wire `stats.batches`/`rows`/`errors`/`checkpoints` to Prometheus / equivalent. |
+| `errors` counter increments but no alert threshold is defined. | Silent failure of a feature update goes unnoticed. | Define error-budget SLO (e.g. "<0.1% of batches may error"); wire alert. |
+| Manifest grows append-only until 32 shards trigger compaction. | Over months: manifest scan becomes slow. | Scheduled compaction job; document the cadence. |
+| Redis state store is optional and not health-checked. | Streaming engine restart with stale/missing state silently re-warms wrong. | Health check on engine startup: verify the expected checkpoint exists and is recent. Fail loudly if not. |
+| No runbook for: streaming engine error, EOD archive failure, Redis unreachable, manifest corruption, feature-version bump rollback. | On-call has no playbook. | `docs/RUNBOOK.md` with one section per failure mode. |
+| No capacity plan. | Don't know if storage / compute will scale. | Project ticks-per-day × feature-bytes-per-row × 252 days × N years; document the projected disk + RAM. |
+| Security / file-permission review never done. | Catalog reads with whatever permissions the SSH user has; no segregation between read-only catalog and writable feature store. | Document principle-of-least-privilege; ensure the service user can read catalog but write only `data/features/` and `data/_meta/`. |
+
+### 7.6 Engineering-correctness gaps (small, but real)
+
+| Gap | Risk | Closure requires |
+|---|---|---|
+| Streaming engine swallows per-batch exceptions and continues (`stats.errors++`). | A persistently failing batch produces nulls forever with no escalation. | Add an `errors_per_minute` alert + an option to halt after N consecutive failures. |
+| `EodArchiver` leaves the staging directory on failure for forensics but never cleans old ones. | Disk fills up over time on a flaky link. | Periodic cleanup job; or TTL on the staging root. |
+| Tolerance is `1e-6` — generous compared to observed bit-identity. | Future polars upgrade could regress by `~1e-12` and we wouldn't notice. | Add a strict-mode pytest run with tolerance `0.0`. |
+| Parity test sweeps 4 chunk sizes; real-data sweep covers 7. CI runs none of the real-data sweep. | Real-data regressions caught only when humans remember. | Pin a small real-data fixture (synthesised, not from the protected catalog) and add it to CI. |
 
 ---
 
-## 8. Next milestones
+## 8. Production backlog
 
-In rough priority order, each unblocks one of the limitations above.
+Each item below has a concrete deliverable, an effort estimate, and a clear
+acceptance criterion. None require Ray. They are listed in suggested
+priority order — please confirm or reorder before I start any of them.
 
-1. **Catalog multi-day ingestion.** Add at least a week of CFFEX QuoteTicks
-   for one instrument family (e.g. IF*). Then re-run the chunk-stress sweep
-   with chunks that span day boundaries (e.g. `chunk_sizes = 60, 1000,
-   5000`) to confirm the `cross_day="continuous"` default and the
-   `cross_day="reset"` policy both behave correctly on real data.
+### Priority A — must close before any live use
 
-2. **EOD archiver real-data validation.** With ≥2 days available, run the
-   streaming engine over the first day, archive via `EodArchiver`, then run
-   the offline backfill over the result and verify byte-identity to a
-   fresh offline backfill from raw. This validates the
-   stage-then-commit + manifest semantics end-to-end on Windows.
+| # | Deliverable | Effort | Acceptance criterion |
+|---|---|---|---|
+| A1 | **Pinned dependency lockfile.** Replace `requirements.txt` floors with exact pins; ship `uv.lock` or `requirements.lock.txt`. | 0.5 day | Two fresh installs on the same OS produce byte-identical `.venv`. |
+| A2 | **CI pipeline.** GitHub Actions running `pytest quant_feature_engine/tests` + `ruff check` + `mypy` on Linux and Windows, on every PR and `main` push. | 1 day | A test failure on either OS blocks the merge; status badge visible. |
+| A3 | **Install git on the server + adopt SKILL.md Mode A sync.** Stop `scp`'ing files. | 0.5 day (mostly waiting for `winget`) | `git pull` is the only sync command in any runbook. `scripts/sync_to_server.ps1` removed if it existed. |
+| A4 | **One-command install script for both OSes.** `scripts/install_qfe.{sh,ps1}` that creates / refreshes the `.venv` and pins via lockfile. | 0.5 day | A clean checkout reaches "tests green" with one command. |
 
-3. **Real trade-volume integration.** Either ingest a trade-tick feed
-   alongside the existing quote-tick catalog, or extend
-   `TickToBarAggregator` with a `volume_mode="trade_size"` once trade
-   ticks are available. Volume-based features (`vwm_*`) graduate from
-   engineering-valid to performance-valid.
+### Priority B — must close before relying on outputs
 
-4. **Multi-symbol real-data streaming stress.** Build raw bars for several
-   CFFEX instruments and run a single streaming engine across an
-   interleaved stream. Exercises the per-symbol state isolation path on
-   real data (currently only synthetic).
+| # | Deliverable | Effort | Acceptance criterion |
+|---|---|---|---|
+| B1 | **Baseline-diff mode in `validate_qfe_real_data.py`.** `--baseline-dir <path>`; on success, write features there; on subsequent runs, diff against that baseline and report row-level deltas. | 1 day | Re-running the sweep with `--baseline-dir` exits 0 with "no drift"; tampering with a baseline file produces a clear, line-numbered diff. |
+| B2 | **SHA256 column in `Manifest`.** Append the SHA256 of each written Parquet file when registering it. | 0.5 day | Manifest schema gains `file_sha256` column; existing tests updated to assert presence; corrupted file detected by `Manifest.verify()`. |
+| B3 | **Real-data fixture in the test suite.** Tiny (~1 MB), committed to the repo, used by a CI test that runs the full backfill+streaming parity end-to-end on the *same* data on every PR. | 1 day | New test `test_real_fixture_parity` exists, runs on Linux + Windows in CI, completes in < 5s. |
+| B4 | **Multi-day catalog ingestion (one instrument family).** Ingest at least 10 trading days for IF*, IH*, or IC*. Re-run the chunk stress + add cross-day chunk sizes (e.g. 500, 5000). | 1–3 days (depends on data source) | Real-data sweep passes for both `cross_day="continuous"` and `cross_day="reset"` features over ≥10 distinct dates. |
+| B5 | **EOD archiver real-data validation.** Round-trip: streaming → archive → re-read → assert equal to offline backfill from raw. | 1 day | A new test (or harness) executes this round-trip on real data and exits 0. |
 
-5. **Ray distributed offline backfill.** Once items 1–3 are stable, fan
-   `BatchEngine` out across multiple instruments via `RayBatchEngine`. Not
-   urgent — the entire CFFEX corpus is 4.9 MB / 268K ticks and fits
-   comfortably in a single process.
+### Priority C — needed once the framework runs in a live process
 
-6. **Live message-bus adapter.** Replace `ReplayAdapter` with a Nautilus
-   bus subscriber (see `INTEGRATION.md` §3 for the wiring sketch). At this
-   point the framework moves from offline-validated to live-validated.
+| # | Deliverable | Effort | Acceptance criterion |
+|---|---|---|---|
+| C1 | **Prometheus metrics.** `StreamingEngine` exposes `batches_total`, `rows_total`, `errors_total`, `checkpoint_lag_seconds`, `last_batch_ts`. | 1 day | A scrape from the running engine returns the four series; one alert rule shipped. |
+| C2 | **Halt-on-consecutive-errors policy.** New config knob `halt_after_n_errors`; engine stops cleanly and writes a final checkpoint instead of looping with nulls. | 0.5 day | Force-injected exception during streaming halts after N batches; checkpoint exists. |
+| C3 | **`docs/RUNBOOK.md`.** One section per failure mode in §7.5: streaming error, EOD failure, Redis unreachable, manifest corruption, version-bump rollback. | 1 day | A reader unfamiliar with the framework can recover from each failure mode using only the runbook. |
+| C4 | **Structured logging.** Switch to `structlog` or JSON formatter with stable field names (`feature`, `partition`, `batch_id`, `latency_ms`). | 0.5 day | Logs parseable as JSON; one example dashboard query documented. |
+| C5 | **Health check + checkpoint freshness assertion on startup.** Engine refuses to start if its checkpoint is older than `max_checkpoint_age_seconds` without an explicit `--accept-stale` flag. | 0.5 day | Mocked stale checkpoint causes `SystemExit(2)` with a clear message. |
+
+### Priority D — defer until proven necessary
+
+| # | Deliverable | Effort | Acceptance criterion |
+|---|---|---|---|
+| D1 | **Real trade-volume integration.** Extend `TickToBarAggregator` with `volume_mode="trade_size"` once a trade-tick feed exists. | 1 day after data lands | Volume-based features compared against a known-good external source. |
+| D2 | **Multi-symbol real-data streaming.** Build a multi-symbol Parquet partition, run streaming engine, assert per-symbol parity. | 1 day | Real-data multi-symbol test passes. |
+| D3 | **Ray distributed offline.** Only when single-machine backfill is the bottleneck. Current corpus is 4.9 MB total. | 1–2 days | A multi-machine run agrees with a single-machine run on the same partitions. |
+| D4 | **Live message-bus adapter** (Nautilus bus / Kafka / ZMQ). Replace `ReplayAdapter`. | 2–3 days | Side-by-side comparison of a live-stream-then-archive cycle against an offline backfill from the same window agrees within `1e-6`. |
 
 ---
 
 ## 9. Provenance
 
-This report describes a sequence of validation runs executed in May 2026 on
-the remote Windows server defined in `SKILL.md` (`172.16.112.81`, working
-directory `D:\nautilus`). All commands above were executed; the outputs were
-captured verbatim from the SSH session and reproduced in §4 with line-noise
-removed. CSV artifacts and raw bar files live under
+Validation runs executed on `D:\nautilus` (host `172.16.112.81`) via the SSH
+setup described in [REMOTE_ACCESS.md](REMOTE_ACCESS.md) *(to be written — see
+A3)*. Outputs in §4 are verbatim from those sessions with PowerShell
+encoding noise removed. CSV inventory and raw bars live under
 `D:\nautilus\outputs\qfe_catalog_inventory\` and `D:\nautilus\data\raw\`
 respectively.
 
-For the framework architecture and rationale, see
-[INTEGRATION.md](../INTEGRATION.md).
+For framework architecture, see [INTEGRATION.md](../INTEGRATION.md).
