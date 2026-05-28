@@ -6,6 +6,10 @@ This document explains how the new framework relates to existing modules in
 new framework calls into it; where the new framework adds a missing capability,
 existing modules call into it.
 
+> For the current validation status (which environments, instruments, and
+> chunk sizes have been verified end-to-end), see
+> [docs/VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md).
+
 ---
 
 ## Module map

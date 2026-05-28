@@ -1,6 +1,8 @@
 """Storage layer: round-trip through Hive Parquet + manifest semantics."""
 from __future__ import annotations
 
+import os
+
 import polars as pl
 
 from quant_feature_engine.storage.layout import PartitionKey, parse_partition_path
@@ -14,7 +16,12 @@ def test_partition_path_round_trip() -> None:
         order=("feature_group", "frequency", "trading_date"),
     )
     p = key.to_path("/data/features")
-    assert str(p).endswith("feature_group=technical/frequency=1m/trading_date=2026-05-26")
+    # pathlib renders with the native separator (``\`` on Windows, ``/`` on POSIX);
+    # compare against the OS-native expected tail rather than assuming POSIX.
+    expected_tail = os.sep.join(
+        ["feature_group=technical", "frequency=1m", "trading_date=2026-05-26"]
+    )
+    assert str(p).endswith(expected_tail)
     parsed = parse_partition_path(p)
     assert parsed == {
         "feature_group": "technical",
