@@ -76,6 +76,15 @@ venv*/
 .venv*/
 python/nautilus_trader/_libnautilus.pyi
 
+# Generated outputs (strategy backtest and bar-generation artefacts).
+# Ignoring specific subdirs rather than all of outputs/ so that
+# outputs/qfe_catalog_inventory/ (tracked validation CSV) stays visible.
+outputs/crypto_backtest_outputs/
+outputs/generated_bars/
+outputs/multi_strategy_comparison/
+outputs/user_strategies/
+outputs/vwm/
+
 # Build environment and temp
 _build/
 build/

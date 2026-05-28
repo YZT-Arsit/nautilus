@@ -1,32 +1,42 @@
-# Remote access — Windows server + sync workflow
+# Remote access and deployment workflow
 
-How to reach `D:\nautilus` on the production Windows host, install the runtime
-dependencies, and sync code changes. No credentials are committed; the
-authentication setup is described in terms of what to create, not what was
-created.
+How to reach `D:\nautilus` on the production Windows host, keep code in sync,
+and install the runtime dependencies.  No credentials are stored in this file.
+
+---
 
 ## 1. SSH access
 
-The remote uses key-based authentication. To set up a new client:
+Authentication is key-based.  To set up a new client machine:
 
 ```bash
-# 1. Generate a dedicated key (no passphrase only if you trust the local box)
+# Generate a dedicated key pair (no passphrase only if you trust the client box)
 ssh-keygen -t ed25519 -f ~/.ssh/qfe_remote_ed25519 \
     -C "qfe-remote-access-$(date +%Y%m%d)"
 
-# 2. Append the public key to the server's administrators_authorized_keys.
-#    (quant_data is an Administrator account; Windows OpenSSH ignores the
-#     per-user authorized_keys for admins and reads from this file instead.)
+# Print the public key, then install it on the server (see note below)
 cat ~/.ssh/qfe_remote_ed25519.pub
-# Then on the server:
-#   Add-Content -Path C:\ProgramData\ssh\administrators_authorized_keys -Value "<pubkey line>"
-#   icacls C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r \
-#       /grant "Administrators:F" /grant "SYSTEM:F"
-#   Restart-Service sshd
+```
 
-# 3. Add a local ~/.ssh/config entry
-cat >> ~/.ssh/config <<'EOF'
+The `quant_data` user is an **Administrator** on the Windows host.  Windows
+OpenSSH ignores the per-user `authorized_keys` for admins and reads from the
+system-wide file instead.  On the server run:
 
+```powershell
+Add-Content `
+    -Path C:\ProgramData\ssh\administrators_authorized_keys `
+    -Value "<paste public key line here>"
+
+# Lock down ACLs (sshd rejects files readable by non-admins)
+icacls C:\ProgramData\ssh\administrators_authorized_keys `
+    /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
+
+Restart-Service sshd
+```
+
+Add a local `~/.ssh/config` entry so you don't repeat flags every command:
+
+```
 Host nautilus-server
     HostName 172.16.112.81
     User quant_data
@@ -34,149 +44,194 @@ Host nautilus-server
     IdentitiesOnly yes
     PreferredAuthentications publickey
     StrictHostKeyChecking accept-new
-EOF
+```
 
-# 4. Verify
+Verify:
+
+```bash
 ssh nautilus-server "hostname"
 # expected: DESKTOP-4QM8PFQ
 ```
 
-If banner exchange times out from a new network: the server's firewall does
-connection-tracking that drops banner packets from unknown IPs. Have the
-server admin whitelist your source IP.
+If banner exchange times out from a new network location, the server firewall
+is blocking the client IP.  Have the server admin whitelist it; the issue is
+not with the key.
 
-## 2. Project-local git
+---
 
-The server uses **PortableGit** at `D:\nautilus\.tools\PortableGit\`. It was
-installed via [scripts/install_git_portable.ps1](../../scripts/install_git_portable.ps1)
-because `winget install Git.Git` is blocked by the corporate firewall
-(MS package CDN unreachable) while github.com is reachable.
+## 2. Git topology
 
-To re-install or upgrade:
-
-```powershell
-# Option A — script downloads the latest release itself
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\nautilus\scripts\install_git_portable.ps1
-
-# Option B — pre-download the zip on a machine with github-release access and scp it across
-scp MinGit-X.Y.Z-64-bit.zip nautilus-server:D:/nautilus/.tools-cache/
-ssh nautilus-server "powershell -File D:\nautilus\scripts\install_git_portable.ps1 -SourceZip D:\nautilus\.tools-cache\MinGit-X.Y.Z-64-bit.zip -Force"
-```
-
-The script persists git on the **user** PATH (not system PATH), so subsequent
-non-interactive SSH sessions pick it up automatically.
-
-## 3. Git topology
-
-| Remote | URL | Role |
+| Remote alias | URL | Role |
 |---|---|---|
-| `origin` (server) | `https://github.com/nautechsystems/nautilus_trader.git` | Public upstream Nautilus repo. Used to pull upstream Nautilus changes. |
-| `origin` (local) | `https://github.com/YZT-Arsit/nautilus_trader.git` | Personal fork. Where qfe development happens. |
-| `fork` (server) | `https://github.com/YZT-Arsit/nautilus_trader.git` | Added on server so the personal fork is reachable from `D:\nautilus` for code review / cherry-pick. |
+| `origin` on local machine | `https://github.com/YZT-Arsit/nautilus_trader.git` | Personal fork.  This is where all qfe development is committed and pushed. |
+| `origin` on server (`D:\nautilus`) | `https://github.com/nautechsystems/nautilus_trader.git` | Public upstream Nautilus.  Used for upstream merges only; never push qfe work here. |
+| `fork` on server | `https://github.com/YZT-Arsit/nautilus_trader.git` | Added so the server can fetch the personal fork without changing the meaning of `origin`. |
 
-The server's working tree contains uncommitted modifications and untracked
-local experiments. **Do not** `git checkout`, `git pull`, or `git reset`
-against the server's working tree without first stashing or backing it up —
-you will silently destroy in-progress work.
+The working branch on both sides is `develop`.
 
-## 4. Sync workflow (current — interim)
+---
 
-Until the server's working tree is cleaned, the deployment path for
-`quant_feature_engine` and the helper scripts under `scripts/` is:
+## 3. Recommended sync workflow (current — git-based)
+
+This is the standard deployment path.  Use it for all qfe changes.
+
+**On the local machine after making changes:**
 
 ```bash
-# 1. Commit and push from local
-cd ~/path/to/local/nautilus
-git add quant_feature_engine scripts/validate_qfe_*.py scripts/scan_*.py \
-    scripts/install_git_portable.ps1 internal_examples/build_qfe_*.py
-git commit -m "..."
+# Stage and commit
+git add <changed paths>
+git commit -m "qfe: <concise description>"
+
+# Push to personal fork
 git push origin develop
+```
 
-# 2. Make the new tip visible on the server (no checkout, no merge)
-ssh nautilus-server "powershell -Command 'cd D:\nautilus; git fetch fork develop'"
+**On the server to receive the changes:**
 
-# 3. For now, also scp the actual files (until the working tree is clean
-#    enough to git-checkout safely):
+```bash
+ssh nautilus-server "powershell -NoProfile -Command \
+  'cd D:\nautilus; git fetch fork develop; git merge --ff-only fork/develop'"
+```
+
+The `--ff-only` flag guarantees the server never creates a merge commit.  If it
+fails with "not a fast-forward", the server has local commits that haven't been
+incorporated into the fork — investigate before merging.
+
+A shorter form that combines fetch + fast-forward pull:
+
+```bash
+ssh nautilus-server "powershell -NoProfile -Command \
+  'cd D:\nautilus; git pull --ff-only fork develop'"
+```
+
+**Verify the sync landed:**
+
+```bash
+# Both commands must print the same commit hash
+git rev-parse HEAD
+ssh nautilus-server "powershell -NoProfile -Command 'cd D:\nautilus; git rev-parse HEAD'"
+```
+
+---
+
+## 4. Fallback: scp-based file transfer (legacy — avoid unless git is broken)
+
+Use scp only when the git workflow is unavailable, for example during the
+initial bootstrap before git is installed.  It does not update the branch ref
+and produces invisible local/remote drift.
+
+```bash
+# Copy the whole qfe package directory
 scp -i ~/.ssh/qfe_remote_ed25519 -o IdentitiesOnly=yes -r \
     quant_feature_engine nautilus-server:D:/nautilus/
+
+# Copy individual helper scripts
 scp -i ~/.ssh/qfe_remote_ed25519 -o IdentitiesOnly=yes \
-    scripts/{validate_qfe_*.py,scan_*.py,install_git_portable.ps1} \
+    scripts/validate_qfe_mvp.py \
+    scripts/validate_qfe_real_data.py \
+    scripts/scan_cffex_catalog.py \
     nautilus-server:D:/nautilus/scripts/
+
+# Copy bridge script
 scp -i ~/.ssh/qfe_remote_ed25519 -o IdentitiesOnly=yes \
     internal_examples/build_qfe_raw_from_catalog.py \
     nautilus-server:D:/nautilus/internal_examples/
 ```
 
-This is double-write (git + scp) and is **deliberately temporary**. See §5.
+After any scp transfer, reconcile by running git diff on both sides to confirm
+what landed.
 
-## 5. Sync workflow (target — once working tree is clean)
+---
 
-Once the server's modified-tracked + untracked working tree is reconciled,
-switch to the audit-and-checkout pattern:
+## 5. Git on the Windows server (PortableGit)
+
+`git` is installed project-locally at `D:\nautilus\.tools\PortableGit\` via
+[scripts/install_git_portable.ps1](../../scripts/install_git_portable.ps1).
+This is a project-local install of Git-for-Windows MinGit; it does not require
+administrator rights and does not modify the system.
+
+`winget install Git.Git` was unavailable because the Microsoft package CDN is
+blocked at the server's firewall; GitHub release assets are reachable.
+
+To re-install or upgrade on the server:
 
 ```powershell
-# On the server
-cd D:\nautilus
-git fetch fork develop
-# Paths that belong to qfe — replace only those, leave everything else alone
-git checkout fork/develop -- quant_feature_engine
-git checkout fork/develop -- scripts/validate_qfe_mvp.py
-git checkout fork/develop -- scripts/validate_qfe_real_data.py
-git checkout fork/develop -- scripts/scan_cffex_catalog.py
-git checkout fork/develop -- scripts/install_git_portable.ps1
-git checkout fork/develop -- internal_examples/build_qfe_raw_from_catalog.py
+# Option A — script fetches the latest release from GitHub itself
+powershell -NoProfile -ExecutionPolicy Bypass `
+    -File D:\nautilus\scripts\install_git_portable.ps1
+
+# Option B — pre-download the zip on a machine with full internet access, scp across
+scp MinGit-X.Y.Z-64-bit.zip nautilus-server:D:/nautilus/.tools-cache/
+ssh nautilus-server "powershell -File D:\nautilus\scripts\install_git_portable.ps1 `
+    -SourceZip D:\nautilus\.tools-cache\MinGit-X.Y.Z-64-bit.zip -Force"
 ```
 
-`git checkout <commit> -- <path>` updates only the specified paths and stages
-them, leaving every other tracked / untracked file in the working tree
-untouched. This is safer than `git pull` for a server in a known dirty state.
+**Gitignored directories on the server (not committed, not deleted):**
 
-A future helper [scripts/sync_qfe_from_fork.ps1](../../scripts/) (not yet
-written) should encapsulate this list so it stays in lockstep with the qfe
-file inventory.
+| Path | Contents |
+|---|---|
+| `.tools/` | The extracted PortableGit binary tree. |
+| `.tools-cache/` | Downloaded MinGit `.zip` installer and pre-cleanup forensic snapshots. |
 
-## 6. Verifying local↔remote parity
+Both paths are in `.gitignore` (lines 88–89) so they do not appear in
+`git status` output.  They are safe to delete and re-create at any time using
+the install script above.
 
-After any sync, verify both sides have the same content:
+---
+
+## 6. Dependency install on the server
+
+```powershell
+# One-command install from the pinned lockfile; verifies imports; runs pytest
+powershell -NoProfile -ExecutionPolicy Bypass `
+    -File D:\nautilus\scripts\install_qfe.ps1
+
+# Skip the test run (faster, e.g. in CI pre-steps)
+powershell -NoProfile -ExecutionPolicy Bypass `
+    -File D:\nautilus\scripts\install_qfe.ps1 -SkipTests
+```
+
+The script resolves the interpreter in order: `-PythonExe` flag →
+`$env:QFE_PYTHON` → `D:\nautilus\.venv\Scripts\python.exe`.  It installs from
+`quant_feature_engine/requirements.lock.txt` (exact pins) and falls back to
+`requirements.txt` with a warning if the lockfile is absent.
+
+---
+
+## 7. Running the test suite
 
 ```bash
-# Hash the qfe tree on both ends and diff. Any non-empty output means drift.
-diff \
-    <(cd quant_feature_engine && find . -type f -name "*.py" -o -name "*.yaml" -o -name "*.md" -o -name "*.txt" | sort | xargs shasum) \
-    <(ssh nautilus-server "cd D:/nautilus/quant_feature_engine; & 'D:/nautilus/.tools/PortableGit/usr/bin/find.exe' . -type f \( -name '*.py' -o -name '*.yaml' -o -name '*.md' -o -name '*.txt' \) | sort | xargs 'D:/nautilus/.tools/PortableGit/usr/bin/sha1sum.exe'")
+# From local
+ssh nautilus-server "powershell -NoProfile -Command \
+  'cd D:\nautilus; .\.venv\Scripts\python.exe -m pytest quant_feature_engine\tests -q'"
 ```
 
-A future [scripts/verify_remote_parity.ps1](../../scripts/) (not yet written)
-should encapsulate this and exit non-zero on any drift — suitable for CI or
-a pre-deploy gate.
+All harness commands are documented with their exact output in
+[VALIDATION_REPORT.md §6](VALIDATION_REPORT.md#6-reproduction--full-command-sequence).
 
-## 7. Dependency install on the server
+---
 
-The project venv is at `D:\nautilus\.venv` and already has the qfe runtime
-deps. To re-install from a lockfile (once one exists per backlog item A1):
+## 8. What must not be committed
 
-```powershell
-cd D:\nautilus
-.\.venv\Scripts\python.exe -m pip install -r quant_feature_engine\requirements.txt
+- SSH private keys (`~/.ssh/qfe_remote_ed25519` and any server-side host keys).
+- The server password (not stored anywhere in the project — never add it).
+- Raw or derived market data under `D:\nautilus\data\raw\` or `outputs/`
+  (except the tracked `outputs/qfe_catalog_inventory/cffex_inventory.csv`).
+- The MinGit installer zip (binary, ~40 MB, not source).
+- `.tools/` and `.tools-cache/` (already gitignored).
+
+---
+
+## 9. Recovering the upstream Nautilus tip
+
+Before the server's `develop` was aligned to the personal fork, it was at
+upstream Nautilus commit `93078e3` (Kraken/Polymarket fixes, May 2026).  That
+commit is preserved as a local branch on the server:
+
+```bash
+ssh nautilus-server "powershell -NoProfile -Command \
+  'cd D:\nautilus; git log backup/upstream-develop-before-reset --oneline -5'"
 ```
 
-A future [scripts/install_qfe.ps1](../../scripts/) (backlog item A4) will wrap
-this with version pin + venv refresh.
-
-## 8. Running the framework on the server
-
-All harnesses are documented in [VALIDATION_REPORT.md §6](VALIDATION_REPORT.md).
-For convenience, the most common command:
-
-```powershell
-ssh nautilus-server "powershell -NoProfile -Command 'cd D:\nautilus; \
-    .\.venv\Scripts\python.exe -m pytest quant_feature_engine\tests -q'"
-```
-
-## 9. What is **not** to be committed
-
-- SSH private keys (`~/.ssh/qfe_remote_ed25519`, server-side host keys).
-- Any file containing the server password (constraint #4 of the engagement).
-- Raw or derived market data (`D:\nautilus\data\raw\`, `D:\nautilus\outputs\`
-  except for the synthetic inventory CSV).
-- The downloaded `MinGit-*.zip` (it's binary, ~40MB, and not source).
+To cherry-pick specific upstream changes into the fork, use standard git
+cherry-pick from that ref.
