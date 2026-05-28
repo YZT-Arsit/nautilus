@@ -1,0 +1,18 @@
+# Pinned floors are deliberately loose — the framework relies only on stable APIs.
+# Install with:
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install -r quant_feature_engine/requirements.txt
+#
+# Runtime
+polars>=0.20
+pyarrow>=15.0
+pyyaml>=6.0
+
+# Test
+pytest>=7.4
+
+# Optional — distributed offline runner (enable with: pip install -r quant_feature_engine/requirements-distributed.txt)
+# ray[default]>=2.9
+
+# Optional — shared / durable feature state
+# redis>=5.0

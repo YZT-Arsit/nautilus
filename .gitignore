@@ -71,6 +71,7 @@ perf.data
 __pycache__/
 cython_debug/
 requirements*
+!quant_feature_engine/requirements*.txt
 venv*/
 .venv*/
 python/nautilus_trader/_libnautilus.pyi
@@ -85,6 +86,7 @@ env/
 *.sh
 !scripts/ci/install-cargo-nextest.sh
 !scripts/ci/verify-ci-inputs.sh
+!scripts/install_qfe.sh
 !.pre-commit-hooks/*.sh
 *tmp/
 *temp/
