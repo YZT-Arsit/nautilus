@@ -83,6 +83,10 @@ dist/
 env/
 .tmp-pre-commit/
 *.bak
+# qfe-local install artefacts (PortableGit + downloaded zips); see
+# scripts/install_git_portable.ps1 and quant_feature_engine/docs/REMOTE_ACCESS.md.
+.tools/
+.tools-cache/
 *.sh
 !scripts/ci/install-cargo-nextest.sh
 !scripts/ci/verify-ci-inputs.sh
