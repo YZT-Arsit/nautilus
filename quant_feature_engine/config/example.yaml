@@ -1,0 +1,29 @@
+# Example configuration for the quant feature engine.
+# Load with: from quant_feature_engine.config.loader import load_config
+
+storage:
+  raw_root: data/raw
+  feature_root: data/features
+  manifest_root: data/_meta
+
+streaming:
+  batch_ms: 1000
+  checkpoint_every_n_batches: 60
+  # redis_url: redis://localhost:6379/0     # uncomment to enable shared state
+
+execution:
+  backend: local                            # 'local' | 'ray'
+  n_workers: 8
+  # ray_address: ray://head-node:10001      # only when backend=ray
+
+feature_sets:
+  - name: technical_v1
+    features:
+      - sma_20
+      - vol_30
+      - rsi_14
+      - macd
+  - name: volume_v1
+    features:
+      - vwm_20
+      - vwm_zscore_60    # depends on vwm_20; the DAG resolves it automatically
