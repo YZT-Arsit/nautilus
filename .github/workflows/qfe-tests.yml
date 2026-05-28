@@ -1,0 +1,91 @@
+# Continuous-integration check for the quant_feature_engine framework.
+#
+# Scope: this workflow is **only** the qfe Python framework (Polars + PyArrow,
+# no Rust, no Nautilus build). It is deliberately separate from the main
+# `build.yml` so it stays fast and doesn't compete with the Nautilus core CI.
+#
+# What it runs:
+#   1. Install the pinned lockfile (quant_feature_engine/requirements.lock.txt)
+#      into a fresh Python 3.13 environment on Linux and Windows.
+#   2. pytest quant_feature_engine/tests -q -x   (39 tests, ~20s)
+#
+# It runs whenever any of these change:
+#   - quant_feature_engine/**
+#   - scripts/install_qfe.{ps1,sh}
+#   - scripts/validate_qfe_*.py
+#   - .github/workflows/qfe-tests.yml
+#
+# Why both OSes:
+#   The framework's only known cross-OS gotcha so far was a path-separator
+#   assertion in test_storage.py (caught by running on Windows). Future
+#   pathlib / fs-related changes are protected by including Windows in CI.
+
+name: qfe-tests
+
+on:
+  pull_request:
+    paths:
+      - "quant_feature_engine/**"
+      - "scripts/install_qfe.ps1"
+      - "scripts/install_qfe.sh"
+      - "scripts/validate_qfe_*.py"
+      - ".github/workflows/qfe-tests.yml"
+  push:
+    branches: [develop, main, master]
+    paths:
+      - "quant_feature_engine/**"
+      - "scripts/install_qfe.ps1"
+      - "scripts/install_qfe.sh"
+      - "scripts/validate_qfe_*.py"
+      - ".github/workflows/qfe-tests.yml"
+  # Allow manual re-run from the Actions UI.
+  workflow_dispatch:
+
+# Cancel an older in-flight run of the same workflow on the same ref/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / py${{ matrix.python-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # Pin to the validated Python version. Bumping here is an
+        # intentional decision that must be paired with a lockfile refresh.
+        python-version: ["3.13"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: quant_feature_engine/requirements.lock.txt
+
+      - name: Show interpreter
+        run: python -V
+
+      - name: Install qfe (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          QFE_PYTHON="$(which python)" bash scripts/install_qfe.sh --skip-tests
+
+      - name: Install qfe (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $py = (Get-Command python).Source
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install_qfe.ps1 -PythonExe $py -SkipTests
+
+      - name: pytest
+        run: python -m pytest quant_feature_engine/tests -q -x
+
+      - name: Synthetic MVP validation
+        run: python scripts/validate_qfe_mvp.py
