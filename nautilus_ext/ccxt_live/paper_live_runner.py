@@ -32,6 +32,8 @@ from nautilus_ext.ccxt_live.dry_run_execution import DryRunExecutionRecorder
 from nautilus_ext.ccxt_live.polling_bar_feed import CcxtPollingBarFeed
 from nautilus_ext.ccxt_live.polling_config import CcxtPollingLiveConfig
 from nautilus_ext.ccxt_live.signal_recorder import SignalRecorder
+from nautilus_ext.strategies.interfaces.strategy_schema import StrategySpecV2
+from nautilus_ext.strategies.registry import build_signal_engine
 
 log = logging.getLogger(__name__)
 
@@ -43,11 +45,12 @@ class CcxtPaperLiveRunner:
     ----------
     config : CcxtPollingLiveConfig
         Full paper live session configuration.
-    signal_engine : any
+    signal_engine : any | dict
         Must implement:
             signal_engine.update(bar: BarInput, position: int, bars_since_entry: int) -> SignalResult
         Typically VolumeWeightedMomentumShortSignalEngine, but any engine with
-        this interface is accepted.
+        this interface is accepted. A StrategySpecV2-compatible dict is also
+        accepted and will be resolved through the strategy registry.
     _feed : CcxtPollingBarFeed | None
         Inject a pre-built feed (used for testing without real network calls).
     """
@@ -59,7 +62,13 @@ class CcxtPaperLiveRunner:
         _feed: CcxtPollingBarFeed | None = None,
     ) -> None:
         self.config = config
-        self.signal_engine = signal_engine
+        is_strategy_spec = isinstance(signal_engine, (dict, StrategySpecV2))
+        self.strategy_spec = signal_engine if is_strategy_spec else None
+        self.signal_engine = (
+            build_signal_engine(signal_engine)
+            if is_strategy_spec
+            else signal_engine
+        )
 
         self._feed = _feed or CcxtPollingBarFeed(config)
         self._position: int = 0
@@ -202,6 +211,8 @@ class CcxtPaperLiveRunner:
 
         if result.entry_side is not None or result.exit_side is not None:
             self._exec_recorder.append(row, result)
+        elif getattr(result, "order_intents", None):
+            self._exec_recorder.append(row, result)
 
         # Track for received_bars output
         self._received_bars.append({
@@ -215,10 +226,18 @@ class CcxtPaperLiveRunner:
         })
 
     def _update_position(self, result) -> None:
-        if result.entry_side == "SELL":
+        entry_side = result.entry_side
+        exit_side = result.exit_side
+        if entry_side is None or exit_side is None:
+            for intent in getattr(result, "order_intents", []) or []:
+                if intent.action == "submit" and intent.side == "SELL" and not intent.reduce_only:
+                    entry_side = entry_side or "SELL"
+                if intent.action == "submit" and intent.side == "BUY" and intent.reduce_only:
+                    exit_side = exit_side or "BUY"
+        if entry_side == "SELL":
             self._position = -1
             self._bars_since_entry = 0
-        elif result.exit_side == "BUY":
+        elif exit_side == "BUY":
             self._position = 0
             self._bars_since_entry = 0
         elif self._position == -1:

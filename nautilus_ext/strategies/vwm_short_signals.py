@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from nautilus_ext.features.vwm_features import VwmFeatureConfig
 from nautilus_ext.features.vwm_features import VwmFeatureEngine
+from nautilus_ext.strategies.interfaces.strategy_schema import StrategyInputSchema
 from nautilus_ext.strategies.signal_types import BarInput
 from nautilus_ext.strategies.signal_types import SignalResult
 from nautilus_ext.strategies.vwm_short_components import VwmShortSignalConfig
@@ -13,6 +14,18 @@ VwmShortSignalResult = SignalResult
 
 
 class VolumeWeightedMomentumShortSignalEngine:
+    name = "vwm_short"
+    input_schema = StrategyInputSchema(
+        input_types=["bar"],
+        symbols=[],
+        timeframes=None,
+        warmup={"bars": 200},
+        requires_position=True,
+        requires_portfolio=False,
+        multi_asset=False,
+        multi_timeframe=False,
+    )
+
     def __init__(self, config: VwmShortSignalConfig) -> None:
         self.config = config
         self.features = VwmFeatureEngine(
@@ -31,12 +44,20 @@ class VolumeWeightedMomentumShortSignalEngine:
     def reset(self) -> None:
         self.__init__(self.config)
 
+    def warmup(self, events) -> None:
+        for event in events:
+            self.update(event)
+
     def update(
         self,
         bar: BarInput,
+        context: dict | None = None,
         position: int | None = None,
         bars_since_entry: int | None = None,
     ) -> SignalResult:
+        if context is not None:
+            position = context.get("position", position)
+            bars_since_entry = context.get("bars_since_entry", bars_since_entry)
         self._validate_bar(bar)
 
         external_position = position is not None

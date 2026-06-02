@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import json
 
 import pandas as pd
 
@@ -36,6 +37,7 @@ log = logging.getLogger(__name__)
 _COLUMNS = [
     "ts_event",
     "datetime",
+    "event_type",
     "instrument_id",
     "bar_type",
     "open",
@@ -56,6 +58,10 @@ _COLUMNS = [
     "entry_setup_active",
     "entry_trigger_price",
     "reason",
+    "signal_name",
+    "order_intents_count",
+    "debug_json",
+    "state_json",
     "position",
 ]
 
@@ -95,6 +101,8 @@ class SignalRecorder:
             Current position AFTER processing this bar: -1 / 0 / 1.
         """
         debug = result.debug or {}
+        state = result.state or {}
+        order_intents = getattr(result, "order_intents", []) or []
         ts_ms = int(ohlcv_row["timestamp_ms"])
         dt_val = ohlcv_row.get("datetime")
         if hasattr(dt_val, "isoformat"):
@@ -105,6 +113,7 @@ class SignalRecorder:
         self._rows.append({
             "ts_event":            ts_ms,
             "datetime":            dt_str,
+            "event_type":          "bar",
             "instrument_id":       self._instrument_id,
             "bar_type":            self._bar_type,
             "open":                float(ohlcv_row["open"]),
@@ -125,6 +134,10 @@ class SignalRecorder:
             "entry_setup_active":  debug.get("entry_setup_active", False),
             "entry_trigger_price": debug.get("entry_trigger_price"),
             "reason":              result.reason,
+            "signal_name":         result.signal_name,
+            "order_intents_count":  len(order_intents),
+            "debug_json":          json.dumps(debug, ensure_ascii=True, default=str),
+            "state_json":          json.dumps(state, ensure_ascii=True, default=str),
             "position":            position,
         })
 

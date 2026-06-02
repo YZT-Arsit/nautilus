@@ -81,6 +81,24 @@ class DryRunExecutionRecorder:
         else:
             dt_str = str(dt_val)
 
+        intents = getattr(result, "order_intents", None)
+        if intents:
+            for intent in intents:
+                if intent.action == "cancel_entry":
+                    continue
+                self._rows.append({
+                    "ts_event":      ts_ms,
+                    "datetime":      dt_str,
+                    "instrument_id": intent.instrument_id or self._instrument_id,
+                    "side":          intent.side,
+                    "order_type":    intent.order_type,
+                    "trigger_price": intent.trigger_price if intent.trigger_price is not None else intent.price,
+                    "quantity":      intent.quantity or self._trade_size,
+                    "reason":        intent.reason or result.reason,
+                    "status":        _STATUS,
+                })
+            return
+
         if result.entry_side is not None:
             self._rows.append({
                 "ts_event":      ts_ms,

@@ -1,0 +1,27 @@
+{
+  "live": {
+    "exchange_id": "binance",
+    "market_type": "swap",
+    "symbol": "BTC/USDT:USDT",
+    "timeframe": "1m",
+    "venue": "BINANCE",
+    "output_dir": "outputs/ccxt_ma_cross_placeholder"
+  },
+  "strategy": {
+    "name": "ma_cross_placeholder",
+    "input_schema": {
+      "input_types": ["bar"],
+      "symbols": ["BTC/USDT:USDT"],
+      "timeframes": ["1m"],
+      "warmup": 200
+    },
+    "params": {
+      "fast": 20,
+      "slow": 60
+    },
+    "execution": {
+      "trade_size": 1,
+      "mode": "dry_run"
+    }
+  }
+}
