@@ -37,6 +37,16 @@ from nautilus_ext.strategies.registry import build_signal_engine
 
 log = logging.getLogger(__name__)
 
+# Feature pipeline integration — optional; works without Nautilus Cython.
+try:
+    from nautilus_ext.features.feature_pipeline import FeaturePipeline as _FeaturePipeline
+    from nautilus_ext.features.interfaces import StrategyRuntimeContext as _StrategyRuntimeContext
+    _FEATURE_LAYER_AVAILABLE = True
+except ImportError:
+    _FeaturePipeline = None  # type: ignore[assignment, misc]
+    _StrategyRuntimeContext = None  # type: ignore[assignment, misc]
+    _FEATURE_LAYER_AVAILABLE = False
+
 
 class CcxtPaperLiveRunner:
     """Drive a pure-Python signal engine with ccxt REST bar polling.
@@ -60,6 +70,7 @@ class CcxtPaperLiveRunner:
         config: CcxtPollingLiveConfig,
         signal_engine,
         _feed: CcxtPollingBarFeed | None = None,
+        feature_pipeline=None,
     ) -> None:
         self.config = config
         is_strategy_spec = isinstance(signal_engine, (dict, StrategySpecV2))
@@ -71,6 +82,7 @@ class CcxtPaperLiveRunner:
         )
 
         self._feed = _feed or CcxtPollingBarFeed(config)
+        self._feature_pipeline = feature_pipeline  # FeaturePipeline | None
         self._position: int = 0
         self._bars_since_entry: int = 0
 
@@ -116,7 +128,7 @@ class CcxtPaperLiveRunner:
         # --- warmup ---------------------------------------------------
         log.info("=== Paper Live Warmup  symbol=%r ===", self.config.symbol)
         warmup_df = self._feed.warmup()
-        self._warmup_signal_engine(warmup_df)
+        self._warmup_signal_engine(warmup_df, instrument_id=instrument_id)
 
         # --- main loop ------------------------------------------------
         log.info(
@@ -139,7 +151,7 @@ class CcxtPaperLiveRunner:
 
                 # --- process each new bar -----------------------------
                 for _, row in new_df.iterrows():
-                    self._process_bar(row)
+                    self._process_bar(row, instrument_id=instrument_id)
                     self._total_bars += 1
 
                     if effective_max_bars is not None and self._total_bars >= effective_max_bars:
@@ -169,11 +181,12 @@ class CcxtPaperLiveRunner:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _warmup_signal_engine(self, warmup_df: pd.DataFrame) -> None:
+    def _warmup_signal_engine(self, warmup_df: pd.DataFrame, instrument_id: str = "") -> None:
         from nautilus_ext.strategies.signal_types import BarInput
         if warmup_df.empty:
             log.warning("Warmup DataFrame is empty; signal engine will cold-start.")
             return
+        warmup_bars = []
         for _, row in warmup_df.iterrows():
             bar_input = BarInput(
                 open=float(row["open"]),
@@ -181,15 +194,25 @@ class CcxtPaperLiveRunner:
                 low=float(row["low"]),
                 close=float(row["close"]),
                 volume=float(row["volume"]),
+                ts_event=int(row.get("timestamp_ms", 0)),
+                instrument_id=instrument_id or None,
             )
+            warmup_bars.append(bar_input)
+
+        # Run warmup through feature pipeline first (same engine instance as live).
+        if self._feature_pipeline is not None:
+            self._feature_pipeline.warmup(warmup_bars)
+
+        # Run warmup through signal engine (Mode A: computes own features).
+        for bar_input in warmup_bars:
             self.signal_engine.update(
                 bar_input,
                 position=self._position,
                 bars_since_entry=self._bars_since_entry,
             )
-        log.info("Signal engine warmed up with %d bars.", len(warmup_df))
+        log.info("Signal engine warmed up with %d bars.", len(warmup_bars))
 
-    def _process_bar(self, row: "pd.Series") -> None:
+    def _process_bar(self, row: "pd.Series", instrument_id: str = "") -> None:
         from nautilus_ext.strategies.signal_types import BarInput
 
         bar_input = BarInput(
@@ -198,13 +221,34 @@ class CcxtPaperLiveRunner:
             low=float(row["low"]),
             close=float(row["close"]),
             volume=float(row["volume"]),
+            ts_event=int(row.get("timestamp_ms", 0)),
+            instrument_id=instrument_id or None,
         )
 
-        result = self.signal_engine.update(
-            bar_input,
-            position=self._position,
-            bars_since_entry=self._bars_since_entry,
-        )
+        # Feature pipeline (optional) — Mode B: external features.
+        # The pipeline updates OnlineFeatureStore; features can be read
+        # by Mode B signal engines via StrategyRuntimeContext.
+        if self._feature_pipeline is not None and _FEATURE_LAYER_AVAILABLE:
+            feature_events = self._feature_pipeline.update(bar_input)
+            features = {fe.feature_set_id: fe for fe in feature_events}
+            context_dict = {
+                "position": self._position,
+                "bars_since_entry": self._bars_since_entry,
+                "features": features,
+            }
+            result = self.signal_engine.update(
+                bar_input,
+                context=context_dict,
+                position=self._position,
+                bars_since_entry=self._bars_since_entry,
+            )
+        else:
+            # Mode A: signal engine computes own features (backward compat).
+            result = self.signal_engine.update(
+                bar_input,
+                position=self._position,
+                bars_since_entry=self._bars_since_entry,
+            )
 
         self._update_position(result)
         self._signal_recorder.append(row, result, self._position)
@@ -266,6 +310,21 @@ class CcxtPaperLiveRunner:
         # orders (always write; empty file when no intents were recorded)
         if self._exec_recorder is not None:
             self._exec_recorder.to_csv(out / "orders.csv")
+
+        # feature pipeline — flush offline store and persist schemas
+        if self._feature_pipeline is not None:
+            try:
+                n_flushed = self._feature_pipeline.flush()
+                log.info("Feature pipeline: flushed %d feature rows", n_flushed)
+                offline_store = getattr(self._feature_pipeline, "_offline_store", None)
+                if offline_store is not None:
+                    for engine in self._feature_pipeline.engines:
+                        try:
+                            offline_store.write_schema(engine.schema)
+                        except Exception:
+                            pass
+            except Exception as exc:
+                log.warning("Feature pipeline flush failed: %s", exc)
 
         # run_info.json — no secrets included
         try:
