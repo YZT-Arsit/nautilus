@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from collections import deque
 from dataclasses import asdict
 from dataclasses import dataclass
@@ -124,8 +125,9 @@ class VwmFeatureEngine:
         if bars is None:
             raise ValueError("VwmFeatureEngine checkpoint is missing processed_bars.")
         self.reset()
+        bar_fields = {f.name for f in dataclasses.fields(BarInput)}
         for values in bars:
-            self.update(BarInput(**values))
+            self.update(BarInput(**{k: v for k, v in values.items() if k in bar_fields}))
         self.last_ts_event = state.get("last_ts_event")
         if self.current_bar != int(state.get("current_bar", -1)):
             raise ValueError("VwmFeatureEngine checkpoint replay produced an invalid bar count.")
