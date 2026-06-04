@@ -431,5 +431,214 @@ class MyStrategy(FeatureEngineBase):
 | BacktestRunner 逐 bar feature context | 回测策略暂不接收 StrategyRuntimeContext（Mode B） |
 | metrics.json 真实指标 | 当前输出 `{"available": false}`；PnL/Sharpe 未从 BacktestEngine 提取 |
 | session_reporter.py | 实盘会话汇总文件不存在 |
-| label_spec | FeatureDatasetSpec 无 label join；训练时需手动 join 标签 |
 | numpy ring buffer | 高频场景可用 numpy array ring buffer 替代 deque，避免 GIL |
+
+---
+
+## 15. 多 feature_set 训练数据构造
+
+### 场景
+
+训练模型时，通常需要把多个特征集（例如价格动量特征 + 成交量特征 + 波动率特征）合并成一张宽表，每行对应一个时间点。
+
+### 三种 join_mode
+
+| 模式 | 适用场景 | 特点 |
+|------|---------|------|
+| `concat`（默认） | 单特征集，或调用方自行 merge | 垂直拼接，向后兼容 |
+| `exact` | 所有特征集在完全相同的时间戳上计算 | inner join；列名自动加 `{feature_set_id}__` 前缀避免冲突 |
+| `asof` | 特征集采样频率不同，如日频特征 join 分钟频特征 | 时序左 join；`direction="backward"` 保证不泄露未来 |
+
+### exact join 示例
+
+```python
+spec = FeatureDatasetSpec(
+    feature_store_path="outputs/features",
+    feature_set_ids=["vwm_features_v1", "vol_features_v1"],
+    instruments=["BTCUSDT-PERP.BINANCE"],
+    join_mode="exact",
+    column_prefix=True,         # 默认 True，避免列名冲突
+    select_columns={
+        "vwm_features_v1": ["momentum", "vwm"],
+        "vol_features_v1": ["iv", "rv"],
+    },
+)
+df = load_feature_dataset(spec)
+# 输出列：ts_event, instrument_id, vwm_features_v1__momentum,
+#          vwm_features_v1__vwm, vol_features_v1__iv, vol_features_v1__rv
+```
+
+### asof join 示例
+
+```python
+spec = FeatureDatasetSpec(
+    feature_store_path="outputs/features",
+    feature_set_ids=["bar_features_v1", "daily_features_v1"],
+    join_mode="asof",    # 每分钟 bar join 最近一条日频特征
+    column_prefix=True,
+)
+df = load_feature_dataset(spec)
+```
+
+### 带 metadata 的加载
+
+```python
+from nautilus_ext.ml.feature_dataset import load_feature_dataset_with_metadata
+
+result = load_feature_dataset_with_metadata(spec)
+print(result.row_count)          # 8760
+print(result.used_feature_sets)  # ['vwm_features_v1', 'vol_features_v1']
+print(result.start, result.end)  # 时间范围
+```
+
+---
+
+## 16. Exact join vs Asof join
+
+### Exact join（等值连接）
+
+- 使用 `pandas.DataFrame.merge(on=join_keys, how="inner")`
+- 默认 `join_keys=["instrument_id", "ts_event"]`
+- 仅保留所有特征集都有数据的时间点
+- 适合：同一 pipeline 内不同 engine 在同一 bar 上计算的特征
+
+```
+bar ts=100:  vwm_features [x=1.0, y=2.0] + vol_features [z=0.5]
+             → exact join → 一行: ts=100, vwm__x=1.0, vwm__y=2.0, vol__z=0.5
+```
+
+### Asof join（时序近似连接）
+
+- 使用 `pandas.merge_asof(direction="backward")`
+- 按 instrument_id 分组后逐组 join，避免跨品种污染
+- 对每个 primary 行，找 `ts_event <= primary_ts` 的最近一条 secondary 行
+- 若没有满足条件的 secondary 行，对应列为 NaN
+- 适合：日频宏观特征 join 分钟频行情特征
+
+```
+primary  ts=60:  vwm_features [x=1.0]
+secondary        日频特征最近一条 ts=30 → 取 ts=30 的值（不用 ts=90）
+```
+
+**Point-in-time 保证**：asof join 不会把 `ts > primary_ts` 的特征引入训练，避免前瞻偏差。
+
+---
+
+## 17. Point-in-time Correctness 如何保证
+
+| 保障机制 | 位置 | 说明 |
+|---------|------|------|
+| `is_warmup` 标记 | `FeaturePipeline.warmup()` | warmup 期间产出的特征打标为 `is_warmup=True` |
+| 默认排除 warmup | `OfflineFeatureStore.query(include_warmup=False)` | 训练数据不包含 warmup 行 |
+| asof direction=backward | `_asof_join()` | 仅使用 `ts ≤ primary_ts` 的特征 |
+| `feature_version` 字段 | `ManifestRecord`, `FeatureEvent` | 特征逻辑变化时升版本，旧数据可独立查询 |
+| 离线 flush 批量 | `OfflineFeatureStore.flush()` | 写入 Parquet 时携带完整 timestamp，不丢失时序信息 |
+
+**注意**：exact join 使用 inner join，若某个特征集在某时间点无数据，该行不进入训练集，避免隐式 NaN 填充带来的偏差。
+
+---
+
+## 18. Manifest 维护
+
+随着数据积累，manifest 可能产生冗余记录（重复 flush、文件移动等）。提供四个维护方法：
+
+```python
+from nautilus_ext.features.feature_manifest import FeatureManifest
+
+m = FeatureManifest("outputs/features/feature_manifest.json")
+m.load()
+
+# 去重：移除完全相同的 6 字段重复记录
+n_removed = m.deduplicate()
+
+# 压缩：每个 (fs, ver, iid, start, end) 时间槽只保留最新记录
+n_compacted = m.compact(keep="latest")   # or keep="first"
+
+# 清理失效文件：移除 Parquet 已被删除的 manifest 记录
+missing_paths = m.remove_missing_files()
+
+# 统计摘要
+stats = m.summary()
+# 返回：{feature_set_id: {instrument_id: {file_count, total_row_count, min_start_ts, max_end_ts}}}
+for fsid, iid_stats in stats.items():
+    for iid, info in iid_stats.items():
+        print(f"{fsid}/{iid}: {info['file_count']} files, {info['total_row_count']} rows")
+
+# 保存：维护完毕后手动保存
+m.save()
+```
+
+**何时运行维护**：
+- 回测结束后运行一次 `deduplicate()` + `compact()` 即可
+- `remove_missing_files()` 适合在清理旧数据目录后运行
+- 维护操作不会修改 Parquet 文件本身，只更新 JSON index
+
+---
+
+## 19. Benchmark 结果如何解释
+
+运行方式：
+
+```bash
+# 从项目根目录（需要 nautilus_ext 在 PYTHONPATH）
+PYTHONPATH=. python scripts/benchmark_feature_store.py
+
+# 调整参数
+PYTHONPATH=. python scripts/benchmark_feature_store.py --n 100000 --events 10000 --files 100
+```
+
+典型结果（M2 MacBook Air）：
+
+| 指标 | 典型值 | 含义 |
+|------|--------|------|
+| `get_latest`     | 0.04–0.15 µs | O(1) dict 查找，热路径核心调用 |
+| `get_all_latest` | 0.06–0.20 µs | O(n_fsids) dict 浅拷贝 |
+| `get_window(50)` | 0.5–2.0 µs   | deque → list 转换 |
+| append+flush     | ~50 ms / 1k events | 含 DataFrame 构造和 parquet 写盘 |
+| manifest 查询    | 0.01–0.05 ms | JSON 内存过滤，与文件数无关 |
+| rglob 查询       | 0.1–10 ms    | 随文件数线性增长 |
+| 加速比           | 10–200×      | 文件数越多，加速比越高 |
+
+**热路径预算参考**：
+- 1 分钟 bar（1 次/分钟）：get_latest < 1 µs，预算充裕
+- tick 数据（1000 次/秒）：get_latest < 0.2 µs，仍在安全范围
+
+---
+
+## 20. 当前 JSON Manifest 的边界
+
+| 限制 | 说明 |
+|------|------|
+| 文件大小 | 每条记录约 200 字节；10 万条 ≈ 20 MB JSON — 可接受 |
+| 加载速度 | 10 万条 JSON 解析约 200 ms — 仅在 OfflineFeatureStore 初始化时加载一次 |
+| 并发写入 | 不支持多进程并发 append_file_record；需单写多读 |
+| 原子性 | save() 直接覆写；异常中断可能导致截断 — 建议先写临时文件再 rename |
+
+**适用规模**：< 5 万个 Parquet 文件（约 5 年 × 1 分钟 bar × 10 品种）。超出此规模建议升级到 DuckDB 或 Parquet 格式 manifest。
+
+---
+
+## 21. 后续升级 DuckDB / Parquet Manifest 建议
+
+当 feature store 超过 5 万文件或需要跨机器共享 manifest 时，建议按以下步骤升级：
+
+1. **接口不变**：`FeatureManifest.find_files()` / `append_file_record()` / `save()` 签名不变，调用方无感知
+2. **后端替换**：将 `self._records: list[ManifestRecord]` 替换为 DuckDB in-memory 表或 Parquet 文件
+3. **迁移脚本**：读取旧 JSON → 写入新格式；`all_records()` 接口已返回 `list[ManifestRecord]`，可直接复用
+
+```python
+# 迁移示例（不需要修改调用方代码）
+old_manifest = FeatureManifest("outputs/features/feature_manifest.json")
+old_manifest.load()
+
+# 写入 Parquet manifest（需要新实现的 ParquetFeatureManifest）
+new_manifest = ParquetFeatureManifest("outputs/features/manifest.parquet")
+for record in old_manifest.all_records():
+    new_manifest.append_file_record(record)
+new_manifest.save()
+```
+
+DuckDB 方案优点：
+- SQL 查询灵活，支持聚合统计
+- 列式存储，10 万条记录文件 < 1 MB
+- `find_files()` 可用 SQL WHERE 过滤，无需全量加载到内存

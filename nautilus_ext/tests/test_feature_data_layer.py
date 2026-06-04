@@ -1234,3 +1234,491 @@ def test_pipeline_get_feature_window():
     # No online store → empty list
     pipeline2 = FeaturePipeline([MockFeatureEngine()])
     assert pipeline2.get_feature_window(_IID, "test_features_v1", n=5) == []
+
+
+# ===========================================================================
+# 58–75: FeatureManifest maintenance, multi-feature_set join, InferenceContext
+# ===========================================================================
+
+# --- Manifest maintenance -------------------------------------------------
+
+def test_manifest_deduplicate_removes_exact_duplicates(tmp_path: Path):
+    """deduplicate() removes records with identical (fs, ver, iid, start, end, path)."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    m = FeatureManifest(tmp_path / "manifest.json")
+
+    def _rec(i, path="f.parquet"):
+        return ManifestRecord(
+            feature_set_id=_FSID, feature_version="1",
+            instrument_id=_IID,
+            start_ts=_TS0 + i, end_ts=_TS0 + i + 999,
+            row_count=10, file_path=path, created_at="2024-01-01T00:00:00+00:00",
+        )
+
+    m.append_file_record(_rec(0, "a.parquet"))
+    m.append_file_record(_rec(0, "a.parquet"))  # exact duplicate
+    m.append_file_record(_rec(1, "b.parquet"))
+    assert len(m) == 3
+
+    removed = m.deduplicate()
+    assert removed == 1
+    assert len(m) == 2
+
+
+def test_manifest_deduplicate_keeps_last_occurrence():
+    """When file_path differs but other fields are equal, both records survive."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    m = FeatureManifest("/tmp/never_saved.json")
+    for path in ("a.parquet", "b.parquet"):
+        m.append_file_record(ManifestRecord(
+            feature_set_id=_FSID, feature_version="1",
+            instrument_id=_IID, start_ts=0, end_ts=999,
+            row_count=5, file_path=path, created_at="",
+        ))
+    removed = m.deduplicate()
+    # Different file_paths → different keys → both kept
+    assert removed == 0
+    assert len(m) == 2
+
+
+def test_manifest_compact_keeps_one_per_time_slot(tmp_path: Path):
+    """compact() keeps one record per (fs, ver, iid, start, end) group."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    m = FeatureManifest(tmp_path / "manifest.json")
+    # Two records for the same time slot with different file_paths and created_at
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1", instrument_id=_IID,
+        start_ts=0, end_ts=999, row_count=5,
+        file_path="old.parquet", created_at="2024-01-01T00:00:00+00:00",
+    ))
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1", instrument_id=_IID,
+        start_ts=0, end_ts=999, row_count=5,
+        file_path="new.parquet", created_at="2024-06-01T00:00:00+00:00",
+    ))
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1", instrument_id=_IID,
+        start_ts=1000, end_ts=1999, row_count=5,
+        file_path="other.parquet", created_at="2024-01-01T00:00:00+00:00",
+    ))
+    assert len(m) == 3
+
+    removed = m.compact(keep="latest")
+    assert removed == 1   # one duplicate slot removed
+    assert len(m) == 2
+    # The kept record for slot [0,999] is the latest one
+    for r in m.all_records():
+        if r.start_ts == 0:
+            assert r.file_path == "new.parquet"
+
+
+def test_manifest_remove_missing_files(tmp_path: Path):
+    """remove_missing_files() deletes records for files that don't exist on disk."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    real = tmp_path / "real.parquet"
+    real.write_bytes(b"")
+
+    m = FeatureManifest(tmp_path / "manifest.json")
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1", instrument_id=_IID,
+        start_ts=_TS0, end_ts=_TS0 + 999, row_count=5,
+        file_path=str(real), created_at="",
+    ))
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1", instrument_id=_IID,
+        start_ts=_TS0 + 1000, end_ts=_TS0 + 1999, row_count=5,
+        file_path=str(tmp_path / "ghost.parquet"), created_at="",
+    ))
+    assert len(m) == 2
+
+    removed = m.remove_missing_files()
+    assert removed == [str(tmp_path / "ghost.parquet")]
+    assert len(m) == 1
+    assert m.all_records()[0].file_path == str(real)
+
+
+def test_manifest_remove_missing_does_not_delete_real_files(tmp_path: Path):
+    """remove_missing_files() never deletes files from disk, only manifest records."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    real = tmp_path / "keep.parquet"
+    real.write_bytes(b"")
+
+    m = FeatureManifest(tmp_path / "manifest.json")
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1", instrument_id=_IID,
+        start_ts=_TS0, end_ts=_TS0 + 999, row_count=5,
+        file_path=str(real), created_at="",
+    ))
+    m.remove_missing_files()
+    assert real.exists()
+
+
+def test_manifest_summary_returns_correct_stats(tmp_path: Path):
+    """summary() returns per-(feature_set_id, instrument_id) aggregated stats."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    m = FeatureManifest(tmp_path / "manifest.json")
+    iid_b = "ETHUSDT-PERP.BINANCE"
+
+    for i in range(3):
+        m.append_file_record(ManifestRecord(
+            feature_set_id=_FSID, feature_version="1", instrument_id=_IID,
+            start_ts=_TS0 + i * 1000, end_ts=_TS0 + i * 1000 + 999,
+            row_count=10, file_path=f"btc_{i}.parquet", created_at="",
+        ))
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1", instrument_id=iid_b,
+        start_ts=_TS0, end_ts=_TS0 + 4999,
+        row_count=50, file_path="eth_0.parquet", created_at="",
+    ))
+
+    stats = m.summary()
+    assert _FSID in stats
+    btc_stats = stats[_FSID][_IID]
+    assert btc_stats["file_count"] == 3
+    assert btc_stats["total_row_count"] == 30
+    assert btc_stats["min_start_ts"] == _TS0
+    assert btc_stats["max_end_ts"] == _TS0 + 2999
+
+    eth_stats = stats[_FSID][iid_b]
+    assert eth_stats["file_count"] == 1
+    assert eth_stats["total_row_count"] == 50
+
+
+# --- Multi-feature-set FeatureDataset join --------------------------------
+
+_FSID_B = "test_features_v2"
+
+def _make_store_with_two_sets(
+    tmp_path: Path,
+    n: int = 10,
+) -> OfflineFeatureStore:
+    """Write two feature sets to one store, same timestamps."""
+    store = OfflineFeatureStore(tmp_path)
+    for i in range(n):
+        ts = _TS0 + i * 60_000
+        store.append(FeatureEvent(
+            ts_event=ts, instrument_id=_IID,
+            feature_set_id=_FSID, feature_version="1",
+            values={"x": float(i), "y": float(i) * 2.0},
+        ))
+        store.append(FeatureEvent(
+            ts_event=ts, instrument_id=_IID,
+            feature_set_id=_FSID_B, feature_version="1",
+            values={"z": float(i) * 3.0, "w": float(i) * 4.0},
+        ))
+    store.flush()
+    return store
+
+
+def test_feature_dataset_concat_mode_backward_compat(tmp_path: Path):
+    """Default concat mode stacks rows vertically — backward-compatible."""
+    _make_store_with_two_sets(tmp_path / "features")
+    spec = FeatureDatasetSpec(
+        feature_store_path=tmp_path / "features",
+        feature_set_ids=[_FSID, _FSID_B],
+        instruments=[_IID],
+        join_mode="concat",
+    )
+    df = load_feature_dataset(spec)
+    assert len(df) == 20   # 10 rows × 2 feature sets
+    assert set(df["feature_set_id"].unique()) == {_FSID, _FSID_B}
+
+
+def test_feature_dataset_exact_join_two_sets(tmp_path: Path):
+    """Exact join produces one row per timestamp with columns from both sets."""
+    _make_store_with_two_sets(tmp_path / "features")
+    spec = FeatureDatasetSpec(
+        feature_store_path=tmp_path / "features",
+        feature_set_ids=[_FSID, _FSID_B],
+        instruments=[_IID],
+        join_mode="exact",
+        column_prefix=True,
+    )
+    df = load_feature_dataset(spec)
+    assert len(df) == 10   # inner join: same 10 timestamps
+    # Columns from feature set A are prefixed
+    assert f"{_FSID}__x" in df.columns
+    assert f"{_FSID}__y" in df.columns
+    # Columns from feature set B are prefixed
+    assert f"{_FSID_B}__z" in df.columns
+    assert f"{_FSID_B}__w" in df.columns
+    # Shared metadata columns appear only once
+    assert "ts_event" in df.columns
+    assert "instrument_id" in df.columns
+
+
+def test_feature_dataset_exact_join_no_column_conflicts(tmp_path: Path):
+    """Exact join with column_prefix=True: identical column names from different sets do not collide."""
+    store = OfflineFeatureStore(tmp_path / "features")
+    for i in range(5):
+        ts = _TS0 + i * 60_000
+        # Both sets have a column named "x"
+        store.append(FeatureEvent(
+            ts_event=ts, instrument_id=_IID,
+            feature_set_id="fs_a", feature_version="1",
+            values={"x": float(i)},
+        ))
+        store.append(FeatureEvent(
+            ts_event=ts, instrument_id=_IID,
+            feature_set_id="fs_b", feature_version="1",
+            values={"x": float(i) * 10},
+        ))
+    store.flush()
+
+    spec = FeatureDatasetSpec(
+        feature_store_path=tmp_path / "features",
+        feature_set_ids=["fs_a", "fs_b"],
+        join_mode="exact",
+        column_prefix=True,
+    )
+    df = load_feature_dataset(spec)
+    assert "fs_a__x" in df.columns
+    assert "fs_b__x" in df.columns
+    # Values must be distinct (no overwrite)
+    assert df["fs_b__x"].iloc[0] == pytest.approx(df["fs_a__x"].iloc[0] * 10)
+
+
+def test_feature_dataset_asof_join_point_in_time(tmp_path: Path):
+    """asof join never uses secondary features from after the primary ts_event."""
+    store = OfflineFeatureStore(tmp_path / "features")
+    # Primary (fs_a): bars at 0, 60, 120, 180 s
+    # Secondary (fs_b): bars at 30, 90, 150 s (staggered by 30 s)
+    for i in range(4):
+        store.append(FeatureEvent(
+            ts_event=_TS0 + i * 60_000, instrument_id=_IID,
+            feature_set_id="fs_a", feature_version="1",
+            values={"primary": float(i)},
+        ))
+    for i in range(3):
+        store.append(FeatureEvent(
+            ts_event=_TS0 + 30_000 + i * 60_000, instrument_id=_IID,
+            feature_set_id="fs_b", feature_version="1",
+            values={"secondary": float(i + 100)},
+        ))
+    store.flush()
+
+    spec = FeatureDatasetSpec(
+        feature_store_path=tmp_path / "features",
+        feature_set_ids=["fs_a", "fs_b"],
+        join_mode="asof",
+        column_prefix=True,
+    )
+    df = load_feature_dataset(spec)
+    assert len(df) == 4  # all primary rows preserved
+
+    # Primary at ts=0: no secondary at ts<=0 → NaN
+    row0 = df[df["ts_event"] == _TS0].iloc[0]
+    assert pd.isna(row0.get("fs_b__secondary", float("nan")))
+
+    # Primary at ts=60: closest secondary at ts=30 (secondary=100) — direction=backward
+    row60 = df[df["ts_event"] == _TS0 + 60_000].iloc[0]
+    assert row60["fs_b__secondary"] == pytest.approx(100.0)
+
+    # Primary at ts=120: closest secondary at ts=90 (secondary=101)
+    row120 = df[df["ts_event"] == _TS0 + 120_000].iloc[0]
+    assert row120["fs_b__secondary"] == pytest.approx(101.0)
+
+
+def test_feature_dataset_select_columns_dict_per_set(tmp_path: Path):
+    """select_columns as dict applies per-feature-set column filters."""
+    _make_store_with_two_sets(tmp_path / "features")
+    spec = FeatureDatasetSpec(
+        feature_store_path=tmp_path / "features",
+        feature_set_ids=[_FSID, _FSID_B],
+        join_mode="exact",
+        column_prefix=True,
+        select_columns={_FSID: ["x"], _FSID_B: ["z"]},
+    )
+    df = load_feature_dataset(spec)
+    assert f"{_FSID}__x" in df.columns
+    assert f"{_FSID}__y" not in df.columns   # filtered out
+    assert f"{_FSID_B}__z" in df.columns
+    assert f"{_FSID_B}__w" not in df.columns  # filtered out
+
+
+def test_load_feature_dataset_with_metadata_returns_correct_info(tmp_path: Path):
+    """load_feature_dataset_with_metadata populates all result fields."""
+    from nautilus_ext.ml.feature_dataset import load_feature_dataset_with_metadata
+
+    store = OfflineFeatureStore(tmp_path / "features")
+    for i in range(5):
+        store.append(_make_fe(ts=_TS0 + i * 60_000))
+    store.flush()
+
+    spec = FeatureDatasetSpec(
+        feature_store_path=tmp_path / "features",
+        feature_set_ids=[_FSID],
+        instruments=[_IID],
+    )
+    result = load_feature_dataset_with_metadata(spec)
+    assert result.row_count == 5
+    assert "ts_event" in result.columns
+    assert result.start == _TS0
+    assert result.end == _TS0 + 4 * 60_000
+    assert _FSID in result.used_feature_sets
+
+
+def test_load_feature_dataset_with_metadata_empty_store(tmp_path: Path):
+    """Empty store returns FeatureDatasetResult with empty data."""
+    from nautilus_ext.ml.feature_dataset import load_feature_dataset_with_metadata
+
+    spec = FeatureDatasetSpec(
+        feature_store_path=tmp_path / "features",
+        feature_set_ids=[_FSID],
+    )
+    result = load_feature_dataset_with_metadata(spec)
+    assert result.row_count == 0
+    assert result.data.empty
+    assert result.start is None
+    assert result.end is None
+
+
+# --- InferenceContext enhancements ----------------------------------------
+
+def _make_inference_store() -> tuple[OnlineFeatureStore, str, str]:
+    """Populate a store with two feature sets and return (store, iid, fsid)."""
+    store = OnlineFeatureStore()
+    store.put(FeatureEvent(
+        ts_event=_TS0, instrument_id=_IID,
+        feature_set_id="fs_a", feature_version="1",
+        values={"m": 1.5, "v": 2.5},
+    ))
+    store.put(FeatureEvent(
+        ts_event=_TS0, instrument_id=_IID,
+        feature_set_id="fs_b", feature_version="1",
+        values={"atr": 0.5},
+    ))
+    return store
+
+
+def test_inference_context_multi_set_vector():
+    """get_feature_vector assembles features from multiple feature sets."""
+    store = _make_inference_store()
+    ctx = ModelInferenceContext(store, feature_set_ids=["fs_a", "fs_b"])
+    vec = ctx.get_feature_vector(_IID)
+    assert vec["fs_a.m"] == pytest.approx(1.5)
+    assert vec["fs_a.v"] == pytest.approx(2.5)
+    assert vec["fs_b.atr"] == pytest.approx(0.5)
+
+
+def test_inference_context_feature_order_controls_output():
+    """feature_order determines the key order and filters the output."""
+    store = _make_inference_store()
+    ctx = ModelInferenceContext(
+        store,
+        feature_set_ids=["fs_a", "fs_b"],
+        feature_order=["fs_b.atr", "fs_a.m"],
+    )
+    vec = ctx.get_feature_vector(_IID)
+    keys = list(vec.keys())
+    assert keys == ["fs_b.atr", "fs_a.m"]
+
+
+def test_inference_context_fill_none_policy():
+    """fill_none: missing keys map to None without raising."""
+    store = OnlineFeatureStore()
+    store.put(FeatureEvent(
+        ts_event=_TS0, instrument_id=_IID,
+        feature_set_id="fs_a", feature_version="1",
+        values={"x": 1.0},
+    ))
+    ctx = ModelInferenceContext(
+        store,
+        feature_set_ids=["fs_a"],
+        feature_order=["fs_a.x", "fs_a.missing"],
+        missing_feature_policy="fill_none",
+    )
+    vec = ctx.get_feature_vector(_IID)
+    assert vec["fs_a.x"] == pytest.approx(1.0)
+    assert vec["fs_a.missing"] is None
+
+
+def test_inference_context_fill_zero_policy():
+    """fill_zero: missing keys map to 0.0."""
+    store = OnlineFeatureStore()
+    store.put(FeatureEvent(
+        ts_event=_TS0, instrument_id=_IID,
+        feature_set_id="fs_a", feature_version="1",
+        values={"x": 1.0},
+    ))
+    ctx = ModelInferenceContext(
+        store,
+        feature_set_ids=["fs_a"],
+        feature_order=["fs_a.x", "fs_a.missing"],
+        missing_feature_policy="fill_zero",
+    )
+    vec = ctx.get_feature_vector(_IID)
+    assert vec["fs_a.missing"] == pytest.approx(0.0)
+
+
+def test_inference_context_raise_policy():
+    """raise: ValueError raised when any feature in feature_order is missing."""
+    store = OnlineFeatureStore()
+    store.put(FeatureEvent(
+        ts_event=_TS0, instrument_id=_IID,
+        feature_set_id="fs_a", feature_version="1",
+        values={"x": 1.0},
+    ))
+    ctx = ModelInferenceContext(
+        store,
+        feature_set_ids=["fs_a"],
+        feature_order=["fs_a.x", "fs_a.missing"],
+        missing_feature_policy="raise",
+    )
+    with pytest.raises(ValueError, match="missing"):
+        ctx.get_feature_vector(_IID)
+
+
+def test_inference_context_invalid_policy_raises():
+    """Invalid missing_feature_policy raises ValueError at construction."""
+    store = OnlineFeatureStore()
+    with pytest.raises(ValueError):
+        ModelInferenceContext(store, feature_set_ids=["fs_a"], missing_feature_policy="bad_value")
+
+
+def test_inference_context_get_feature_list():
+    """get_feature_list returns values in feature_order sequence."""
+    store = _make_inference_store()
+    ctx = ModelInferenceContext(
+        store,
+        feature_set_ids=["fs_a", "fs_b"],
+        feature_order=["fs_b.atr", "fs_a.m", "fs_a.v"],
+    )
+    lst = ctx.get_feature_list(_IID)
+    assert lst == pytest.approx([0.5, 1.5, 2.5])
+
+
+def test_inference_context_get_feature_array_returns_iterable():
+    """get_feature_array returns something list-like (numpy or list)."""
+    store = _make_inference_store()
+    ctx = ModelInferenceContext(
+        store,
+        feature_set_ids=["fs_a"],
+        feature_order=["fs_a.m", "fs_a.v"],
+    )
+    arr = ctx.get_feature_array(_IID)
+    values = list(arr)
+    assert values == pytest.approx([1.5, 2.5])
+
+
+# --- Benchmark import dry-run --------------------------------------------
+
+def test_benchmark_script_importable():
+    """benchmark_feature_store.py must be importable without side effects."""
+    import importlib.util, sys
+    from pathlib import Path as _Path
+    spec_path = _Path(__file__).parents[2] / "scripts" / "benchmark_feature_store.py"
+    if not spec_path.exists():
+        pytest.skip("benchmark script not found")
+    spec_mod = importlib.util.spec_from_file_location("benchmark_feature_store", spec_path)
+    mod = importlib.util.module_from_spec(spec_mod)
+    # Import must not raise and must not execute benchmarks
+    spec_mod.loader.exec_module(mod)
+    assert hasattr(mod, "main")
+    assert hasattr(mod, "bench_online_latency")
