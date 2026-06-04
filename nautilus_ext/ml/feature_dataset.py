@@ -52,6 +52,7 @@ class FeatureDatasetSpec:
     start: int | None = None
     end: int | None = None
     include_warmup: bool = False
+    select_columns: list[str] | None = None  # None = all columns; required metadata always included
 
 
 def load_feature_dataset(spec: FeatureDatasetSpec) -> pd.DataFrame:
@@ -107,4 +108,16 @@ def load_feature_dataset(spec: FeatureDatasetSpec) -> pd.DataFrame:
         return pd.DataFrame()
 
     result = pd.concat(parts, ignore_index=True)
-    return result.sort_values("ts_event").reset_index(drop=True)
+    result = result.sort_values("ts_event").reset_index(drop=True)
+
+    # Apply column selection; required metadata columns are always kept
+    if spec.select_columns is not None:
+        _required = {
+            "ts_event", "instrument_id", "feature_set_id",
+            "feature_version", "is_warmup",
+        }
+        keep = list(_required | set(spec.select_columns))
+        keep = [c for c in keep if c in result.columns]
+        result = result[keep]
+
+    return result

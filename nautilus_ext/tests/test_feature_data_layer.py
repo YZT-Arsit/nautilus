@@ -990,3 +990,247 @@ def test_pipeline_warmup_n_then_live_1_current_bar_is_n_plus_1():
     assert len(events) == 1
     assert events[0].is_warmup is False
     assert events[0].values["x"] == pytest.approx(float(N + 1))
+
+
+# ===========================================================================
+# 47–55: Data layer / Feature Database optimisation tests
+# ===========================================================================
+
+def test_online_store_get_all_latest():
+    """get_all_latest returns all feature_set_ids for one instrument — O(1) dict."""
+    store = OnlineFeatureStore()
+    fe1 = _make_fe(ts=_TS0, feature_set_id="fs_a", x=1.0)
+    fe2 = _make_fe(ts=_TS0, feature_set_id="fs_b", x=2.0)
+    store.put(fe1)
+    store.put(fe2)
+
+    latest = store.get_all_latest(_IID)
+    assert set(latest.keys()) == {"fs_a", "fs_b"}
+    assert latest["fs_a"].values["x"] == pytest.approx(1.0)
+    assert latest["fs_b"].values["x"] == pytest.approx(2.0)
+
+    # Returns empty dict for unknown instrument
+    assert store.get_all_latest("UNKNOWN.VENUE") == {}
+
+
+def test_online_store_latest_dict_reflects_most_recent_put():
+    """After two puts for same key, get_latest always returns the last one."""
+    store = OnlineFeatureStore()
+    fe_old = _make_fe(ts=_TS0, x=1.0)
+    fe_new = _make_fe(ts=_TS0 + 1000, x=9.9)
+    store.put(fe_old)
+    store.put(fe_new)
+
+    # get_latest uses _latest dict — must be the second event
+    result = store.get_latest(_IID, _FSID)
+    assert result is fe_new
+    assert result.values["x"] == pytest.approx(9.9)
+
+
+def test_feature_manifest_basic_operations(tmp_path: Path):
+    """Manifest supports append, save, load, find_files round-trip."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    path = tmp_path / "manifest.json"
+    m = FeatureManifest(path)
+    m.load()  # no file yet — should not raise
+    assert len(m) == 0
+
+    m.append_file_record(ManifestRecord(
+        feature_set_id="vwm_features_v1",
+        feature_version="1",
+        instrument_id="BTCUSDT-PERP.BINANCE",
+        start_ts=_TS0,
+        end_ts=_TS0 + 9 * 60_000,
+        row_count=10,
+        file_path=str(tmp_path / "dummy.parquet"),
+        created_at="2024-01-01T00:00:00+00:00",
+    ))
+    m.save()
+
+    m2 = FeatureManifest(path)
+    m2.load()
+    assert len(m2) == 1
+    assert m2.all_records()[0].feature_set_id == "vwm_features_v1"
+    assert m2.all_records()[0].instrument_id == "BTCUSDT-PERP.BINANCE"
+
+
+def test_feature_manifest_time_range_overlap_filter(tmp_path: Path):
+    """find_files returns only files whose ts range overlaps the query range."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    m = FeatureManifest(tmp_path / "manifest.json")
+
+    def _rec(start, end, path):
+        return ManifestRecord(
+            feature_set_id=_FSID, feature_version="1",
+            instrument_id=_IID,
+            start_ts=start, end_ts=end,
+            row_count=1, file_path=path, created_at="",
+        )
+
+    # Files covering: [0-10], [5-15], [20-30]
+    m.append_file_record(_rec(0, 10, "f1.parquet"))
+    m.append_file_record(_rec(5, 15, "f2.parquet"))
+    m.append_file_record(_rec(20, 30, "f3.parquet"))
+
+    # Query [8, 12] overlaps f1 and f2 only
+    files = m.find_files(start=8, end=12)
+    assert set(files) == {"f1.parquet", "f2.parquet"}
+
+    # Query [0, 30] overlaps all
+    assert set(m.find_files(start=0, end=30)) == {"f1.parquet", "f2.parquet", "f3.parquet"}
+
+    # Query [25, 30] overlaps only f3
+    assert m.find_files(start=25, end=30) == ["f3.parquet"]
+
+    # feature_set_id filter still works alongside time filter
+    assert m.find_files(feature_set_id="other_fs", start=0, end=30) == []
+
+
+def test_offline_store_manifest_populated_after_flush(tmp_path: Path):
+    """After flush(), the manifest JSON records one entry per (iid, fsid) group."""
+    store = OfflineFeatureStore(tmp_path)
+    for i in range(5):
+        store.append(_make_fe(ts=_TS0 + i * 1000))
+    store.flush()
+
+    manifest_path = tmp_path / "feature_manifest.json"
+    assert manifest_path.exists()
+
+    import json as _json
+    records = _json.loads(manifest_path.read_text())
+    assert len(records) == 1  # one group: (_IID, _FSID)
+    assert records[0]["instrument_id"] == _IID
+    assert records[0]["feature_set_id"] == _FSID
+    assert records[0]["row_count"] == 5
+    assert records[0]["start_ts"] == _TS0
+    assert records[0]["end_ts"] == _TS0 + 4 * 1000
+
+
+def test_offline_store_query_uses_manifest_not_rglob(tmp_path: Path):
+    """query() reads files via manifest; rglob is not called when manifest is non-empty."""
+    store = OfflineFeatureStore(tmp_path)
+    for i in range(5):
+        store.append(_make_fe(ts=_TS0 + i * 1000))
+    store.flush()
+
+    # Verify manifest is non-empty (query will use it)
+    assert store._manifest is not None
+    assert len(store._manifest) > 0
+
+    # Monkeypatch rglob to detect if it's called on the offline root
+    offline_root = tmp_path / "offline"
+    original_rglob = offline_root.__class__.rglob
+    rglob_called = []
+
+    from pathlib import Path as _Path
+
+    def _patched_rglob(self, pattern):
+        if self == offline_root:
+            rglob_called.append(pattern)
+        return original_rglob(self, pattern)
+
+    _Path.rglob = _patched_rglob
+    try:
+        df = store.query(instrument_id=_IID, feature_set_id=_FSID)
+    finally:
+        _Path.rglob = original_rglob
+
+    assert len(df) == 5
+    assert len(rglob_called) == 0, "rglob was called despite non-empty manifest"
+
+
+def test_offline_store_extend_alias(tmp_path: Path):
+    """extend() is an alias for write() — buffers without flushing."""
+    store = OfflineFeatureStore(tmp_path, flush_threshold=10_000)
+    events = [_make_fe(ts=_TS0 + i * 1000) for i in range(7)]
+    store.extend(events)
+    assert store.pending_count() == 7
+    # No files written yet
+    assert not (tmp_path / "offline").exists()
+    store.flush()
+    assert store.pending_count() == 0
+
+
+def test_feature_dataset_select_columns(tmp_path: Path):
+    """load_feature_dataset returns only requested columns plus required metadata."""
+    store = OfflineFeatureStore(tmp_path / "features")
+    for i in range(10):
+        store.append(_make_fe(ts=_TS0 + i * 60_000))
+    store.flush()
+
+    spec = FeatureDatasetSpec(
+        feature_store_path=tmp_path / "features",
+        feature_set_ids=[_FSID],
+        instruments=[_IID],
+        select_columns=["x"],  # only want "x", not "y"
+    )
+    df = load_feature_dataset(spec)
+    assert "x" in df.columns
+    assert "y" not in df.columns
+    # Required metadata always present
+    assert "ts_event" in df.columns
+    assert "instrument_id" in df.columns
+    assert "feature_set_id" in df.columns
+    assert "is_warmup" in df.columns
+    assert len(df) == 10
+
+
+def test_feature_manifest_validate_files_exist(tmp_path: Path):
+    """validate_files_exist reports missing Parquet files."""
+    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+
+    m = FeatureManifest(tmp_path / "manifest.json")
+    real_file = tmp_path / "real.parquet"
+    real_file.write_bytes(b"")  # create placeholder
+    fake_file = str(tmp_path / "ghost.parquet")
+
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1",
+        instrument_id=_IID, start_ts=_TS0, end_ts=_TS0,
+        row_count=1, file_path=str(real_file), created_at="",
+    ))
+    m.append_file_record(ManifestRecord(
+        feature_set_id=_FSID, feature_version="1",
+        instrument_id=_IID, start_ts=_TS0 + 1000, end_ts=_TS0 + 1000,
+        row_count=1, file_path=fake_file, created_at="",
+    ))
+
+    missing = m.validate_files_exist()
+    assert missing == [fake_file]
+
+
+def test_pipeline_get_latest_features_uses_get_all_latest():
+    """FeaturePipeline.get_latest_features delegates to get_all_latest (O(1))."""
+    engine = MockFeatureEngine()
+    online = OnlineFeatureStore()
+    pipeline = FeaturePipeline([engine], online_store=online)
+
+    for i in range(3):
+        pipeline.update(_make_bar(ts=_TS0 + i * 1000))
+
+    features = pipeline.get_latest_features(_IID)
+    assert "test_features_v1" in features
+    assert features["test_features_v1"].values["x"] == pytest.approx(3.0)
+
+    # Unknown instrument returns empty dict, not an error
+    assert pipeline.get_latest_features("UNKNOWN.X") == {}
+
+
+def test_pipeline_get_feature_window():
+    """FeaturePipeline.get_feature_window returns last N events."""
+    engine = MockFeatureEngine()
+    online = OnlineFeatureStore()
+    pipeline = FeaturePipeline([engine], online_store=online)
+
+    for i in range(10):
+        pipeline.update(_make_bar(ts=_TS0 + i * 1000))
+
+    window = pipeline.get_feature_window(_IID, "test_features_v1", n=3)
+    assert len(window) == 3
+    assert window[-1].values["x"] == pytest.approx(10.0)  # last event
+
+    # No online store → empty list
+    pipeline2 = FeaturePipeline([MockFeatureEngine()])
+    assert pipeline2.get_feature_window(_IID, "test_features_v1", n=5) == []

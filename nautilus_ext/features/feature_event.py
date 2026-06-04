@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)  # slots=True (Python 3.10+): ~30% less memory per object on hot path
 class FeatureEvent:
     """A single computed feature snapshot tied to one market event.
 

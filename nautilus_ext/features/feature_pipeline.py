@@ -117,17 +117,27 @@ class FeaturePipeline:
     def get_latest_features(self, instrument_id: str) -> dict[str, FeatureEvent]:
         """Return the latest FeatureEvent per feature_set_id for an instrument.
 
-        Reads from OnlineFeatureStore; returns {} if no store is configured.
+        Uses OnlineFeatureStore.get_all_latest() — O(1) dict lookup.
+        Returns {} if no store is configured or instrument has no events.
         """
         if self._online_store is None:
             return {}
-        result: dict[str, FeatureEvent] = {}
-        for iid, fs_id in self._online_store.keys():
-            if iid == instrument_id:
-                fe = self._online_store.get_latest(instrument_id, fs_id)
-                if fe is not None:
-                    result[fs_id] = fe
-        return result
+        return self._online_store.get_all_latest(instrument_id)
+
+    def get_feature_window(
+        self,
+        instrument_id: str,
+        feature_set_id: str,
+        n: int | None = None,
+    ) -> list[FeatureEvent]:
+        """Return the last N FeatureEvents for an instrument/feature_set pair.
+
+        Reads from OnlineFeatureStore's bounded ring buffer.
+        Returns [] if no store is configured or no events are available.
+        """
+        if self._online_store is None:
+            return []
+        return self._online_store.get_window(instrument_id, feature_set_id, n=n)
 
     @property
     def engines(self) -> list:
