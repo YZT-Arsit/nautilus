@@ -1722,3 +1722,202 @@ def test_benchmark_script_importable():
     spec_mod.loader.exec_module(mod)
     assert hasattr(mod, "main")
     assert hasattr(mod, "bench_online_latency")
+
+
+# ===========================================================================
+# 76–83: E2E demo, templates, and strategy spec tests
+# ===========================================================================
+
+def test_feature_database_demo_importable():
+    """run_feature_database_demo.py must be importable without side effects."""
+    import importlib.util
+    from pathlib import Path as _Path
+    demo_path = (
+        _Path(__file__).parents[2]
+        / "examples"
+        / "nautilus_ext_feature_database"
+        / "run_feature_database_demo.py"
+    )
+    if not demo_path.exists():
+        pytest.skip("demo script not found")
+    spec_mod = importlib.util.spec_from_file_location("run_feature_database_demo", demo_path)
+    mod = importlib.util.module_from_spec(spec_mod)
+    spec_mod.loader.exec_module(mod)
+    assert hasattr(mod, "main")
+    assert hasattr(mod, "run_demo")
+    assert hasattr(mod, "DemoMomEngine")
+
+
+def test_feature_database_demo_runs_in_tmp(tmp_path):
+    """run_demo() completes without error and returns a valid summary dict."""
+    import importlib.util
+    from pathlib import Path as _Path
+    demo_path = (
+        _Path(__file__).parents[2]
+        / "examples"
+        / "nautilus_ext_feature_database"
+        / "run_feature_database_demo.py"
+    )
+    if not demo_path.exists():
+        pytest.skip("demo script not found")
+    spec_mod = importlib.util.spec_from_file_location("run_feature_database_demo", demo_path)
+    mod = importlib.util.module_from_spec(spec_mod)
+    spec_mod.loader.exec_module(mod)
+
+    summary = mod.run_demo(tmp_path / "demo_out")
+
+    assert summary["generated_events"] > 0
+    assert summary["manifest_records"] > 0
+    assert summary["dataset_shape"][0] > 0      # at least one training row
+    assert summary["dataset_shape"][1] > 0      # at least one column
+    assert len(summary["inference_vector_keys"]) > 0
+
+
+def test_feature_database_demo_writes_parquet(tmp_path):
+    """run_demo() writes at least one Parquet file under offline/."""
+    import importlib.util
+    from pathlib import Path as _Path
+    demo_path = (
+        _Path(__file__).parents[2]
+        / "examples"
+        / "nautilus_ext_feature_database"
+        / "run_feature_database_demo.py"
+    )
+    if not demo_path.exists():
+        pytest.skip("demo script not found")
+    spec_mod = importlib.util.spec_from_file_location("run_feature_database_demo", demo_path)
+    mod = importlib.util.module_from_spec(spec_mod)
+    spec_mod.loader.exec_module(mod)
+
+    out_dir = tmp_path / "demo_parquet"
+    mod.run_demo(out_dir)
+
+    parquet_files = list(out_dir.rglob("*.parquet"))
+    assert len(parquet_files) >= 1, "Expected at least one Parquet file after flush"
+
+    manifest_path = out_dir / "feature_manifest.json"
+    assert manifest_path.exists(), "feature_manifest.json must be written"
+
+
+def test_feature_database_demo_dataset_readable(tmp_path):
+    """FeatureDataset can load the Parquet files produced by run_demo()."""
+    import importlib.util
+    from pathlib import Path as _Path
+    demo_path = (
+        _Path(__file__).parents[2]
+        / "examples"
+        / "nautilus_ext_feature_database"
+        / "run_feature_database_demo.py"
+    )
+    if not demo_path.exists():
+        pytest.skip("demo script not found")
+    spec_mod = importlib.util.spec_from_file_location("run_feature_database_demo", demo_path)
+    mod = importlib.util.module_from_spec(spec_mod)
+    spec_mod.loader.exec_module(mod)
+
+    out_dir = tmp_path / "demo_dataset"
+    mod.run_demo(out_dir)
+
+    from nautilus_ext.ml.feature_dataset import FeatureDatasetSpec, load_feature_dataset
+    spec = FeatureDatasetSpec(
+        feature_store_path=out_dir,
+        feature_set_ids=["demo_mom_v1"],
+        include_warmup=False,
+    )
+    df = load_feature_dataset(spec)
+    assert not df.empty, "FeatureDataset should return non-empty DataFrame"
+    assert "momentum" in df.columns
+    # Warmup rows are excluded — all remaining rows have is_warmup=False
+    assert (df["is_warmup"] == False).all()
+
+
+def test_feature_database_demo_inference_context(tmp_path):
+    """InferenceContext returns a non-empty feature vector after run_demo()."""
+    import importlib.util
+    from pathlib import Path as _Path
+    demo_path = (
+        _Path(__file__).parents[2]
+        / "examples"
+        / "nautilus_ext_feature_database"
+        / "run_feature_database_demo.py"
+    )
+    if not demo_path.exists():
+        pytest.skip("demo script not found")
+    spec_mod = importlib.util.spec_from_file_location("run_feature_database_demo", demo_path)
+    mod = importlib.util.module_from_spec(spec_mod)
+    spec_mod.loader.exec_module(mod)
+
+    out_dir = tmp_path / "demo_infer"
+    summary = mod.run_demo(out_dir)
+
+    assert len(summary["inference_vector_keys"]) == 4  # close_ma, momentum, vol_sum, bar_count
+    # All values should be numeric (not None) — engine ran enough bars
+    for v in summary["inference_vector_values"]:
+        assert v is not None
+
+
+def test_feature_engine_template_importable():
+    """example_feature_engine.py must be importable and register correctly."""
+    from nautilus_ext.features.templates.example_feature_engine import (
+        ExampleObvEngine,
+        FEATURE_SET_ID,
+        MY_FEATURE_SCHEMA,
+    )
+    assert FEATURE_SET_ID == "example_obv_v1"
+    engine = ExampleObvEngine(window=10)
+    assert engine.name == "example_obv_v1"
+    assert engine.schema is MY_FEATURE_SCHEMA
+
+    # state_dict round-trip
+    state = engine.state_dict()
+    engine2 = ExampleObvEngine(window=10)
+    engine2.load_state_dict(state)
+    assert engine2._window == 10
+
+
+def test_feature_engine_template_update_emits_event():
+    """ExampleObvEngine.update() returns FeatureEvent for BarInput, None otherwise."""
+    from nautilus_ext.features.templates.example_feature_engine import ExampleObvEngine
+    engine = ExampleObvEngine(window=5)
+
+    bar = _make_bar(ts=_TS0, close=100.0)
+    fe = engine.update(bar)
+    assert fe is not None
+    assert fe.feature_set_id == "example_obv_v1"
+    assert fe.values["bar_count"] == 1
+
+    # Returns None for non-BarInput
+    fe2 = engine.update("not_a_bar")
+    assert fe2 is None
+
+
+def test_signal_engine_template_importable():
+    """example_signal_engine.py must be importable and have correct interface."""
+    from nautilus_ext.strategies.templates.example_signal_engine import (
+        ExampleObvSignalEngine,
+        SIGNAL_NAME,
+        REQUIRES_FEATURES,
+    )
+    assert SIGNAL_NAME == "example_obv_signal_v1"
+    assert "example_obv_v1" in REQUIRES_FEATURES
+
+    engine = ExampleObvSignalEngine()
+    assert engine.name == SIGNAL_NAME
+    assert engine.requires_features == REQUIRES_FEATURES
+
+    # state_dict round-trip
+    state = engine.state_dict()
+    engine2 = ExampleObvSignalEngine()
+    engine2.load_state_dict(state)
+    assert engine2._roc_threshold == engine._roc_threshold
+
+
+def test_signal_engine_template_returns_hold_without_context():
+    """ExampleObvSignalEngine returns a hold signal when context is None."""
+    from nautilus_ext.strategies.templates.example_signal_engine import ExampleObvSignalEngine
+    from nautilus_ext.strategies.interfaces.output_types import SignalResult
+    engine = ExampleObvSignalEngine()
+    bar = _make_bar(ts=_TS0)
+    result = engine.update(bar, context=None)
+    assert isinstance(result, SignalResult)
+    assert result.order_intents == []

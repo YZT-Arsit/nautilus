@@ -642,3 +642,213 @@ DuckDB 方案优点：
 - SQL 查询灵活，支持聚合统计
 - 列式存储，10 万条记录文件 < 1 MB
 - `find_files()` 可用 SQL WHERE 过滤，无需全量加载到内存
+
+---
+
+## 22. 端到端 Demo 与低代码接入流程
+
+### 22.1 Demo 数据流
+
+`examples/nautilus_ext_feature_database/run_feature_database_demo.py` 展示了完整的 Feature Database 生命周期，不依赖真实网络：
+
+```
+mock BarInput × 120
+       │
+       ▼
+ FeaturePipeline
+       │
+       ├── warmup(bars[:20])     → is_warmup=True，只更新 OnlineFeatureStore
+       │
+       ├── update(bar) × 100    → 实时路径（热路径，无 DataFrame）
+       │        │
+       │        ├──▶ OnlineFeatureStore  O(1) 内存索引（实时推理）
+       │        └──▶ OfflineFeatureStore 缓冲队列（等待 flush）
+       │
+       └── flush()               → 批量写 Parquet + 更新 FeatureManifest
+                │
+                ├──▶ offline/demo_mom_v1/BTCUSDT-PERP_BINANCE/<ts>.parquet
+                └──▶ feature_manifest.json
+```
+
+运行方式：
+
+```bash
+PYTHONPATH=. python examples/nautilus_ext_feature_database/run_feature_database_demo.py
+```
+
+示例输出：
+
+```
+============================================================
+Feature Database Demo — Summary
+============================================================
+  generated_events      : 100
+  rows_flushed_parquet  : 100
+  manifest_records      : 1
+  offline_files         : ['outputs/examples/feature_database_demo/offline/demo_mom_v1/...']
+  dataset_shape         : (81, 9)
+  dataset_columns       : ['ts_event', 'ts_init', 'instrument_id', ..., 'close_ma', 'momentum', ...]
+  inference_vector_keys : ['demo_mom_v1.close_ma', 'demo_mom_v1.momentum', ...]
+```
+
+---
+
+### 22.2 新特征如何按模板开发
+
+复制 `nautilus_ext/features/templates/example_feature_engine.py`，按以下步骤修改：
+
+**第一步：确定 FEATURE_SET_ID**
+```python
+FEATURE_SET_ID = "my_new_feature_v1"   # 确定后不能改名，否则历史数据找不到
+```
+
+**第二步：填写 FeatureSetSpec（schema 先行）**
+```python
+MY_FEATURE_SCHEMA = FeatureSetSpec(
+    feature_set_id=FEATURE_SET_ID,
+    version="1",
+    input_types=["bar"],
+    output_features=[
+        FeatureFieldSpec("my_signal", "float", nullable=True, description="..."),
+        FeatureFieldSpec("bar_count", "int", nullable=False, description="..."),
+    ],
+    required_history=20,
+    point_in_time_safe=True,
+)
+```
+
+**第三步：实现 update()（热路径，禁止创建 DataFrame）**
+```python
+def update(self, event) -> FeatureEvent | None:
+    if not isinstance(event, BarInput):
+        return None        # 忽略不支持的事件类型
+    # ... 计算特征（纯 Python，不创建 DataFrame）
+    return FeatureEvent(
+        ts_event=event.ts_event,
+        instrument_id=event.instrument_id,
+        feature_set_id=FEATURE_SET_ID,
+        feature_version="1",
+        values={"my_signal": ..., "bar_count": ...},
+        source_event_type="bar",
+    )
+    # is_warmup 由 FeaturePipeline 打标，engine 不设置
+```
+
+**第四步：实现 state_dict / load_state_dict（支持热重启）**
+```python
+def state_dict(self) -> dict:
+    return {"window": self._window, "closes": list(self._closes), ...}
+
+def load_state_dict(self, state: dict) -> None:
+    self._window = state["window"]
+    self._closes = deque(state["closes"], maxlen=self._window)
+```
+
+**第五步：注册**
+```python
+from nautilus_ext.features.feature_registry import register_feature_engine
+
+@register_feature_engine(FEATURE_SET_ID)
+class MyNewFeatureEngine(FeatureEngineBase):
+    ...
+```
+
+注册后，所有地方都可以通过 ID 构建：
+```python
+from nautilus_ext.features.feature_registry import build_feature_engine
+engine = build_feature_engine("my_new_feature_v1", params={"window": 14})
+```
+
+---
+
+### 22.3 新策略如何按模板开发
+
+复制 `nautilus_ext/strategies/templates/example_signal_engine.py`，按以下步骤修改：
+
+**第一步：声明依赖的 feature_set**
+```python
+SIGNAL_NAME = "my_strategy_v1"
+REQUIRES_FEATURES = ["my_new_feature_v1", "vwm_features_v1"]
+```
+
+**第二步：从 StrategyRuntimeContext 读取特征（不要重复计算）**
+```python
+def update(self, event, context: StrategyRuntimeContext | None = None) -> SignalResult:
+    if context is None:
+        return SignalResult(signal_name=SIGNAL_NAME, reason="no_context")
+
+    # 读取预计算特征 — 绝不在策略里重新计算已有的特征
+    my_signal = context.get_value("my_new_feature_v1", "my_signal")
+    vwm = context.get_value("vwm_features_v1", "vwm")
+
+    # 必须做 None 检查 — 引擎未 warmup 完时特征为 None
+    if my_signal is None or vwm is None:
+        return SignalResult(signal_name=SIGNAL_NAME, reason="features_not_ready")
+
+    # ... 决策逻辑
+```
+
+**第三步：返回 SignalResult**
+```python
+return SignalResult(
+    signal_name=SIGNAL_NAME,
+    order_intents=[
+        OrderIntent(instrument_id=..., action="submit", side="buy", order_type="market"),
+    ],
+    reason="entry_long",
+    debug={"my_signal": my_signal, "vwm": vwm},
+)
+```
+
+---
+
+### 22.4 主配置如何切换特征组合
+
+在 strategy_spec JSON 中声明 `requires_features` 和 `feature_specs`：
+
+```json
+{
+  "strategy": {
+    "name": "my_strategy_v1",
+    "requires_features": ["my_new_feature_v1", "vwm_features_v1"],
+    "feature_specs": {
+      "my_new_feature_v1": { "window": 14 },
+      "vwm_features_v1":   { "mom_len": 5, "avg_len": 20, "atr_len": 5 }
+    },
+    "params": { ... }
+  },
+  "feature_database": {
+    "enabled": true,
+    "store_path": "outputs/features/my_strategy_btc_1m",
+    "online_window_size": 500,
+    "offline_flush_threshold": 1000
+  },
+  "execution": {
+    "dry_run": true,
+    "enable_order_submit": false
+  }
+}
+```
+
+完整样例见：`examples/strategy_specs/vwm_with_feature_database.json`
+
+Runner 读取 `requires_features` → 自动构建 FeaturePipeline → 注入 `StrategyRuntimeContext`。  
+切换特征组合只需修改 JSON，无需改动策略代码。
+
+---
+
+### 22.5 signals.csv 与 Feature Database 的区别
+
+| 维度 | signals.csv | Feature Database |
+|------|------------|-----------------|
+| 特征存储位置 | debug 字段（混在信号行里） | 独立 Parquet 文件（按 feature_set_id + instrument_id 分目录） |
+| Schema 管理 | 无，列名随意变化 | FeatureSetSpec + feature_version，变更必须 bump 版本 |
+| warmup 区分 | 无，需手动过滤行号 | is_warmup 字段，训练默认 include_warmup=False |
+| 多策略共享 | 每个策略单独计算 | 同一 FeaturePipeline 输出，多策略读同一个 OnlineFeatureStore |
+| 实时推理路径 | 无 | OnlineFeatureStore O(1) 查找，无文件 I/O |
+| 训练读取 | 手工 pandas 过滤 | FeatureDataset（支持 exact/asof join、时间范围、列筛选） |
+| point-in-time 保证 | 依赖调用方自律 | is_warmup 标记 + asof join direction="backward" 强制执行 |
+| 索引效率 | 每次全量 rglob | FeatureManifest JSON 索引，按时间范围过滤，127× 加速 |
+| 热重启支持 | 需重新下载数据重跑 | state_dict / load_state_dict + warmup 快速恢复 |
+
+**结论**：signals.csv 适合快速 debug 单策略输出；Feature Database 是生产级的统一数据层，适合多策略、多特征、长周期运营场景。
