@@ -63,6 +63,10 @@ _COLUMNS = [
     "debug_json",
     "state_json",
     "position",
+    # Feature references — point back to the FeatureStore.
+    # Authoritative features live in features/offline/…parquet, not here.
+    "feature_set_ids",   # debug: comma-separated feature set IDs used this bar
+    "feature_event_ts",  # debug: ts_event of the most recent FeatureEvent
 ]
 
 
@@ -86,7 +90,13 @@ class SignalRecorder:
     # Public interface
     # ------------------------------------------------------------------
 
-    def append(self, ohlcv_row: "pd.Series", result, position: int) -> None:
+    def append(
+        self,
+        ohlcv_row: "pd.Series",
+        result,
+        position: int,
+        feature_refs: dict | None = None,
+    ) -> None:
         """Record one bar.
 
         Parameters
@@ -99,10 +109,16 @@ class SignalRecorder:
             feature snapshot fields.
         position : int
             Current position AFTER processing this bar: -1 / 0 / 1.
+        feature_refs : dict | None
+            Optional back-reference to the FeaturePipeline output.
+            Keys: ``feature_set_ids`` (str), ``feature_event_ts`` (int | None).
+            The authoritative features live in the OfflineFeatureStore parquet
+            files; these columns are for debugging and cross-referencing only.
         """
         debug = result.debug or {}
         state = result.state or {}
         order_intents = getattr(result, "order_intents", []) or []
+        fr = feature_refs or {}
         ts_ms = int(ohlcv_row["timestamp_ms"])
         dt_val = ohlcv_row.get("datetime")
         if hasattr(dt_val, "isoformat"):
@@ -139,6 +155,8 @@ class SignalRecorder:
             "debug_json":          json.dumps(debug, ensure_ascii=True, default=str),
             "state_json":          json.dumps(state, ensure_ascii=True, default=str),
             "position":            position,
+            "feature_set_ids":     fr.get("feature_set_ids"),
+            "feature_event_ts":    fr.get("feature_event_ts"),
         })
 
     def flush(self) -> None:

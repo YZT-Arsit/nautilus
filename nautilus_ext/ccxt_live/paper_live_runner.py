@@ -228,17 +228,25 @@ class CcxtPaperLiveRunner:
         # Feature pipeline (optional) — Mode B: external features.
         # The pipeline updates OnlineFeatureStore; features can be read
         # by Mode B signal engines via StrategyRuntimeContext.
+        feature_refs: dict | None = None
         if self._feature_pipeline is not None and _FEATURE_LAYER_AVAILABLE:
             feature_events = self._feature_pipeline.update(bar_input)
-            features = {fe.feature_set_id: fe for fe in feature_events}
-            context_dict = {
-                "position": self._position,
-                "bars_since_entry": self._bars_since_entry,
-                "features": features,
-            }
+            if feature_events:
+                feature_refs = {
+                    "feature_set_ids": ",".join(
+                        fe.feature_set_id for fe in feature_events
+                    ),
+                    "feature_event_ts": max(fe.ts_event for fe in feature_events),
+                }
+            context = _StrategyRuntimeContext(
+                event=bar_input,
+                features={fe.feature_set_id: fe for fe in feature_events},
+                position=self._position,
+                bars_since_entry=self._bars_since_entry,
+            )
             result = self.signal_engine.update(
                 bar_input,
-                context=context_dict,
+                context=context,
                 position=self._position,
                 bars_since_entry=self._bars_since_entry,
             )
@@ -251,7 +259,7 @@ class CcxtPaperLiveRunner:
             )
 
         self._update_position(result)
-        self._signal_recorder.append(row, result, self._position)
+        self._signal_recorder.append(row, result, self._position, feature_refs=feature_refs)
 
         if result.entry_side is not None or result.exit_side is not None:
             self._exec_recorder.append(row, result)

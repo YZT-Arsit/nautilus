@@ -791,3 +791,202 @@ def test_vwm_bar_feature_engine_state_dict_round_trip():
         ts_event=_TS0 + 30 * 60_000, instrument_id=_IID,
     ))
     assert fe_orig.values["vwm"] == pytest.approx(fe_rest.values["vwm"], rel=1e-6)
+
+
+# ===========================================================================
+# 41–46: New tests — BacktestRunner, Mode B, SignalRecorder feature_refs
+# ===========================================================================
+
+def test_backtest_runner_generates_offline_features(tmp_path: Path):
+    """BacktestRunner with feature_pipeline writes offline parquet files."""
+    # Build a mock data_connector returning BarInput-compatible mock bars.
+    @dataclass
+    class _MockBarType:
+        instrument_id: str = "BTCUSDT-PERP.BINANCE"
+        def __str__(self): return "BTCUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL"
+
+    @dataclass
+    class _MockBar:
+        open: float = 100.0
+        high: float = 101.0
+        low: float = 99.0
+        close: float = 100.5
+        volume: float = 1000.0
+        ts_event: int = _TS0 * 1_000_000  # ns
+        bar_type: object = None
+        def __post_init__(self): self.bar_type = _MockBarType()
+
+    class _MockConnector:
+        @property
+        def instrument(self): return None
+        def prepare_data(self): return [_MockBar(ts_event=(_TS0 + i * 60_000) * 1_000_000) for i in range(10)]
+        def get_bar_type(self): return _MockBarType()
+
+    engine = MockFeatureEngine()
+    online = OnlineFeatureStore()
+    offline = OfflineFeatureStore(tmp_path / "features")
+    pipeline = FeaturePipeline([engine], online_store=online, offline_store=offline)
+
+    class _MockEngineConfig:
+        pass
+
+    from nautilus_ext.runners.backtest_runner import NautilusBacktestRunner
+
+    # Use internal helper directly (avoids NautilusStrategySpec complexity)
+    runner = NautilusBacktestRunner(_MockConnector(), _MockEngineConfig(), output_dir=str(tmp_path))
+    bars = _MockConnector().prepare_data()
+    n = runner._run_feature_pipeline(bars, pipeline, tmp_path / "features")
+
+    assert n == 10
+    parquets = list((tmp_path / "features").rglob("*.parquet"))
+    assert len(parquets) >= 1
+    df = pd.read_parquet(parquets[0])
+    assert len(df) == 10
+    assert "x" in df.columns
+
+
+@pytest.mark.nautilus_required
+def test_vwm_signal_engine_mode_b_reads_context():
+    """VwmShortSignalEngine uses external FeatureEvent values when context provides them."""
+    try:
+        from nautilus_ext.strategies.vwm_short_signals import (
+            VolumeWeightedMomentumShortSignalEngine,
+        )
+        from nautilus_ext.strategies.vwm_short_components import VwmShortSignalConfig
+    except ImportError:
+        pytest.skip("Nautilus indicators not compiled")
+
+    # Warm up Mode A engine to a stable state
+    engine = VolumeWeightedMomentumShortSignalEngine(VwmShortSignalConfig())
+    for i in range(30):
+        bar = BarInput(open=99.0, high=101.0, low=98.0, close=100.0 + i * 0.1, volume=1000.0,
+                       ts_event=_TS0 + i * 60_000, instrument_id=_IID)
+        engine.update(bar, position=0, bars_since_entry=0)
+
+    # Build a FeatureEvent with controlled values
+    controlled_fe = FeatureEvent(
+        ts_event=_TS0 + 30 * 60_000,
+        instrument_id=_IID,
+        feature_set_id="vwm_features_v1",
+        feature_version="1",
+        values={
+            "current_bar": 99,
+            "momentum": 5.0,
+            "vwm": 2.5,
+            "atr": 1.0,
+            "prev_vwm": 2.0,
+            "prev_atr": 1.0,
+            "bull_setup": False,
+            "bear_setup": True,   # force bear_setup=True via external feature
+        },
+    )
+    ctx = StrategyRuntimeContext(
+        event=bar,
+        features={"vwm_features_v1": controlled_fe},
+        position=0,
+        bars_since_entry=0,
+    )
+
+    bar31 = BarInput(open=99.0, high=101.0, low=98.0, close=103.1, volume=1000.0,
+                     ts_event=_TS0 + 30 * 60_000, instrument_id=_IID)
+    result = engine.update(bar31, context=ctx, position=0, bars_since_entry=0)
+
+    # bear_setup=True from external features → se_price gets updated
+    assert result is not None
+    assert result.debug is not None
+    assert result.debug["bear_setup"] is True
+
+
+@pytest.mark.nautilus_required
+def test_vwm_signal_engine_mode_a_fallback_when_no_context():
+    """Without context, VwmShortSignalEngine still uses internal engine (Mode A)."""
+    try:
+        from nautilus_ext.strategies.vwm_short_signals import (
+            VolumeWeightedMomentumShortSignalEngine,
+        )
+        from nautilus_ext.strategies.vwm_short_components import VwmShortSignalConfig
+    except ImportError:
+        pytest.skip("Nautilus indicators not compiled")
+
+    engine = VolumeWeightedMomentumShortSignalEngine(VwmShortSignalConfig())
+    bar = BarInput(open=99.0, high=101.0, low=98.0, close=100.0, volume=1000.0)
+    result = engine.update(bar, position=0, bars_since_entry=0)
+    assert result is not None
+    # Internal features were updated (Mode A ran)
+    assert engine.features.current_bar == 1
+
+
+def test_signal_recorder_feature_refs_columns():
+    """SignalRecorder stores feature_refs cross-reference columns."""
+    from nautilus_ext.ccxt_live.signal_recorder import SignalRecorder
+
+    recorder = SignalRecorder("BTCUSDT-PERP.BINANCE", "BTCUSDT-PERP.BINANCE-1-MINUTE-LAST-EXTERNAL")
+
+    row = pd.Series({
+        "timestamp_ms": _TS0,
+        "datetime": "2024-01-01T00:00:00",
+        "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1000.0,
+    })
+
+    @dataclass
+    class _FakeResult:
+        entry_side: object = None
+        exit_side: object = None
+        reason: str | None = None
+        signal_name: str | None = None
+        debug: dict | None = None
+        state: dict | None = None
+        order_intents: list | None = None
+
+    result = _FakeResult(debug={"current_bar": 5})
+    feature_refs = {"feature_set_ids": "vwm_features_v1", "feature_event_ts": _TS0}
+
+    recorder.append(row, result, 0, feature_refs=feature_refs)
+    df = recorder.to_dataframe()
+    assert "feature_set_ids" in df.columns
+    assert "feature_event_ts" in df.columns
+    assert df.iloc[0]["feature_set_ids"] == "vwm_features_v1"
+    assert df.iloc[0]["feature_event_ts"] == _TS0
+
+
+def test_signal_recorder_feature_refs_none_when_no_pipeline():
+    """When no feature_pipeline, feature_refs columns are None (not error)."""
+    from nautilus_ext.ccxt_live.signal_recorder import SignalRecorder
+
+    recorder = SignalRecorder("TEST.BINANCE", "TEST.BINANCE-1-MINUTE-LAST-EXTERNAL")
+    row = pd.Series({
+        "timestamp_ms": _TS0, "datetime": "2024-01-01T00:00:00",
+        "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1000.0,
+    })
+
+    @dataclass
+    class _FakeResult:
+        entry_side: object = None
+        exit_side: object = None
+        reason: str | None = None
+        signal_name: str | None = None
+        debug: dict | None = None
+        state: dict | None = None
+        order_intents: list | None = None
+
+    recorder.append(row, _FakeResult(), 0)  # no feature_refs kwarg
+    df = recorder.to_dataframe()
+    assert df.iloc[0]["feature_set_ids"] is None
+    assert df.iloc[0]["feature_event_ts"] is None
+
+
+def test_pipeline_warmup_n_then_live_1_current_bar_is_n_plus_1():
+    """After warmup(N) then update(1 live bar), engine count equals N+1."""
+    N = 7
+    engine = MockFeatureEngine()
+    pipeline = FeaturePipeline([engine])
+    warmup_bars = [_make_bar(ts=_TS0 + i * 60_000) for i in range(N)]
+    pipeline.warmup(warmup_bars)
+    assert engine._count == N
+
+    live_bar = _make_bar(ts=_TS0 + N * 60_000)
+    events = pipeline.update(live_bar)
+    assert engine._count == N + 1
+    assert len(events) == 1
+    assert events[0].is_warmup is False
+    assert events[0].values["x"] == pytest.approx(float(N + 1))

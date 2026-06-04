@@ -12,6 +12,31 @@ from nautilus_ext.strategies.vwm_short_components import VwmShortSnapshot
 VwmShortBarInput = BarInput
 VwmShortSignalResult = SignalResult
 
+_VWM_FEATURE_SET_ID = "vwm_features_v1"
+
+
+class _VwmFeaturesFromContext:
+    """Read-only attribute adapter: wraps a FeatureEvent.values dict as a snapshot.
+
+    Used in Mode B when the FeaturePipeline provides pre-computed VWM features
+    via StrategyRuntimeContext.  Mirrors the attribute surface of VwmFeatureSnapshot
+    so the signal logic below needs no branching.
+    """
+    __slots__ = (
+        "current_bar", "momentum", "vwm", "atr",
+        "prev_vwm", "prev_atr", "bull_setup", "bear_setup",
+    )
+
+    def __init__(self, d: dict) -> None:
+        self.current_bar = int(d.get("current_bar", 0))
+        self.momentum = d.get("momentum")
+        self.vwm = d.get("vwm")
+        self.atr = d.get("atr")
+        self.prev_vwm = d.get("prev_vwm")
+        self.prev_atr = d.get("prev_atr")
+        self.bull_setup = bool(d.get("bull_setup", False))
+        self.bear_setup = bool(d.get("bear_setup", False))
+
 
 class VolumeWeightedMomentumShortSignalEngine:
     name = "vwm_short"
@@ -69,7 +94,19 @@ class VolumeWeightedMomentumShortSignalEngine:
             active_bars_since_entry += 1
 
         snapshot = self._snapshot()
-        features = self.features.update(bar)
+
+        # Mode B: use pre-computed external features from FeaturePipeline if available.
+        # Falls back to Mode A (internal VwmFeatureEngine) when context is absent or
+        # does not carry the expected feature set.
+        ext_vals = None
+        if context is not None and hasattr(context, "get_feature_values"):
+            ext_vals = context.get_feature_values(_VWM_FEATURE_SET_ID)
+
+        if ext_vals is not None:
+            features = _VwmFeaturesFromContext(ext_vals)
+        else:
+            features = self.features.update(bar)
+
         curr_se_price, curr_s_setup = self._update_setup(bar, features.bear_setup, snapshot)
 
         entry_trigger_price = None
