@@ -15,14 +15,16 @@ in VWAPFeature and any future time-window feature constructors.
 Features implemented
 --------------------
 Bar-input (input_type="bar"):
-    RollingMeanFeature    — rolling mean of one bar field
-    RollingStdFeature     — rolling sample std of one bar field
-    RollingMinFeature     — rolling minimum of one bar field
-    RollingMaxFeature     — rolling maximum of one bar field
-    VWAPFeature           — VWAP; rolling count, rolling time, or session
-    SimpleReturnFeature   — (close_t - close_{t-1}) / close_{t-1}
-    LogReturnFeature      — log(close_t / close_{t-1})
-    EWMAFeature           — exponentially weighted moving average
+    RollingMeanFeature        — rolling mean of one bar field
+    RollingStdFeature         — rolling sample std of one bar field
+    RollingMinFeature         — rolling minimum of one bar field
+    RollingMaxFeature         — rolling maximum of one bar field
+    RollingSumFeature         — generic rolling sum over any input field
+    RollingVolumeSumFeature   — rolling sum alias with default input_field='volume'
+    VWAPFeature               — VWAP; rolling count, rolling time, or session
+    SimpleReturnFeature       — (close_t - close_{t-1}) / close_{t-1}
+    LogReturnFeature          — log(close_t / close_{t-1})
+    EWMAFeature               — exponentially weighted moving average
 
 Quote-input (input_type="quote"):
     SpreadFeature         — ask_price - bid_price
@@ -134,6 +136,7 @@ class _AbstractFeature:
         window_start_ns: int | None = None,
         window_end_ns: int | None = None,
         source_event_time_ns: int | None = None,
+        update_status: str | None = None,
     ) -> FeatureUpdate:
         fv = FeatureValue(
             name=self._spec.name,
@@ -142,12 +145,32 @@ class _AbstractFeature:
             window_start_ns=window_start_ns,
             window_end_ns=window_end_ns,
             source_event_time_ns=source_event_time_ns,
+            update_status=update_status,
         )
         self._cached = fv
         return FeatureUpdate(value=fv, triggered=triggered)
 
     def _no_change(self) -> FeatureUpdate:
         return FeatureUpdate(value=self._cached, triggered=False)
+
+    def _missing_field(self, field_name: str | None) -> FeatureUpdate:
+        """Return cached value with update_status='skipped_missing_field'.
+
+        Does NOT update self._cached — the skip is visible in the FeatureUpdate
+        return value but the cached state is left unchanged.
+        """
+        fv = FeatureValue(
+            name=self._cached.name,
+            value=self._cached.value,
+            is_ready=self._cached.is_ready,
+            window_start_ns=self._cached.window_start_ns,
+            window_end_ns=self._cached.window_end_ns,
+            source_event_time_ns=self._cached.source_event_time_ns,
+            update_status="skipped_missing_field",
+            reason=f"Field '{field_name}' not found on event",
+            source_field=field_name,
+        )
+        return FeatureUpdate(value=fv, triggered=False)
 
     # ------------------------------------------------------------------
     # State helpers
@@ -433,6 +456,85 @@ class VWAPFeature(_AbstractFeature):
         self._state.load_state_dict(state["vwap"])
         if self._state.count > 0:
             self._cached = FeatureValue(name=self._spec.name, value=self._state.vwap, is_ready=True)
+
+
+class RollingSumFeature(_AbstractFeature):
+    """Generic rolling sum of any named input field over a fixed count window.
+
+    Uses RollingWindowState for O(1) updates — no full-window scan on push.
+    Sets update_status="updated"/"not_ready" on each emit and
+    update_status="skipped_missing_field" when the field is absent on the event.
+
+    Parameters
+    ----------
+    input_field : str | None
+        Field to sum (from spec.input_field).  When None, every event returns
+        a skipped_missing_field update — use a concrete field name in the spec.
+    window : int
+        Number of events in the lookback window.
+
+    Subclasses
+    ----------
+    RollingVolumeSumFeature — same feature with _DEFAULT_FIELD = "volume".
+    """
+
+    _DEFAULT_FIELD: str | None = None  # subclasses override to supply a fallback field
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 1)
+        self._field_name: str | None = spec.input_field or self._DEFAULT_FIELD
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._spec.window or 1, unit=self._spec.window_unit or "bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        v = _field(event, self._field_name)
+        if v is None:
+            return self._missing_field(self._field_name)
+        self._state.push(v)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full
+        return self._emit(
+            self._state.sum, ready, triggered,
+            source_event_time_ns=ts_ns,
+            update_status="updated" if ready else "not_ready",
+        )
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+        if self._state.is_full:
+            self._cached = FeatureValue(name=self._spec.name, value=self._state.sum, is_ready=True)
+
+
+class RollingVolumeSumFeature(RollingSumFeature):
+    """Compatibility alias for RollingSumFeature with default input_field='volume'.
+
+    Identical to RollingSumFeature when spec.input_field is None — the field
+    defaults to "volume" instead of being absent.  When spec.input_field is
+    set explicitly it is used as-is (e.g. "ask_size" for quote events).
+
+    Keep using this class when the semantic intent is "sum of volume".
+    Use RollingSumFeature directly for generic field aggregation.
+    """
+
+    _DEFAULT_FIELD = "volume"
 
 
 class SimpleReturnFeature(_AbstractFeature):

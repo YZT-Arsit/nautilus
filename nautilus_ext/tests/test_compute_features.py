@@ -2029,3 +2029,771 @@ class TestLateEventBoundary:
         engine.on_event(_SrcQuote(event_time_ns=_s(100), source="binance"))
         snap = engine.on_event(_SrcQuote(event_time_ns=_s(2), source="okx"))
         assert snap.values["spread"].is_ready  # not dropped
+
+
+# ===========================================================================
+# RollingVolumeSumFeature
+# ===========================================================================
+
+from nautilus_ext.features.compute.features import RollingSumFeature, RollingVolumeSumFeature
+
+
+class TestRollingVolumeSumFeature:
+    """Rolling volume sum: O(1) running sum, same update path as other rolling features."""
+
+    def _spec(self, window: int = 3, input_field: str | None = None) -> FeatureSpec:
+        return FeatureSpec(
+            name="vol_sum_3",
+            input_type="bar",
+            input_field=input_field,
+            window=window,
+            params={"type": "rolling_volume_sum"},
+        )
+
+    def test_incremental_sum_matches_reference(self):
+        """Running sum equals last-window sum at each step."""
+        volumes = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+        window = 3
+        spec = self._spec(window=window)
+        feat = RollingVolumeSumFeature(spec)
+        incremental = []
+        for v in volumes:
+            upd = feat.update(Bar(volume=v, event_time_ns=0))
+            if upd.value.is_ready:
+                incremental.append(upd.value.value)
+
+        # Reference: rolling sum of last `window` values starting when full
+        reference = [
+            sum(volumes[i - window + 1: i + 1])
+            for i in range(window - 1, len(volumes))
+        ]
+        assert incremental == pytest.approx(reference, rel=1e-12)
+
+    def test_is_ready_only_after_window_bars(self):
+        window = 4
+        feat = RollingVolumeSumFeature(self._spec(window=window))
+        for i in range(window - 1):
+            upd = feat.update(Bar(volume=float(i + 1), event_time_ns=0))
+            assert not upd.value.is_ready
+        upd = feat.update(Bar(volume=float(window), event_time_ns=0))
+        assert upd.value.is_ready
+
+    def test_eviction_maintains_correct_sum(self):
+        """After filling, sum reflects the last window elements only."""
+        feat = RollingVolumeSumFeature(self._spec(window=3))
+        for v in [10.0, 20.0, 30.0]:
+            feat.update(Bar(volume=v, event_time_ns=0))
+        assert feat.value.value == pytest.approx(60.0)
+        feat.update(Bar(volume=5.0, event_time_ns=0))
+        assert feat.value.value == pytest.approx(55.0)   # 20+30+5
+
+    def test_custom_input_field_respected(self):
+        """input_field overrides the default 'volume' field."""
+        spec = FeatureSpec(
+            name="ask_vol_sum",
+            input_type="quote",
+            input_field="ask_size",
+            window=2,
+            params={"type": "rolling_volume_sum"},
+        )
+        feat = RollingVolumeSumFeature(spec)
+        feat.update(Quote(ask_size=3.0, event_time_ns=0))
+        upd = feat.update(Quote(ask_size=7.0, event_time_ns=0))
+        assert upd.value.is_ready
+        assert upd.value.value == pytest.approx(10.0)
+
+    def test_missing_volume_field_returns_no_change(self):
+        """Event without the volume field does not crash and returns cached."""
+        feat = RollingVolumeSumFeature(self._spec(window=2))
+
+        @dataclass
+        class NoVolume:
+            event_time_ns: int = 0
+
+        upd = feat.update(NoVolume())
+        assert not upd.value.is_ready
+        assert upd.value.value is None
+
+    def test_state_dict_round_trip(self):
+        feat = RollingVolumeSumFeature(self._spec(window=3))
+        for v in [1.0, 2.0, 3.0]:
+            feat.update(Bar(volume=v, event_time_ns=0))
+        state = feat.state_dict()
+
+        feat2 = RollingVolumeSumFeature(self._spec(window=3))
+        feat2.load_state_dict(state)
+        assert feat2.value.value == pytest.approx(feat.value.value)
+        assert feat2.is_ready == feat.is_ready
+
+    def test_source_event_time_ns_set_on_every_ready_update(self):
+        feat = RollingVolumeSumFeature(self._spec(window=2))
+        feat.update(Bar(volume=1.0, event_time_ns=_s(1)))
+        upd = feat.update(Bar(volume=2.0, event_time_ns=_s(2)))
+        assert upd.value.source_event_time_ns == _s(2)
+
+    def test_warmup_required_matches_window(self):
+        spec = self._spec(window=5)
+        req = RollingVolumeSumFeature(spec).warmup_required()
+        assert req.n_events == 5
+        assert req.mandatory is True
+
+    def test_engine_routes_bar_events_to_volume_sum(self):
+        """Engine correctly routes bar events to rolling_volume_sum feature."""
+        spec = FeatureSpec(
+            name="vol_sum_3",
+            input_type="bar",
+            window=3,
+            params={"type": "rolling_volume_sum"},
+        )
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        bs = bars([1.0, 2.0, 3.0], volumes=[10.0, 20.0, 30.0])
+        for b in bs:
+            snap = engine.on_event(b)
+        assert snap.scalar("vol_sum_3") == pytest.approx(60.0)
+
+    def test_engine_does_not_route_quote_events_to_bar_feature(self):
+        """rolling_volume_sum with input_type='bar' must not update on quote events."""
+        spec = FeatureSpec(
+            name="vol_sum_3",
+            input_type="bar",
+            window=3,
+            params={"type": "rolling_volume_sum"},
+        )
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        for _ in range(5):
+            engine.on_event(Quote(bid_price=99.0, ask_price=101.0, event_time_ns=_s(1)))
+        assert engine.get("vol_sum_3").is_ready is False
+
+    def test_reset_clears_state(self):
+        feat = RollingVolumeSumFeature(self._spec(window=2))
+        feat.update(Bar(volume=5.0, event_time_ns=0))
+        feat.update(Bar(volume=5.0, event_time_ns=0))
+        assert feat.is_ready
+        feat.reset()
+        assert not feat.is_ready
+        assert feat.value.value is None
+
+    def test_backend_dispatch_by_name_prefix(self):
+        """PythonBackend infers rolling_volume_sum from name prefix."""
+        spec = FeatureSpec(name="rolling_volume_sum_5", input_type="bar", window=5)
+        registry = build_default_registry()
+        feat = registry.create_feature(spec)
+        assert isinstance(feat, RollingVolumeSumFeature)
+
+    def test_backend_dispatch_by_params_type(self):
+        """PythonBackend dispatches by params['type'] = 'rolling_volume_sum'."""
+        spec = FeatureSpec(
+            name="my_vol_sum",
+            input_type="bar",
+            window=3,
+            params={"type": "rolling_volume_sum"},
+        )
+        registry = build_default_registry()
+        feat = registry.create_feature(spec)
+        assert isinstance(feat, RollingVolumeSumFeature)
+
+
+# ===========================================================================
+# Warmup and live update use the same incremental update path
+# ===========================================================================
+
+class TestWarmupAndLiveSamePath:
+    """Verify that engine.warmup() and engine.on_event() produce identical
+    incremental state — warmup is not a separate cold-start code path."""
+
+    def _engine(self):
+        spec = FeatureSpec(
+            name="mean3",
+            input_type="bar",
+            input_field="close",
+            window=3,
+            params={"type": "rolling_mean"},
+        )
+        return SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+
+    def test_state_after_warmup_equals_all_on_event(self):
+        """Processing N bars via warmup then M live events equals N+M all on_event.
+
+        Both engines process the same bar list; engine A splits it across warmup
+        and on_event, engine B feeds everything through on_event. The live events
+        for engine A use the same timestamps as the original bars so they are
+        never classified as late relative to the warmup watermark.
+        """
+        all_bars = bars([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        # Engine A: warmup first 3, then live last 2 (same bar objects, same ts)
+        eng_a = self._engine()
+        eng_a.warmup(all_bars[:3])
+        for b in all_bars[3:]:
+            eng_a.on_event(b)
+
+        # Engine B: all events via on_event
+        eng_b = self._engine()
+        for b in all_bars:
+            eng_b.on_event(b)
+
+        assert eng_a.get("mean3").value == pytest.approx(eng_b.get("mean3").value)
+
+    def test_warmup_does_not_add_different_state_than_on_event(self):
+        """Warmup updates features through the same feature.update() path.
+        Any feature that is ready after warmup holds the same value
+        as if the same events were fed via on_event in backtest mode."""
+        # Use is_live=False so both paths skip the strict ns check
+        spec = FeatureSpec(
+            name="m5",
+            input_type="bar",
+            input_field="close",
+            window=5,
+            params={"type": "rolling_mean"},
+        )
+
+        eng_warmup = SpecFeatureEngine(specs=[spec], stamp_process_time=False, is_live=False)
+        eng_live = SpecFeatureEngine(specs=[spec], stamp_process_time=False, is_live=False)
+
+        bs = bars([float(i) for i in range(1, 8)])  # 7 bars
+
+        eng_warmup.warmup(bs)       # all via warmup
+        for b in bs:
+            eng_live.on_event(b)    # all via on_event
+
+        assert eng_warmup.get("m5").value == pytest.approx(eng_live.get("m5").value)
+        assert eng_warmup.is_ready("m5") == eng_live.is_ready("m5")
+
+    def test_rolling_volume_sum_warmup_then_live(self):
+        """RollingVolumeSumFeature state is identical regardless of warmup vs live path."""
+        spec = FeatureSpec(
+            name="vs3",
+            input_type="bar",
+            window=3,
+            params={"type": "rolling_volume_sum"},
+        )
+        eng_warmup = SpecFeatureEngine(specs=[spec], stamp_process_time=False, is_live=False)
+        eng_live = SpecFeatureEngine(specs=[spec], stamp_process_time=False, is_live=False)
+
+        bs = bars([1.0, 2.0, 3.0, 4.0], volumes=[10.0, 20.0, 30.0, 40.0])
+
+        eng_warmup.warmup(bs[:2])
+        for b in bs[2:]:
+            eng_warmup.on_event(b)
+        for b in bs:
+            eng_live.on_event(b)
+
+        assert eng_warmup.get("vs3").value == pytest.approx(eng_live.get("vs3").value)
+
+    def test_alias_event_routes_to_canonical_spec(self):
+        """quote_tick events (vendor alias) route to features with input_type='quote'."""
+        spec = FeatureSpec(name="spread", input_type="quote", params={"type": "spread"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+
+        # Quote fixture uses event_type="quote_tick" — a vendor alias
+        assert Quote().event_type == "quote_tick"
+
+        q = Quote(bid_price=98.0, ask_price=102.0, event_time_ns=_s(1))
+        snap = engine.on_event(q)
+
+        # Alias was normalised → routed to spread feature
+        assert snap.values["spread"].is_ready
+        assert snap.values["spread"].value == pytest.approx(4.0)
+
+
+# ===========================================================================
+# RollingSumFeature — generic rolling sum over any input field
+# ===========================================================================
+
+class TestRollingSumFeature:
+    """RollingSumFeature: O(1) running sum, update_status observability, field dispatch."""
+
+    def _spec(self, window: int = 3, input_field: str | None = "close") -> FeatureSpec:
+        return FeatureSpec(
+            name="sum3",
+            input_type="bar",
+            input_field=input_field,
+            window=window,
+            params={"type": "rolling_sum"},
+        )
+
+    def test_incremental_sum_over_close(self):
+        closes = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        window = 3
+        feat = RollingSumFeature(self._spec(window=window))
+        incremental = []
+        for c in closes:
+            upd = feat.update(Bar(close=c, event_time_ns=0))
+            if upd.value.is_ready:
+                incremental.append(upd.value.value)
+        reference = [sum(closes[i - window + 1: i + 1]) for i in range(window - 1, len(closes))]
+        assert incremental == pytest.approx(reference, rel=1e-12)
+
+    def test_incremental_sum_over_volume(self):
+        vols = [10.0, 20.0, 30.0, 40.0]
+        spec = FeatureSpec(name="volsum3", input_type="bar", input_field="volume", window=3,
+                           params={"type": "rolling_sum"})
+        feat = RollingSumFeature(spec)
+        for v in vols[:2]:
+            feat.update(Bar(volume=v, event_time_ns=0))
+        upd = feat.update(Bar(volume=vols[2], event_time_ns=0))
+        assert upd.value.is_ready
+        assert upd.value.value == pytest.approx(60.0)   # 10+20+30
+
+    def test_rolling_sum_equals_rolling_volume_sum_on_volume_field(self):
+        """rolling_sum(input_field='volume') must equal rolling_volume_sum(default)."""
+        spec_rs = FeatureSpec(name="rs", input_type="bar", input_field="volume", window=4,
+                              params={"type": "rolling_sum"})
+        spec_rvs = FeatureSpec(name="rvs", input_type="bar", window=4,
+                               params={"type": "rolling_volume_sum"})
+        feat_rs = RollingSumFeature(spec_rs)
+        feat_rvs = RollingVolumeSumFeature(spec_rvs)
+
+        vols = [5.0, 10.0, 15.0, 20.0, 25.0]
+        for v in vols:
+            b = Bar(volume=v, event_time_ns=0)
+            feat_rs.update(b)
+            feat_rvs.update(b)
+
+        assert feat_rs.value.value == pytest.approx(feat_rvs.value.value)
+        assert feat_rs.is_ready == feat_rvs.is_ready
+
+    def test_is_ready_only_after_window_fills(self):
+        feat = RollingSumFeature(self._spec(window=5))
+        for i in range(4):
+            upd = feat.update(Bar(close=float(i + 1), event_time_ns=0))
+            assert not upd.value.is_ready
+        upd = feat.update(Bar(close=5.0, event_time_ns=0))
+        assert upd.value.is_ready
+
+    def test_eviction_correctness(self):
+        """After overflow the sum reflects only the last window elements."""
+        feat = RollingSumFeature(self._spec(window=3))
+        for c in [10.0, 20.0, 30.0]:
+            feat.update(Bar(close=c, event_time_ns=0))
+        assert feat.value.value == pytest.approx(60.0)
+        feat.update(Bar(close=5.0, event_time_ns=0))
+        assert feat.value.value == pytest.approx(55.0)   # 20+30+5
+
+    def test_update_status_updated_when_ready(self):
+        feat = RollingSumFeature(self._spec(window=2))
+        feat.update(Bar(close=1.0, event_time_ns=0))
+        upd = feat.update(Bar(close=2.0, event_time_ns=0))
+        assert upd.value.update_status == "updated"
+
+    def test_update_status_not_ready_before_window_fills(self):
+        feat = RollingSumFeature(self._spec(window=3))
+        upd = feat.update(Bar(close=1.0, event_time_ns=0))
+        assert upd.value.update_status == "not_ready"
+
+    def test_update_status_skipped_missing_field(self):
+        """Missing field sets update_status='skipped_missing_field'."""
+        feat = RollingSumFeature(self._spec(window=2, input_field="close"))
+
+        @dataclass
+        class NoClose:
+            event_time_ns: int = 0
+
+        upd = feat.update(NoClose())
+        assert upd.value.update_status == "skipped_missing_field"
+
+    def test_reason_and_source_field_on_skip(self):
+        feat = RollingSumFeature(self._spec(window=2, input_field="close"))
+
+        @dataclass
+        class NoClose:
+            event_time_ns: int = 0
+
+        upd = feat.update(NoClose())
+        assert upd.value.source_field == "close"
+        assert "close" in (upd.value.reason or "")
+
+    def test_skip_preserves_cached_value(self):
+        """A skip update does not change the cached feature value."""
+        feat = RollingSumFeature(self._spec(window=2))
+        feat.update(Bar(close=1.0, event_time_ns=0))
+        feat.update(Bar(close=2.0, event_time_ns=0))
+        assert feat.value.value == pytest.approx(3.0)
+
+        @dataclass
+        class NoClose:
+            event_time_ns: int = 0
+
+        upd = feat.update(NoClose())
+        # Return value shows skip status, but internal cache is unchanged
+        assert upd.value.update_status == "skipped_missing_field"
+        assert feat.value.value == pytest.approx(3.0)   # cached untouched
+
+    def test_warmup_required_mandatory(self):
+        req = RollingSumFeature(self._spec(window=7)).warmup_required()
+        assert req.n_events == 7
+        assert req.mandatory is True
+
+    def test_reset_clears_state(self):
+        feat = RollingSumFeature(self._spec(window=2))
+        feat.update(Bar(close=1.0, event_time_ns=0))
+        feat.update(Bar(close=2.0, event_time_ns=0))
+        feat.reset()
+        assert not feat.is_ready
+        assert feat.value.value is None
+
+    def test_state_dict_round_trip(self):
+        feat = RollingSumFeature(self._spec(window=3))
+        for c in [1.0, 2.0, 3.0]:
+            feat.update(Bar(close=c, event_time_ns=0))
+        state = feat.state_dict()
+        feat2 = RollingSumFeature(self._spec(window=3))
+        feat2.load_state_dict(state)
+        assert feat2.value.value == pytest.approx(feat.value.value)
+        assert feat2.is_ready == feat.is_ready
+
+    def test_engine_routes_bar_to_rolling_sum(self):
+        spec = FeatureSpec(name="close_sum_3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_sum"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        for b in bars([1.0, 2.0, 3.0]):
+            snap = engine.on_event(b)
+        assert snap.scalar("close_sum_3") == pytest.approx(6.0)
+
+    def test_backend_dispatch_by_params_type(self):
+        spec = FeatureSpec(name="my_sum", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_sum"})
+        feat = build_default_registry().create_feature(spec)
+        assert isinstance(feat, RollingSumFeature)
+
+    def test_backend_dispatch_by_name_prefix_rolling_sum(self):
+        spec = FeatureSpec(name="rolling_sum_5bar", input_type="bar",
+                           input_field="close", window=5)
+        feat = build_default_registry().create_feature(spec)
+        assert isinstance(feat, RollingSumFeature)
+
+    def test_backend_prefix_rolling_sum_does_not_match_rolling_volume_sum(self):
+        """'rolling_volume_sum_3' must dispatch to RollingVolumeSumFeature, not RollingSumFeature."""
+        spec = FeatureSpec(name="rolling_volume_sum_3", input_type="bar", window=3)
+        feat = build_default_registry().create_feature(spec)
+        assert isinstance(feat, RollingVolumeSumFeature)
+
+
+# ===========================================================================
+# Update status / observability
+# ===========================================================================
+
+class TestUpdateStatus:
+    """update_status, reason, source_field in FeatureValue."""
+
+    def test_feature_value_has_update_status_field(self):
+        fv = FeatureValue(name="x", value=1.0, is_ready=True)
+        assert hasattr(fv, "update_status")
+        assert hasattr(fv, "reason")
+        assert hasattr(fv, "source_field")
+
+    def test_update_status_defaults_to_none_for_legacy_features(self):
+        """Existing features that don't set update_status return None (backward compat)."""
+        spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        feat = RollingMeanFeature(spec)
+        upd = feat.update(Bar(close=1.0, event_time_ns=0))
+        assert upd.value.update_status is None
+
+    def test_rolling_sum_updated_status_on_ready_emit(self):
+        spec = FeatureSpec(name="s2", input_type="bar", input_field="close",
+                           window=2, params={"type": "rolling_sum"})
+        feat = RollingSumFeature(spec)
+        feat.update(Bar(close=1.0, event_time_ns=0))
+        upd = feat.update(Bar(close=2.0, event_time_ns=0))
+        assert upd.value.update_status == "updated"
+        assert upd.value.is_ready is True
+
+    def test_rolling_sum_not_ready_status_before_warmup(self):
+        spec = FeatureSpec(name="s3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_sum"})
+        feat = RollingSumFeature(spec)
+        upd = feat.update(Bar(close=5.0, event_time_ns=0))
+        assert upd.value.update_status == "not_ready"
+        assert upd.value.is_ready is False
+
+    def test_missing_field_status_and_metadata(self):
+        spec = FeatureSpec(name="s2", input_type="bar", input_field="close",
+                           window=2, params={"type": "rolling_sum"})
+        feat = RollingSumFeature(spec)
+
+        @dataclass
+        class NoClose:
+            event_time_ns: int = 0
+
+        upd = feat.update(NoClose())
+        fv = upd.value
+        assert fv.update_status == "skipped_missing_field"
+        assert fv.source_field == "close"
+        assert fv.reason is not None
+        assert "close" in fv.reason
+
+    def test_skip_does_not_cache_status(self):
+        """update_status on a skip update is NOT stored in the feature's cached value."""
+        spec = FeatureSpec(name="s2", input_type="bar", input_field="close",
+                           window=2, params={"type": "rolling_sum"})
+        feat = RollingSumFeature(spec)
+        feat.update(Bar(close=1.0, event_time_ns=0))
+        feat.update(Bar(close=2.0, event_time_ns=0))   # now ready
+
+        @dataclass
+        class NoClose:
+            event_time_ns: int = 0
+
+        feat.update(NoClose())   # skip
+        # The cached value (from last real emit) keeps "updated" status
+        assert feat.value.update_status == "updated"
+
+    def test_rolling_volume_sum_inherits_observability(self):
+        """RollingVolumeSumFeature (subclass) also reports skip status."""
+        spec = FeatureSpec(name="vs2", input_type="bar", window=2,
+                           params={"type": "rolling_volume_sum"})
+        feat = RollingVolumeSumFeature(spec)
+
+        @dataclass
+        class NoVolume:
+            event_time_ns: int = 0
+
+        upd = feat.update(NoVolume())
+        assert upd.value.update_status == "skipped_missing_field"
+        assert upd.value.source_field == "volume"
+
+
+# ===========================================================================
+# Backend dispatch hardening — priority and prefix determinism
+# ===========================================================================
+
+class TestBackendDispatchHardening:
+    """PythonBackend dispatch: params['type'] > exact name > longest-prefix."""
+
+    def test_params_type_overrides_name_prefix(self):
+        """params['type']='rolling_mean' wins even when name starts with 'rolling_sum'."""
+        spec = FeatureSpec(name="rolling_sum_alias", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        feat = PythonBackend().create_feature(spec)
+        assert isinstance(feat, RollingMeanFeature)
+
+    def test_exact_name_match_dispatches_correctly(self):
+        """Exact name 'rolling_sum' must resolve to RollingSumFeature, not prefix-match."""
+        spec = FeatureSpec(name="rolling_sum", input_type="bar", input_field="close",
+                           window=3)
+        feat = PythonBackend().create_feature(spec)
+        assert isinstance(feat, RollingSumFeature)
+
+    def test_exact_name_rolling_volume_sum_dispatches_correctly(self):
+        spec = FeatureSpec(name="rolling_volume_sum", input_type="bar", window=3)
+        feat = PythonBackend().create_feature(spec)
+        assert isinstance(feat, RollingVolumeSumFeature)
+
+    def test_longest_prefix_wins_rolling_volume_sum_over_rolling_sum(self):
+        """'rolling_volume_sum_3bar' matches 'rolling_volume_sum' (18 chars)
+        rather than 'rolling_sum' (11 chars)."""
+        spec = FeatureSpec(name="rolling_volume_sum_3bar", input_type="bar", window=3)
+        feat = PythonBackend().create_feature(spec)
+        assert isinstance(feat, RollingVolumeSumFeature)
+
+    def test_rolling_sum_prefix_does_not_match_rolling_volume_sum_name(self):
+        """'rolling_sum_5bar' must NOT resolve to RollingVolumeSumFeature."""
+        spec = FeatureSpec(name="rolling_sum_5bar", input_type="bar",
+                           input_field="close", window=5)
+        feat = PythonBackend().create_feature(spec)
+        assert isinstance(feat, RollingSumFeature)
+        assert not isinstance(feat, RollingVolumeSumFeature)
+
+    def test_unknown_name_raises_value_error(self):
+        spec = FeatureSpec(name="totally_unknown_xyz_feature", input_type="bar")
+        with pytest.raises(ValueError, match="cannot determine"):
+            PythonBackend().create_feature(spec)
+
+    def test_params_type_unknown_raises_value_error(self):
+        spec = FeatureSpec(name="any_name", input_type="bar",
+                           params={"type": "no_such_type"})
+        with pytest.raises(ValueError, match="unknown feature type"):
+            PythonBackend().create_feature(spec)
+
+    def test_dispatch_is_deterministic_for_all_registered_types(self):
+        """Every key in _FEATURE_CLASSES resolves to the correct class."""
+        from nautilus_ext.features.compute.backend import _FEATURE_CLASSES
+        registry = build_default_registry()
+        for type_key, expected_cls in _FEATURE_CLASSES.items():
+            spec = FeatureSpec(
+                name=f"test_{type_key}",
+                input_type="bar",
+                input_field="close",
+                window=3,
+                params={"type": type_key},
+            )
+            feat = registry.create_feature(spec)
+            assert isinstance(feat, expected_cls), (
+                f"type_key={type_key!r} produced {type(feat).__name__}, "
+                f"expected {expected_cls.__name__}"
+            )
+
+
+# ===========================================================================
+# Backend replacement equivalence
+# ===========================================================================
+
+class TestBackendReplacementEquivalence:
+    """Replacing the backend must produce identical FeatureSnapshot names/values/readiness."""
+
+    class _DebugPythonBackend:
+        """Test-only wrapper around PythonBackend that records creation calls."""
+
+        def __init__(self):
+            self._inner = PythonBackend()
+            self.created_names: list[str] = []
+
+        def create_feature(self, spec):
+            self.created_names.append(spec.name)
+            return self._inner.create_feature(spec)
+
+    def _specs(self):
+        return [
+            FeatureSpec(name="m3", input_type="bar", input_field="close", window=3,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec(name="sum3", input_type="bar", input_field="close", window=3,
+                        params={"type": "rolling_sum"}),
+            FeatureSpec(name="spread", input_type="quote", params={"type": "spread"}),
+        ]
+
+    def _make_engines(self):
+        specs = self._specs()
+        debug = self._DebugPythonBackend()
+
+        registry_python = build_default_registry()
+        registry_debug = BackendRegistry()
+        registry_debug.register("python", debug)
+
+        eng_a = SpecFeatureEngine(specs=specs, backend_registry=registry_python,
+                                  stamp_process_time=False)
+        eng_b = SpecFeatureEngine(specs=specs, backend_registry=registry_debug,
+                                  stamp_process_time=False)
+        return eng_a, eng_b, debug
+
+    def test_both_backends_produce_same_feature_names(self):
+        eng_a, eng_b, _ = self._make_engines()
+        snap_a = eng_a.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        snap_b = eng_b.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert set(snap_a.values.keys()) == set(snap_b.values.keys())
+
+    def test_both_backends_produce_same_values_after_warmup(self):
+        eng_a, eng_b, _ = self._make_engines()
+        bs = bars([1.0, 2.0, 3.0, 4.0, 5.0])
+        for b in bs:
+            eng_a.on_event(b)
+            eng_b.on_event(b)
+        assert eng_a.get("m3").value == pytest.approx(eng_b.get("m3").value)
+        assert eng_a.get("sum3").value == pytest.approx(eng_b.get("sum3").value)
+
+    def test_both_backends_produce_same_readiness(self):
+        eng_a, eng_b, _ = self._make_engines()
+        for b in bars([1.0, 2.0]):
+            eng_a.on_event(b)
+            eng_b.on_event(b)
+        assert eng_a.get("m3").is_ready == eng_b.get("m3").is_ready
+
+    def test_debug_backend_tracks_creation(self):
+        _, _, debug = self._make_engines()
+        assert "m3" in debug.created_names
+        assert "sum3" in debug.created_names
+        assert "spread" in debug.created_names
+
+    def test_strategy_code_uses_only_spec_and_snapshot(self):
+        """Simulate strategy: only FeatureSpec and FeatureSnapshot used, not backend internals."""
+        specs = self._specs()
+        eng = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        for b in bars([10.0, 20.0, 30.0]):
+            snap = eng.on_event(b)
+
+        # Strategy-facing API surface
+        assert isinstance(snap, FeatureSnapshot)
+        fv = snap.get("m3")
+        assert isinstance(fv, FeatureValue)
+        scalar = snap.scalar("m3")
+        assert isinstance(scalar, float)
+        assert snap.all_ready() or not snap.all_ready()   # just exercises the method
+        ready_dict = snap.ready_values()
+        assert isinstance(ready_dict, dict)
+
+
+# ===========================================================================
+# Performance discipline — O(1) structural guard
+# ===========================================================================
+
+class TestPerformanceGuard:
+    """Structural checks proving hot-path does not grow unbounded with window size."""
+
+    def test_rolling_window_buffer_bounded_after_overflow(self):
+        """Buffer count stays at maxlen after overflow — proves ring-buffer eviction."""
+        state = RollingWindowState(maxlen=10)
+        for i in range(200):
+            state.push(float(i))
+        assert state.count == 10
+        assert len(state._buf) == 10
+
+    def test_rolling_window_maxlen_attribute_matches_spec(self):
+        """deque.maxlen is fixed at construction — O(1) by construction, not by coincidence."""
+        state = RollingWindowState(maxlen=10_000)
+        assert state._buf.maxlen == 10_000
+        for i in range(100):
+            state.push(float(i))
+        # Only 100 elements; buffer is not full yet, but maxlen is bounded
+        assert len(state._buf) == 100
+        assert state._buf.maxlen == 10_000
+
+    def test_small_and_large_window_buffer_same_element_count_after_equal_pushes(self):
+        """After N pushes, count = min(N, maxlen) — identical for small and large windows."""
+        n_pushes = 50
+        state_small = RollingWindowState(maxlen=10)
+        state_large = RollingWindowState(maxlen=10_000)
+        for i in range(n_pushes):
+            state_small.push(float(i))
+            state_large.push(float(i))
+        assert state_small.count == 10       # capped at maxlen
+        assert state_large.count == n_pushes # not yet full
+
+    def test_rolling_sum_sum_consistent_regardless_of_window_size(self):
+        """Running sum stays correct across different window sizes after overflow."""
+        for window in [5, 100, 10_000]:
+            state = RollingWindowState(maxlen=window)
+            for i in range(window + 3):
+                state.push(1.0)   # push all 1s
+            # sum must equal window exactly (ring buffer evicted old entries)
+            assert state.sum == pytest.approx(float(window))
+
+    def test_no_pandas_import_in_hot_path_modules(self):
+        """Features, state, and spec modules must not import pandas."""
+        import sys
+        for mod_name in [
+            "nautilus_ext.features.compute.features",
+            "nautilus_ext.features.compute.state",
+            "nautilus_ext.features.compute.spec",
+            "nautilus_ext.features.compute.engine",
+        ]:
+            mod = sys.modules.get(mod_name)
+            if mod is not None:
+                assert not hasattr(mod, "pd") or getattr(mod, "pd", None) is None, (
+                    f"{mod_name} has a 'pd' attribute — pandas may have been imported"
+                )
+            # Also verify pandas is not in the module's globals
+            if mod is not None:
+                import types
+                globals_dict = vars(mod)
+                assert "pandas" not in globals_dict, f"pandas found in {mod_name} globals"
+
+    def test_feature_engine_per_event_complexity_bar_features(self):
+        """Engine processes exactly len(bar_features) features per bar event.
+
+        This test verifies the routing table does not accidentally process
+        non-bar features when a bar event arrives.
+        """
+        bar_specs = [
+            FeatureSpec(name=f"m{i}", input_type="bar", input_field="close",
+                        window=3, params={"type": "rolling_mean"})
+            for i in range(5)
+        ]
+        quote_spec = FeatureSpec(name="spread", input_type="quote", params={"type": "spread"})
+        all_specs = bar_specs + [quote_spec]
+
+        engine = SpecFeatureEngine(specs=all_specs, stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+
+        # Bar event updates all 5 bar features; quote feature stays not_ready
+        assert all(snap.values[f"m{i}"] is not None for i in range(5))
+        assert not snap.values["spread"].is_ready

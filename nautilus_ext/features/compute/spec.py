@@ -178,6 +178,20 @@ class FeatureValue:
         event_time_ns (or configured time_semantics timestamp) of the event
         that produced this value.  Set on every update so downstream code
         can trace which event triggered the computation.
+    update_status : str | None
+        Lightweight observability tag describing why this value was produced:
+        - ``"updated"``                — feature computed a new value.
+        - ``"not_ready"``              — not enough history; cached None returned.
+        - ``"skipped_missing_field"``  — input field absent on the event; cached
+                                         value returned unchanged.
+        None for legacy features that do not populate this field.
+    reason : str | None
+        Human-readable explanation when update_status is an error/skip status.
+        e.g. ``"Field 'close' not found on event"``.  None when not applicable.
+    source_field : str | None
+        The input field name involved in a skip (for ``"skipped_missing_field"``).
+        Helps diagnose field-name typos in FeatureSpec.input_field.  None when
+        not applicable.
     """
 
     name: str
@@ -186,6 +200,9 @@ class FeatureValue:
     window_start_ns: int | None = None
     window_end_ns: int | None = None
     source_event_time_ns: int | None = None
+    update_status: str | None = None
+    reason: str | None = None
+    source_field: str | None = None
 
 
 @dataclass(frozen=True)

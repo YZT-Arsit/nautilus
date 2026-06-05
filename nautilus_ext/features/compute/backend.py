@@ -15,9 +15,17 @@ BackendRegistry
 
 PythonBackend
     Pure-Python implementation. Type dispatch via params["type"] first, then
-    by name prefix. Implements: rolling_mean, rolling_std, rolling_min,
-    rolling_max, vwap, simple_return, log_return, ewma, spread, mid_price,
-    book_imbalance.
+    by name prefix (longest-match first). Implements: rolling_mean, rolling_std,
+    rolling_min, rolling_max, rolling_sum, rolling_volume_sum, vwap,
+    simple_return, log_return, ewma, spread, mid_price, book_imbalance.
+
+    Dispatch priority:
+    1. params["type"] — explicit, always wins.
+    2. Exact name match — "rolling_sum" → RollingSumFeature.
+    3. Longest-prefix name match — "rolling_sum_5bar" → rolling_sum (not
+       rolling_volume_sum, because rolling_volume_sum does not match the
+       prefix test for that name).
+    Ambiguity is impossible by construction: longer keys shadow shorter ones.
 """
 from __future__ import annotations
 
@@ -33,6 +41,8 @@ from nautilus_ext.features.compute.features import (
     RollingMeanFeature,
     RollingMinFeature,
     RollingStdFeature,
+    RollingSumFeature,
+    RollingVolumeSumFeature,
     SimpleReturnFeature,
     SpreadFeature,
     VWAPFeature,
@@ -62,6 +72,8 @@ _FEATURE_CLASSES: dict[str, type] = {
     "rolling_std": RollingStdFeature,
     "rolling_min": RollingMinFeature,
     "rolling_max": RollingMaxFeature,
+    "rolling_sum": RollingSumFeature,
+    "rolling_volume_sum": RollingVolumeSumFeature,
     "vwap": VWAPFeature,
     "simple_return": SimpleReturnFeature,
     "log_return": LogReturnFeature,
