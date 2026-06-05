@@ -46,6 +46,7 @@ Engines:
     SpecFeatureEngine       — standalone spec-driven engine; returns FeatureSnapshot
     SpecDrivenFeatureEngine — adapter implementing FeatureEngineBase for FeaturePipeline
     LateEventError          — raised by late_event_policy='raise'
+    input_type_for_event    — canonical input_type from a market event (stable routing)
 
 Example
 -------
@@ -84,7 +85,12 @@ from nautilus_ext.features.compute.backend import (
     build_default_registry,
 )
 from nautilus_ext.features.compute.clock import Clock, ManualClock, SystemClock
-from nautilus_ext.features.compute.engine import LateEventError, SpecDrivenFeatureEngine, SpecFeatureEngine
+from nautilus_ext.features.compute.engine import (
+    LateEventError,
+    SpecDrivenFeatureEngine,
+    SpecFeatureEngine,
+    input_type_for_event,
+)
 from nautilus_ext.features.compute.feature_base import FeatureBase
 from nautilus_ext.features.compute.spec import (
     FeatureSnapshot,
@@ -146,4 +152,5 @@ __all__ = [
     "SpecFeatureEngine",
     "SpecDrivenFeatureEngine",
     "LateEventError",
+    "input_type_for_event",
 ]

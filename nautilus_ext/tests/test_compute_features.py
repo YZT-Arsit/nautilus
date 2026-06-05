@@ -1639,3 +1639,393 @@ class TestWindowMetadata:
         fv = snap.get("m3")
         assert fv is not None
         assert fv.source_event_time_ns == ts_ns
+
+
+# ===========================================================================
+# input_type_for_event() — canonical name derivation
+# ===========================================================================
+
+class TestInputTypeDerivation:
+    """input_type_for_event() must return canonical names matching FeatureSpec.input_type."""
+
+    def test_bar_canonical(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(Bar(event_type="bar")) == "bar"
+
+    def test_trade_canonical(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(Bar(event_type="trade")) == "trade"
+
+    def test_trade_tick_alias(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(Bar(event_type="trade_tick")) == "trade"
+
+    def test_quote_canonical(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(Quote(event_type="quote")) == "quote"
+
+    def test_quote_tick_alias(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(Quote(event_type="quote_tick")) == "quote"
+
+    def test_book_delta_canonical(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(OrderBook(event_type="book_delta")) == "book_delta"
+
+    def test_orderbook_alias(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(OrderBook(event_type="orderbook")) == "book_delta"
+
+    def test_order_book_alias(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(OrderBook(event_type="order_book")) == "book_delta"
+
+    def test_timer_canonical(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(Bar(event_type="timer")) == "timer"
+
+    def test_funding_rate_alias(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(Bar(event_type="funding_rate")) == "timer"
+
+    def test_unknown_event_type_returns_none(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+        assert input_type_for_event(Bar(event_type="some_custom_type")) is None
+
+    def test_no_event_type_attribute_returns_none(self):
+        from nautilus_ext.features.compute.engine import input_type_for_event
+
+        class NoTypeEvent:
+            pass
+
+        assert input_type_for_event(NoTypeEvent()) is None
+
+    def test_routing_uses_canonical_name(self):
+        """Bar events with event_type='bar' route to features with input_type='bar'."""
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="m3", input_type="bar", input_field="close",
+                               window=1, params={"type": "rolling_mean"})],
+            stamp_process_time=False,
+        )
+        snap = engine.on_event(Bar(close=5.0, event_time_ns=_s(1), event_type="bar"))
+        assert snap.values["m3"].is_ready
+
+    def test_watermark_key_input_type_is_canonical(self):
+        """Watermark StreamKey.input_type equals canonical 'bar', not raw 'bar'."""
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="m3", input_type="bar", input_field="close",
+                               window=1, params={"type": "rolling_mean"})],
+            stamp_process_time=False,
+        )
+        engine.on_event(Bar(close=1.0, event_time_ns=_s(1), event_type="bar"))
+        keys = list(engine.all_watermarks().keys())
+        assert len(keys) == 1
+        assert keys[0].input_type == "bar"
+
+    def test_quote_tick_watermark_key_is_canonical_quote(self):
+        """quote_tick events produce a StreamKey with input_type='quote'."""
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="spread", input_type="quote",
+                               params={"type": "spread"})],
+            stamp_process_time=False,
+        )
+        engine.on_event(Quote(bid_price=99.0, ask_price=101.0,
+                              event_time_ns=_s(1), event_type="quote_tick"))
+        assert engine.watermark_for("BTC/USDT", "quote") == _s(1)
+
+    def test_exported_from_package(self):
+        """input_type_for_event is importable from the top-level package."""
+        from nautilus_ext.features.compute import input_type_for_event as fn
+        assert fn(Bar(event_type="bar")) == "bar"
+
+
+# ===========================================================================
+# watermark_for() — source-aware and aggregate queries
+# ===========================================================================
+
+@dataclass
+class _SrcQuote:
+    bid_price: float = 99.0
+    ask_price: float = 101.0
+    ts_event: int = 0
+    instrument_id: str = "BTC/USDT"
+    event_type: str = "quote"
+    event_time_ns: int = 0
+    source: str = None
+
+
+class TestWatermarkForSourceAware:
+    def _make_engine(self):
+        return SpecFeatureEngine(
+            specs=[FeatureSpec(name="spread", input_type="quote",
+                               params={"type": "spread"})],
+            stamp_process_time=False,
+        )
+
+    def test_exact_source_query_returns_stream_watermark(self):
+        engine = self._make_engine()
+        engine.on_event(_SrcQuote(event_time_ns=_s(5), source="binance"))
+        assert engine.watermark_for("BTC/USDT", "quote", source="binance") == _s(5)
+
+    def test_exact_source_query_no_match_returns_zero(self):
+        engine = self._make_engine()
+        engine.on_event(_SrcQuote(event_time_ns=_s(5), source="binance"))
+        assert engine.watermark_for("BTC/USDT", "quote", source="okx") == 0
+
+    def test_aggregate_query_returns_max_across_sources(self):
+        """source=None → max watermark across all matching streams."""
+        engine = self._make_engine()
+        engine.on_event(_SrcQuote(event_time_ns=_s(3), source="binance"))
+        engine.on_event(_SrcQuote(event_time_ns=_s(7), source="okx"))
+        assert engine.watermark_for("BTC/USDT", "quote") == _s(7)
+
+    def test_aggregate_query_single_source_equals_that_stream(self):
+        engine = self._make_engine()
+        engine.on_event(_SrcQuote(event_time_ns=_s(4), source="binance"))
+        assert engine.watermark_for("BTC/USDT", "quote") == _s(4)
+
+    def test_aggregate_query_no_match_returns_zero(self):
+        engine = self._make_engine()
+        assert engine.watermark_for("ETH/USDT", "quote") == 0
+
+    def test_binance_watermark_does_not_affect_okx_watermark(self):
+        """Binance advancing to 100s does not change OKX watermark at 2s."""
+        engine = self._make_engine()
+        engine.on_event(_SrcQuote(event_time_ns=_s(100), source="binance"))
+        engine.on_event(_SrcQuote(event_time_ns=_s(2), source="okx"))
+        assert engine.watermark_for("BTC/USDT", "quote", source="binance") == _s(100)
+        assert engine.watermark_for("BTC/USDT", "quote", source="okx") == _s(2)
+
+    def test_source_specific_streams_are_independent_for_lateness(self):
+        """OKX quote at 2s is not late just because binance watermark is at 100s."""
+        engine = self._make_engine()
+        engine.on_event(_SrcQuote(event_time_ns=_s(100), source="binance"))
+        # OKX stream watermark is still 0 before its first event — never late
+        snap = engine.on_event(_SrcQuote(event_time_ns=_s(2), source="okx"))
+        assert snap.values["spread"].is_ready
+
+
+# ===========================================================================
+# Engine mode — is_live parameter
+# ===========================================================================
+
+class TestEngineMode:
+    def _bar_spec(self):
+        return [FeatureSpec(name="m3", input_type="bar", input_field="close",
+                            window=3, params={"type": "rolling_mean"})]
+
+    def test_live_mode_raises_when_event_time_ns_missing_and_strict(self):
+        """is_live=True + require_event_time_ns_for_live=True + no event_time_ns → raises."""
+        engine = SpecFeatureEngine(
+            specs=self._bar_spec(),
+            ts_config=TimestampConfig(require_event_time_ns_for_live=True),
+            is_live=True,
+            stamp_process_time=False,
+        )
+        with pytest.raises(RuntimeError, match="event_time_ns"):
+            engine.on_event(_LegacyEvent(ts_event=1000))
+
+    def test_backtest_mode_allows_legacy_ts_event_fallback(self):
+        """is_live=False bypasses require_event_time_ns_for_live; ts_event used instead."""
+        engine = SpecFeatureEngine(
+            specs=self._bar_spec(),
+            ts_config=TimestampConfig(require_event_time_ns_for_live=True,
+                                      legacy_ts_event_unit="ms"),
+            is_live=False,
+            stamp_process_time=False,
+        )
+        snap = engine.on_event(_LegacyEvent(ts_event=5000))
+        assert snap.ts_event == 5_000_000_000
+
+    def test_default_is_live_preserves_backward_compat(self):
+        """Default is_live=True with default config (no strict check) processes normally."""
+        engine = SpecFeatureEngine(specs=self._bar_spec(), stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert snap.ts_event == _s(1)
+
+    def test_backtest_mode_does_not_raise_even_with_strict_config(self):
+        """is_live=False never triggers require_event_time_ns_for_live."""
+        engine = SpecFeatureEngine(
+            specs=self._bar_spec(),
+            ts_config=TimestampConfig(require_event_time_ns_for_live=True,
+                                      legacy_ts_event_unit="ms"),
+            is_live=False,
+            stamp_process_time=False,
+        )
+        # Bar events with only ts_event (no event_time_ns) — should all succeed
+        for i in range(3):
+            engine.on_event(Bar(close=float(i + 1), ts_event=(i + 1) * 1000))
+        assert engine.is_ready("m3")
+
+
+# ===========================================================================
+# LateEventError — diagnostic fields
+# ===========================================================================
+
+class TestLateEventErrorDiagnostics:
+    def _make_engine_with_raise(self, stamp_process_time: bool = False,
+                                clock=None) -> SpecFeatureEngine:
+        spec = FeatureSpec(
+            name="mean5",
+            input_type="bar",
+            input_field="close",
+            window=5,
+            trigger=TriggerPolicy(kind="on_event", late_event_policy="raise"),
+            params={"type": "rolling_mean"},
+        )
+        kw = dict(specs=[spec], stamp_process_time=stamp_process_time)
+        if clock is not None:
+            kw["clock"] = clock
+        engine = SpecFeatureEngine(**kw)
+        for i in range(5):
+            engine.on_event(Bar(close=float(i + 1), event_time_ns=_s(i + 1),
+                               instrument_id="BTC/USDT"))
+        return engine
+
+    def test_stream_key_instrument_and_type(self):
+        engine = self._make_engine_with_raise()
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(1),
+                               instrument_id="BTC/USDT"))
+        err = exc_info.value
+        assert err.stream_key.instrument_id == "BTC/USDT"
+        assert err.stream_key.input_type == "bar"
+
+    def test_event_time_ns_field(self):
+        engine = self._make_engine_with_raise()
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(2)))
+        assert exc_info.value.event_time_ns == _s(2)
+
+    def test_late_by_ns_equals_watermark_minus_trigger(self):
+        engine = self._make_engine_with_raise()
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))
+        err = exc_info.value
+        assert err.late_by_ns == err.watermark_ns - err.trigger_ts_ns
+        assert err.late_by_ns > 0
+
+    def test_receive_time_ns_included(self):
+        engine = self._make_engine_with_raise()
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(1), receive_time_ns=_s(2)))
+        assert exc_info.value.receive_time_ns == _s(2)
+
+    def test_process_time_ns_included_when_stamped(self):
+        clock = ManualClock(initial_ns=_s(10))
+        engine = self._make_engine_with_raise(stamp_process_time=True, clock=clock)
+        clock.set(_s(99))
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))
+        assert exc_info.value.process_time_ns == _s(99)
+
+    def test_process_time_ns_none_when_not_stamped(self):
+        engine = self._make_engine_with_raise(stamp_process_time=False)
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))
+        assert exc_info.value.process_time_ns is None
+
+    def test_error_message_contains_key_fields(self):
+        engine = self._make_engine_with_raise()
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))
+        msg = str(exc_info.value)
+        assert "mean5" in msg
+        assert "trigger_ts_ns" in msg
+        assert "watermark_ns" in msg
+        assert "late_by_ns" in msg
+
+
+# ===========================================================================
+# Late event boundary conditions
+# ===========================================================================
+
+class TestLateEventBoundary:
+    def _engine_with_lateness(self, allowed_lateness_ns: int, policy: str = "drop"):
+        spec = FeatureSpec(
+            name="m3",
+            input_type="bar",
+            input_field="close",
+            window=3,
+            trigger=TriggerPolicy(
+                kind="on_event",
+                allowed_lateness_ns=allowed_lateness_ns,
+                late_event_policy=policy,
+            ),
+            params={"type": "rolling_mean"},
+        )
+        return SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+
+    def test_event_at_1000_then_900_with_lateness_50_is_late(self):
+        """max=1000, lateness=50 → watermark=950; event@900 < 950 → dropped."""
+        engine = self._engine_with_lateness(50)
+        engine.on_event(Bar(close=1.0, event_time_ns=1000))
+        before = engine.get("m3")
+        engine.on_event(Bar(close=9999.0, event_time_ns=900))
+        assert engine.get("m3") == before
+
+    def test_event_at_1000_then_970_with_lateness_50_is_not_late(self):
+        """max=1000, lateness=50 → watermark=950; event@970 >= 950 → accepted."""
+        engine = self._engine_with_lateness(50)
+        engine.on_event(Bar(close=1.0, event_time_ns=1000))
+        before = engine.get("m3")
+        engine.on_event(Bar(close=2.0, event_time_ns=970))
+        assert engine.get("m3") != before
+
+    def test_event_exactly_at_watermark_is_not_late(self):
+        """event@950 with watermark=950: 950 < 950 is False → not late."""
+        engine = self._engine_with_lateness(50)
+        engine.on_event(Bar(close=1.0, event_time_ns=1000))
+        before = engine.get("m3")
+        engine.on_event(Bar(close=2.0, event_time_ns=950))
+        assert engine.get("m3") != before  # state changed → not dropped
+
+    def test_event_one_ns_before_watermark_is_late(self):
+        """event@949 with watermark=950: 949 < 950 is True → dropped."""
+        engine = self._engine_with_lateness(50)
+        engine.on_event(Bar(close=1.0, event_time_ns=1000))
+        before = engine.get("m3")
+        engine.on_event(Bar(close=9999.0, event_time_ns=949))
+        assert engine.get("m3") == before
+
+    def test_aapl_bar_watermark_does_not_affect_msft_bar(self):
+        """Advancing AAPL watermark to 10s does not classify MSFT@1s as late."""
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="m3", input_type="bar", input_field="close",
+                               window=3, params={"type": "rolling_mean"})],
+            stamp_process_time=False,
+        )
+        for i in range(1, 11):
+            engine.on_event(Bar(close=float(i), event_time_ns=_s(i),
+                               instrument_id="AAPL"))
+        snap = engine.on_event(Bar(close=100.0, event_time_ns=_s(1),
+                                   instrument_id="MSFT"))
+        # MSFT stream watermark starts fresh; event at 1s is never late
+        assert engine.watermark_for("MSFT", "bar") == _s(1)
+        assert engine.watermark_for("AAPL", "bar") == _s(10)
+        # MSFT feature value was updated (not dropped)
+        assert snap.values["m3"] is not None
+
+    def test_bar_watermark_does_not_affect_quote_watermark(self):
+        """Bar watermark at 10s does not make quote@1s late."""
+        bar_spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                               window=3, params={"type": "rolling_mean"})
+        quote_spec = FeatureSpec(name="spread", input_type="quote",
+                                 params={"type": "spread"})
+        engine = SpecFeatureEngine(specs=[bar_spec, quote_spec], stamp_process_time=False)
+        for i in range(1, 11):
+            engine.on_event(Bar(close=float(i), event_time_ns=_s(i)))
+        snap = engine.on_event(Quote(bid_price=99.0, ask_price=101.0, event_time_ns=_s(1)))
+        assert snap.values["spread"].is_ready
+        assert snap.values["spread"].value == pytest.approx(2.0)
+
+    def test_source_watermarks_independent_for_lateness(self):
+        """OKX@2s is not late when binance watermark is at 100s."""
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="spread", input_type="quote",
+                               params={"type": "spread"})],
+            stamp_process_time=False,
+        )
+        engine.on_event(_SrcQuote(event_time_ns=_s(100), source="binance"))
+        snap = engine.on_event(_SrcQuote(event_time_ns=_s(2), source="okx"))
+        assert snap.values["spread"].is_ready  # not dropped

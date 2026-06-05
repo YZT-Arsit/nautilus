@@ -61,6 +61,7 @@ from nautilus_ext.features.compute.clock import Clock, SystemClock
 from nautilus_ext.features.compute.feature_base import FeatureBase
 from nautilus_ext.features.compute.spec import FeatureSnapshot, FeatureSpec, FeatureValue
 from nautilus_ext.features.compute.timestamps import (
+    EventTimestamps,
     TimestampConfig,
     extract_timestamps,
     select_timestamp,
@@ -70,19 +71,44 @@ from nautilus_ext.features.compute.watermark import StreamKey, WatermarkTracker
 log = logging.getLogger(__name__)
 
 _EVENT_TYPE_MAP: dict[str, str] = {
+    # Canonical values — equal to FeatureSpec.input_type
     "bar": "bar",
+    "trade": "trade",
+    "quote": "quote",
+    "book_delta": "book_delta",
+    "timer": "timer",
+    # Vendor / legacy aliases
     "trade_tick": "trade",
     "quote_tick": "quote",
     "orderbook": "book_delta",
+    "order_book": "book_delta",
+    "book_update": "book_delta",
     "funding_rate": "timer",
 }
 
 
-def _input_type_for(event: Any) -> str | None:
+def input_type_for_event(event: Any) -> str | None:
+    """Return the canonical input_type string for a market event.
+
+    Canonical values match FeatureSpec.input_type:
+        ``"bar"``, ``"trade"``, ``"quote"``, ``"book_delta"``, ``"timer"``.
+
+    Accepts both canonical names and vendor/legacy aliases
+    (``"trade_tick"``, ``"quote_tick"``, ``"orderbook"``, etc.) so that
+    ``FeatureSpec.input_type`` and watermark ``StreamKey.input_type`` always
+    agree regardless of the raw ``event_type`` string carried by the event.
+
+    Returns ``None`` when the event carries no ``event_type`` attribute or
+    when the value is not a recognised type.
+    """
     et = getattr(event, "event_type", None)
     if et is None:
         return None
     return _EVENT_TYPE_MAP.get(et)
+
+
+# Internal alias kept for call-sites inside this module
+_input_type_for = input_type_for_event
 
 
 def _extract_instrument_id(event: Any) -> str | None:
@@ -99,30 +125,52 @@ class LateEventError(RuntimeError):
     Attributes
     ----------
     feature_name : str
+    stream_key : StreamKey
+        The (instrument_id, input_type, source) stream that detected lateness.
     trigger_ts_ns : int
-        The event's trigger timestamp (based on time_semantics).
+        The event's trigger timestamp (honouring time_semantics).
     watermark_ns : int
         The stream watermark at the time of the check.
     allowed_lateness_ns : int
         The feature's allowed_lateness_ns setting.
+    late_by_ns : int
+        How many nanoseconds late: watermark_ns − trigger_ts_ns (always > 0).
+    event_time_ns : int
+        Exchange/source timestamp of the triggering event.
+    receive_time_ns : int | None
+        Local reception timestamp, when available.
+    process_time_ns : int | None
+        Engine processing timestamp, when stamp_process_time=True.
     """
 
     def __init__(
         self,
         feature_name: str,
+        stream_key: StreamKey,
         trigger_ts_ns: int,
         watermark_ns: int,
         allowed_lateness_ns: int,
+        event_time_ns: int,
+        receive_time_ns: int | None = None,
+        process_time_ns: int | None = None,
     ) -> None:
+        late_by_ns = watermark_ns - trigger_ts_ns
+        src_suffix = f"/{stream_key.source}" if stream_key.source else ""
         super().__init__(
-            f"Late event for feature {feature_name!r}: "
-            f"trigger_ts_ns={trigger_ts_ns} < watermark_ns={watermark_ns} "
-            f"(allowed_lateness_ns={allowed_lateness_ns})"
+            f"Late event for feature {feature_name!r} "
+            f"stream={stream_key.instrument_id}/{stream_key.input_type}{src_suffix}: "
+            f"trigger_ts_ns={trigger_ts_ns} watermark_ns={watermark_ns} "
+            f"late_by_ns={late_by_ns} (allowed_lateness_ns={allowed_lateness_ns})"
         )
         self.feature_name = feature_name
+        self.stream_key = stream_key
         self.trigger_ts_ns = trigger_ts_ns
         self.watermark_ns = watermark_ns
         self.allowed_lateness_ns = allowed_lateness_ns
+        self.late_by_ns = late_by_ns
+        self.event_time_ns = event_time_ns
+        self.receive_time_ns = receive_time_ns
+        self.process_time_ns = process_time_ns
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +205,7 @@ class SpecFeatureEngine:
         stamp_process_time: bool = True,
         clock: Clock | None = None,
         ts_config: TimestampConfig | None = None,
+        is_live: bool = True,
     ) -> None:
         self._specs: list[FeatureSpec] = list(specs)
         self._registry: BackendRegistry = backend_registry or build_default_registry()
@@ -165,6 +214,7 @@ class SpecFeatureEngine:
         self._stamp_process_time = stamp_process_time
         self._clock: Clock = clock if clock is not None else SystemClock()
         self._ts_config: TimestampConfig = ts_config or TimestampConfig()
+        self._is_live_mode: bool = is_live
         self._is_warmup: bool = False
         self._build()
 
@@ -220,7 +270,7 @@ class SpecFeatureEngine:
            c. Dispatch to feature.update() or _handle_late().
         5. Return FeatureSnapshot with all three timestamps.
         """
-        ts = extract_timestamps(event, self._ts_config, is_live=True)
+        ts = extract_timestamps(event, self._ts_config, is_live=self._is_live_mode)
         process_time_ns: int | None = (
             self._clock.now_ns() if self._stamp_process_time else None
         )
@@ -253,7 +303,10 @@ class SpecFeatureEngine:
             )
 
             if is_late:
-                values[name] = self._handle_late(feature, event, trigger_ts_ns, watermark)
+                values[name] = self._handle_late(
+                    feature, event, trigger_ts_ns, watermark,
+                    stream_key, ts, process_time_ns,
+                )
             else:
                 update = feature.update(event)
                 values[name] = update.value
@@ -324,10 +377,33 @@ class SpecFeatureEngine:
         input_type: str,
         source: str | None = None,
     ) -> int:
-        """Get watermark_ns for a specific stream.  Returns 0 if no events seen."""
-        key = StreamKey(instrument_id=instrument_id, input_type=input_type, source=source)
-        wm = self._watermarks.get(key)
-        return wm.watermark_ns if wm is not None else 0
+        """Get watermark_ns for a specific or aggregate stream.
+
+        When ``source`` is provided, returns the watermark for the exact
+        ``(instrument_id, input_type, source)`` stream, or 0 if no events
+        have been seen for that key.
+
+        When ``source`` is ``None`` (default), returns the **maximum**
+        watermark across all streams sharing ``(instrument_id, input_type)``
+        regardless of source.  This is an **aggregate query for
+        monitoring/debugging only** — the engine itself always uses the exact
+        ``(instrument_id, input_type, source)`` stream watermark for per-feature
+        late-event decisions and is never influenced by this aggregate value.
+
+        Returns 0 when no matching stream has seen any events.
+        """
+        if source is not None:
+            key = StreamKey(instrument_id=instrument_id, input_type=input_type, source=source)
+            wm = self._watermarks.get(key)
+            return wm.watermark_ns if wm is not None else 0
+
+        # Aggregate: max watermark across all streams matching instrument_id + input_type
+        matches = [
+            wm.watermark_ns
+            for k, wm in self._watermarks.items()
+            if k.instrument_id == instrument_id and k.input_type == input_type
+        ]
+        return max(matches) if matches else 0
 
     def all_watermarks(self) -> dict[StreamKey, int]:
         """All stream watermarks as {StreamKey: watermark_ns}."""
@@ -335,10 +411,16 @@ class SpecFeatureEngine:
 
     @property
     def watermark_ns(self) -> int:
-        """Maximum watermark_ns across all streams.
+        """Maximum watermark_ns across all streams (backward-compat aggregate).
 
-        For multi-stream engines use watermark_for() or all_watermarks()
-        to get per-stream values.
+        **For monitoring and debugging only.** This property returns the max
+        watermark across every stream the engine has ever seen. Do NOT use
+        this value for feature late-event decisions — the engine internally
+        uses per-stream watermarks keyed by StreamKey, and this aggregate can
+        be far ahead of a slow stream, causing incorrect late classification.
+
+        For per-stream access use ``watermark_for(instrument_id, input_type)``
+        or ``all_watermarks()``.
         """
         if not self._watermarks:
             return 0
@@ -346,7 +428,12 @@ class SpecFeatureEngine:
 
     @property
     def max_event_time_ns(self) -> int:
-        """Maximum event_time_ns seen across all streams."""
+        """Maximum event_time_ns seen across all streams (backward-compat aggregate).
+
+        **For monitoring and debugging only.** Same caveat as ``watermark_ns``:
+        this is a cross-stream maximum and must not be used for feature
+        late-event decisions.
+        """
         if not self._watermarks:
             return 0
         return max(wm.max_event_time_ns for wm in self._watermarks.values())
@@ -377,6 +464,9 @@ class SpecFeatureEngine:
         event: Any,
         trigger_ts_ns: int,
         watermark: WatermarkTracker,
+        stream_key: StreamKey,
+        ts: EventTimestamps,
+        process_time_ns: int | None = None,
     ) -> FeatureValue:
         """Dispatch a late event according to the feature's late_event_policy."""
         policy = feature.spec.trigger.late_event_policy
@@ -408,9 +498,13 @@ class SpecFeatureEngine:
         if policy == "raise":
             raise LateEventError(
                 feature_name=feature.spec.name,
+                stream_key=stream_key,
                 trigger_ts_ns=trigger_ts_ns,
                 watermark_ns=watermark.watermark_ns,
                 allowed_lateness_ns=feature.spec.trigger.allowed_lateness_ns,
+                event_time_ns=ts.event_time_ns,
+                receive_time_ns=ts.receive_time_ns,
+                process_time_ns=process_time_ns,
             )
 
         # Unknown policy: safe default is drop
