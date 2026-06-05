@@ -5,6 +5,12 @@ FeatureValue, FeatureUpdate, FeatureSnapshot.
 Strategy code must depend only on these types — never on backend-specific
 computation objects. Swapping the backend (python → rust) must require no
 strategy changes.
+
+Time unit convention
+--------------------
+All duration and timestamp fields in this module use **nanoseconds**. The
+legacy ts_event / ts_init fields in MarketEvent use milliseconds but are
+converted to nanoseconds by extract_timestamps() in timestamps.py.
 """
 from __future__ import annotations
 
@@ -12,25 +18,69 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+# ---------------------------------------------------------------------------
+# TriggerPolicy
+# ---------------------------------------------------------------------------
+
 @dataclass(frozen=True)
 class TriggerPolicy:
-    """Policy controlling when a feature emits a new value.
+    """Policy controlling when a feature emits a new value and how it handles time.
 
     Parameters
     ----------
     kind : str
-        One of: ``on_event``, ``on_bar_close``, ``on_timer``,
-        ``on_n_events``, ``on_n_bars``, ``on_window_close``.
+        One of:
+        - ``on_event``        — emit on every matching event (default)
+        - ``on_bar_close``    — emit when a bar closes (same as on_event for bar input)
+        - ``on_timer``        — emit when interval_ns has elapsed (time-based)
+        - ``on_n_events``     — emit every N events
+        - ``on_n_bars``       — emit every N bars
+        - ``on_window_close`` — emit when a fixed time window closes
+
+    interval_ns : int | None
+        For ``on_timer`` and ``on_window_close``: minimum nanoseconds between
+        successive emissions (measured in time_semantics time).
+
     n : int | None
         For ``on_n_events`` and ``on_n_bars``: emit every N events/bars.
-    interval_ms : int | None
-        For ``on_timer`` and ``on_window_close``: minimum ms between emissions.
+
+    time_semantics : str
+        Which timestamp to use for time-based triggers and feature windows:
+        - ``"event_time"``   — exchange/source timestamp. Default. Use for all
+                               feature windows (rolling VWAP, volatility, etc.)
+        - ``"receive_time"`` — local system reception time. Use for latency
+                               measurement and receive-time replay.
+        - ``"process_time"`` — engine processing time (wall clock). Use ONLY
+                               for system latency monitoring; never for feature
+                               windows unless explicitly required.
+
+    allowed_lateness_ns : int
+        Watermark safety margin (nanoseconds). Events arriving within this
+        window behind the leading event_time are still considered on-time.
+        Default 0 for low-latency live trading. For batch/backtest with
+        moderate out-of-order data, use e.g. 5_000_000_000 (5 seconds).
+
+    late_event_policy : str
+        How to handle events whose event_time_ns < watermark_ns:
+        - ``"drop"``                      — silently ignore (default, hot path safe)
+        - ``"log_only"``                  — log a warning, then drop
+        - ``"update_if_not_finalized"``   — update state if the late event still
+                                            falls within the current rolling window
+        - ``"recompute_for_backtest_only"`` — process normally during warmup/backtest;
+                                              drop in live trading
     """
 
     kind: str = "on_event"
+    interval_ns: int | None = None
     n: int | None = None
-    interval_ms: int | None = None
+    time_semantics: str = "event_time"
+    allowed_lateness_ns: int = 0
+    late_event_policy: str = "drop"
 
+
+# ---------------------------------------------------------------------------
+# WarmupRequirement
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class WarmupRequirement:
@@ -51,6 +101,10 @@ class WarmupRequirement:
     unit: str = "bars"
     mandatory: bool = True
 
+
+# ---------------------------------------------------------------------------
+# FeatureSpec
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class FeatureSpec:
@@ -74,18 +128,16 @@ class FeatureSpec:
     window : int | None
         Lookback window size in ``window_unit`` units.
     window_unit : str | None
-        Unit of the window: ``"bars"``, ``"events"``, ``"seconds"``, etc.
+        Unit of the window: ``"bars"``, ``"events"``, ``"nanoseconds"``,
+        ``"milliseconds"``, ``"seconds"``, ``"minutes"``.
     trigger : TriggerPolicy
-        When to emit a new feature value.
+        When to emit a new feature value, with full time semantics.
     backend : str
-        Backend identifier. ``"python"`` by default. Other backends
-        (``"numpy"``, ``"polars"``, ``"rust"``) can be registered via
-        BackendRegistry without changing the strategy API.
+        Backend identifier. ``"python"`` by default.
     params : dict
         Feature-specific parameters.  ``params["type"]`` is used by
         PythonBackend to select the concrete feature class when it cannot
         be inferred from the name.
-        Example: ``{"type": "rolling_mean"}``.
     """
 
     name: str
@@ -97,6 +149,10 @@ class FeatureSpec:
     backend: str = "python"
     params: dict[str, Any] = field(default_factory=dict)
 
+
+# ---------------------------------------------------------------------------
+# FeatureValue / FeatureUpdate
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class FeatureValue:
@@ -133,26 +189,43 @@ class FeatureUpdate:
     triggered: bool
 
 
+# ---------------------------------------------------------------------------
+# FeatureSnapshot
+# ---------------------------------------------------------------------------
+
 @dataclass
 class FeatureSnapshot:
     """All feature values for one instrument at one point in time.
 
-    Produced by SpecFeatureEngine.on_event(). Stable across backend changes —
-    strategy code should depend on this type, not on FeatureEvent.
+    All timestamp fields are in **nanoseconds**. The ``ts_event`` field
+    holds ``event_time_ns`` (the exchange/source timestamp) for consistency
+    with the primary time semantics used by feature windows.
 
     Parameters
     ----------
     ts_event : int
-        Millisecond POSIX timestamp of the triggering market event.
+        event_time_ns — exchange/source timestamp in nanoseconds.
     instrument_id : str | None
         Instrument identifier from the source event.
     values : dict[str, FeatureValue]
         All features keyed by FeatureSpec.name.
+    receive_time_ns : int | None
+        Local system reception timestamp (nanoseconds). Preserved for
+        latency measurement and receive-time replay.
+    process_time_ns : int | None
+        Timestamp when SpecFeatureEngine stamped the event during on_event().
+        None if not stamped (warmup mode, or engine not configured to stamp).
     """
 
-    ts_event: int
+    ts_event: int               # event_time_ns (nanoseconds)
     instrument_id: str | None
     values: dict[str, FeatureValue]
+    receive_time_ns: int | None = None
+    process_time_ns: int | None = None
+
+    # ------------------------------------------------------------------
+    # Convenience accessors
+    # ------------------------------------------------------------------
 
     def get(self, name: str) -> FeatureValue | None:
         """Return the FeatureValue for a named feature, or None if absent."""
@@ -174,6 +247,18 @@ class FeatureSnapshot:
     def all_ready(self) -> bool:
         """True when every feature in this snapshot is ready."""
         return all(v.is_ready for v in self.values.values())
+
+    def latency_ns(self) -> int | None:
+        """receive_time_ns - ts_event. None if receive_time_ns absent."""
+        if self.receive_time_ns is None:
+            return None
+        return self.receive_time_ns - self.ts_event
+
+    def processing_latency_ns(self) -> int | None:
+        """process_time_ns - receive_time_ns. None if either absent."""
+        if self.process_time_ns is None or self.receive_time_ns is None:
+            return None
+        return self.process_time_ns - self.receive_time_ns
 
     def __len__(self) -> int:
         return len(self.values)

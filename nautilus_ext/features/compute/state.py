@@ -1,20 +1,23 @@
 """
-Reusable incremental state containers.
+Reusable incremental state containers — all timestamps in nanoseconds.
 
 Each container maintains running statistics and updates in O(1) amortized time.
 No full-window scanning on push — running sums are kept in sync with element
-additions and evictions. This is the property that keeps the hot path fast:
-the cost of one update does not grow with window size.
+additions and evictions.
 
-State containers are internal building blocks for FeatureBase implementations.
-Strategy code never touches them directly.
+Time convention
+---------------
+All timestamp parameters and fields use **nanoseconds** (int). This matches
+the EventTimestamps.event_time_ns / receive_time_ns convention in timestamps.py.
+The caller is responsible for selecting the correct timestamp field (event_time,
+receive_time, or process_time) before passing it to push().
 
 Containers
 ----------
-RollingWindowState  — fixed-size ring buffer; running sum and optional sum-of-squares
-TimeWindowState     — timestamp-keyed deque; evicts entries outside a time window
+RollingWindowState  — fixed ring buffer; O(1) sum/mean/variance/std
+TimeWindowState     — timestamp-keyed deque; evicts entries outside window_ns
 EWMAState           — exponentially weighted moving average; single float state
-VWAPState           — cumulative price×volume / volume; rolling or unbounded
+VWAPState           — volume-weighted average price; rolling or unbounded
 """
 from __future__ import annotations
 
@@ -35,7 +38,6 @@ class RollingWindowState:
         Maximum number of elements retained.
     track_squares : bool
         If True, maintain a running sum-of-squares, enabling O(1) variance/std.
-        Costs one extra float multiplication per push.
     """
 
     def __init__(self, maxlen: int, *, track_squares: bool = False) -> None:
@@ -45,12 +47,8 @@ class RollingWindowState:
         self._sum: float = 0.0
         self._sum_sq: float = 0.0
 
-    # ------------------------------------------------------------------
-    # Write — O(1)
-    # ------------------------------------------------------------------
-
     def push(self, value: float) -> None:
-        """Append value; evict oldest when full."""
+        """Append value; evict oldest when full. O(1)."""
         if len(self._buf) == self._maxlen:
             old = self._buf[0]
             self._sum -= old
@@ -60,10 +58,6 @@ class RollingWindowState:
         self._sum += value
         if self._track_squares:
             self._sum_sq += value * value
-
-    # ------------------------------------------------------------------
-    # Read — O(1) aggregates
-    # ------------------------------------------------------------------
 
     @property
     def count(self) -> int:
@@ -88,7 +82,6 @@ class RollingWindowState:
         n = len(self._buf)
         if n < 2 or not self._track_squares:
             return None
-        # Population variance from running sums, then correct to sample variance
         mean = self._sum / n
         pop_var = self._sum_sq / n - mean * mean
         return max(0.0, pop_var) * n / (n - 1)
@@ -101,21 +94,17 @@ class RollingWindowState:
 
     @property
     def min(self) -> float | None:
-        """O(window) scan — acceptable for windows < a few thousand bars."""
+        """O(window) scan — acceptable for windows < ~10 000 bars."""
         return min(self._buf) if self._buf else None
 
     @property
     def max(self) -> float | None:
-        """O(window) scan — acceptable for windows < a few thousand bars."""
+        """O(window) scan — acceptable for windows < ~10 000 bars."""
         return max(self._buf) if self._buf else None
 
     @property
     def values(self) -> list[float]:
         return list(self._buf)
-
-    # ------------------------------------------------------------------
-    # Management
-    # ------------------------------------------------------------------
 
     def reset(self) -> None:
         self._buf.clear()
@@ -142,36 +131,30 @@ class RollingWindowState:
 class TimeWindowState:
     """Timestamped deque with time-based eviction and O(1) running sum.
 
-    On each push, entries older than (ts_ms - window_ms) are popped from
-    the front before appending the new entry. The running sum is updated
-    with a subtraction per eviction and one addition per push.
+    All timestamps are in **nanoseconds**. On each push, entries with
+    timestamps older than (ts_ns - window_ns) are evicted from the front
+    before the new entry is appended. The running sum is updated with one
+    subtraction per eviction and one addition per push.
 
     Parameters
     ----------
-    window_ms : int
-        Sliding window length in milliseconds.
+    window_ns : int
+        Sliding window length in nanoseconds.
+        Examples: 5_000_000_000 = 5 seconds, 300_000_000_000 = 5 minutes.
     """
 
-    def __init__(self, window_ms: int) -> None:
-        self._window_ms = window_ms
-        self._entries: deque[tuple[int, float]] = deque()
+    def __init__(self, window_ns: int) -> None:
+        self._window_ns = window_ns
+        self._entries: deque[tuple[int, float]] = deque()  # (ts_ns, value)
         self._sum: float = 0.0
 
-    # ------------------------------------------------------------------
-    # Write — O(amortized 1)
-    # ------------------------------------------------------------------
-
-    def push(self, ts_ms: int, value: float) -> None:
-        """Append (ts_ms, value); evict all entries outside the window."""
-        cutoff = ts_ms - self._window_ms
+    def push(self, ts_ns: int, value: float) -> None:
+        """Append (ts_ns, value); evict all entries outside the window. O(amortized 1)."""
+        cutoff = ts_ns - self._window_ns
         while self._entries and self._entries[0][0] <= cutoff:
             self._sum -= self._entries.popleft()[1]
-        self._entries.append((ts_ms, value))
+        self._entries.append((ts_ns, value))
         self._sum += value
-
-    # ------------------------------------------------------------------
-    # Read
-    # ------------------------------------------------------------------
 
     @property
     def count(self) -> int:
@@ -191,12 +174,21 @@ class TimeWindowState:
         return [v for _, v in self._entries]
 
     @property
-    def timestamps(self) -> list[int]:
+    def timestamps_ns(self) -> list[int]:
+        """All timestamps in nanoseconds, oldest first."""
         return [ts for ts, _ in self._entries]
 
-    # ------------------------------------------------------------------
-    # Management
-    # ------------------------------------------------------------------
+    @property
+    def oldest_ts_ns(self) -> int | None:
+        return self._entries[0][0] if self._entries else None
+
+    @property
+    def newest_ts_ns(self) -> int | None:
+        return self._entries[-1][0] if self._entries else None
+
+    @property
+    def window_ns(self) -> int:
+        return self._window_ns
 
     def reset(self) -> None:
         self._entries.clear()
@@ -204,13 +196,13 @@ class TimeWindowState:
 
     def state_dict(self) -> dict:
         return {
-            "window_ms": self._window_ms,
+            "window_ns": self._window_ns,
             "entries": list(self._entries),
             "sum": self._sum,
         }
 
     def load_state_dict(self, state: dict) -> None:
-        self._window_ms = state["window_ms"]
+        self._window_ns = state["window_ns"]
         self._entries = deque(tuple(e) for e in state["entries"])
         self._sum = state["sum"]
 
@@ -275,47 +267,44 @@ class VWAPState:
     """VWAP state: cumulative price×volume and volume, with optional eviction.
 
     Modes:
-    - Unbounded (session VWAP): window=None, window_ms=None.
+    - Unbounded (session VWAP): window=None, window_ns=None.
     - Count-based rolling: window=N, uses deque(maxlen=N).
-    - Time-based rolling: window_ms=M, evicts entries older than M ms.
+    - Time-based rolling: window_ns=M (nanoseconds), evicts old entries.
 
-    vwap = Σ(price × volume) / Σ(volume)
+    All timestamps in nanoseconds.
 
     Parameters
     ----------
     window : int | None
         Count-based rolling window. None = unbounded or time-based.
-    window_ms : int | None
-        Time-based rolling window in milliseconds. None = unbounded or count-based.
+    window_ns : int | None
+        Time-based rolling window in nanoseconds. None = unbounded or count-based.
     """
 
     def __init__(
         self,
         window: int | None = None,
-        window_ms: int | None = None,
+        window_ns: int | None = None,
     ) -> None:
         self._window = window
-        self._window_ms = window_ms
-        maxlen = window  # None → unbounded deque
+        self._window_ns = window_ns
+        maxlen = window
         self._pv_buf: deque[float] = deque(maxlen=maxlen)
         self._v_buf: deque[float] = deque(maxlen=maxlen)
         self._ts_buf: deque[int] = deque()
         self._pv_sum: float = 0.0
         self._v_sum: float = 0.0
 
-    def push(self, price: float, volume: float, ts_ms: int = 0) -> None:
-        """Update VWAP state. O(1) amortized."""
+    def push(self, price: float, volume: float, ts_ns: int = 0) -> None:
+        """Update VWAP state. O(1) amortized. ts_ns in nanoseconds."""
         pv = price * volume
 
-        # Count-based: evict before append (deque.maxlen handles the cap, but
-        # we must subtract the outgoing element from running totals first).
         if self._window is not None and len(self._pv_buf) == self._window:
             self._pv_sum -= self._pv_buf[0]
             self._v_sum -= self._v_buf[0]
 
-        # Time-based: evict entries older than the window.
-        if self._window_ms is not None:
-            cutoff = ts_ms - self._window_ms
+        if self._window_ns is not None:
+            cutoff = ts_ns - self._window_ns
             while self._ts_buf and self._ts_buf[0] <= cutoff:
                 self._pv_sum -= self._pv_buf.popleft()
                 self._v_sum -= self._v_buf.popleft()
@@ -323,8 +312,8 @@ class VWAPState:
 
         self._pv_buf.append(pv)
         self._v_buf.append(volume)
-        if self._window_ms is not None:
-            self._ts_buf.append(ts_ms)
+        if self._window_ns is not None:
+            self._ts_buf.append(ts_ns)
         self._pv_sum += pv
         self._v_sum += volume
 
@@ -346,7 +335,7 @@ class VWAPState:
     def state_dict(self) -> dict:
         return {
             "window": self._window,
-            "window_ms": self._window_ms,
+            "window_ns": self._window_ns,
             "pv_buf": list(self._pv_buf),
             "v_buf": list(self._v_buf),
             "ts_buf": list(self._ts_buf),
@@ -356,7 +345,7 @@ class VWAPState:
 
     def load_state_dict(self, state: dict) -> None:
         self._window = state["window"]
-        self._window_ms = state["window_ms"]
+        self._window_ns = state["window_ns"]
         maxlen = self._window
         self._pv_buf = deque(state["pv_buf"], maxlen=maxlen)
         self._v_buf = deque(state["v_buf"], maxlen=maxlen)

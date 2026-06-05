@@ -82,9 +82,15 @@ from nautilus_ext.features.compute.state import (
     TimeWindowState,
     VWAPState,
 )
+from nautilus_ext.features.compute.timestamps import (
+    EventTimestamps,
+    extract_timestamps,
+    select_timestamp,
+)
+from nautilus_ext.features.compute.watermark import WatermarkTracker
 
 __all__ = [
-    # Specs / values
+    # Specs / values (stable, strategy-facing)
     "FeatureSpec",
     "TriggerPolicy",
     "WarmupRequirement",
@@ -93,6 +99,12 @@ __all__ = [
     "FeatureSnapshot",
     # Protocol
     "FeatureBase",
+    # Timestamps
+    "EventTimestamps",
+    "extract_timestamps",
+    "select_timestamp",
+    # Watermark
+    "WatermarkTracker",
     # State containers
     "RollingWindowState",
     "TimeWindowState",

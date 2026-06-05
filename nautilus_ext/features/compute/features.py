@@ -1,13 +1,16 @@
 """
 Concrete incremental feature implementations (pure Python backend).
 
-All classes satisfy FeatureBase via structural protocol. Each update() is
-O(1) or amortized O(1) — no full-window iteration beyond min/max which are
-O(window) but acceptable for windows < ~10 000 bars.
+All timestamps in nanoseconds. Each feature selects which timestamp to use
+for time-based trigger checks and window eviction via
+spec.trigger.time_semantics:
+    "event_time"   → EventTimestamps.event_time_ns  (default, use for windows)
+    "receive_time" → EventTimestamps.receive_time_ns (latency measurement)
+    "process_time" → EventTimestamps.process_time_ns (system monitoring only)
 
-Event field extraction uses duck typing (getattr) so these classes work with
-any object that has the expected attributes, not just the specific MarketEvent
-dataclasses.
+Time-window state containers (TimeWindowState, VWAPState time mode) expect
+timestamps in nanoseconds. The window_unit→nanosecond conversion is handled
+in VWAPFeature and any future time-window feature constructors.
 
 Features implemented
 --------------------
@@ -16,10 +19,10 @@ Bar-input (input_type="bar"):
     RollingStdFeature     — rolling sample std of one bar field
     RollingMinFeature     — rolling minimum of one bar field
     RollingMaxFeature     — rolling maximum of one bar field
-    VWAPFeature           — volume-weighted average price (rolling or session)
+    VWAPFeature           — VWAP; rolling count, rolling time, or session
     SimpleReturnFeature   — (close_t - close_{t-1}) / close_{t-1}
     LogReturnFeature      — log(close_t / close_{t-1})
-    EWMAFeature           — exponentially weighted moving average of one bar field
+    EWMAFeature           — exponentially weighted moving average
 
 Quote-input (input_type="quote"):
     SpreadFeature         — ask_price - bid_price
@@ -45,20 +48,25 @@ from nautilus_ext.features.compute.state import (
     TimeWindowState,
     VWAPState,
 )
+from nautilus_ext.features.compute.timestamps import extract_timestamps, select_timestamp
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Timestamp extraction helpers
 # ---------------------------------------------------------------------------
 
-def _ts(event: Any) -> int:
-    """Extract ts_event from an event, defaulting to 0."""
-    ts = getattr(event, "ts_event", None)
-    return int(ts) if ts is not None else 0
+def _ts_ns(event: Any, time_semantics: str = "event_time") -> int:
+    """Extract the appropriate nanosecond timestamp from any event.
+
+    Uses extract_timestamps() for field resolution and falls back from
+    ns-precision fields to ts_event (ms) × 1_000_000.
+    """
+    ts = extract_timestamps(event)
+    return select_timestamp(ts, time_semantics)
 
 
 def _field(event: Any, name: str | None) -> float | None:
-    """Extract a named float field from an event."""
+    """Extract a named float field from an event (duck-typed)."""
     if name is None:
         return None
     v = getattr(event, name, None)
@@ -75,12 +83,17 @@ def _field(event: Any, name: str | None) -> float | None:
 # ---------------------------------------------------------------------------
 
 class _AbstractFeature:
-    """Internal mixin: spec storage, event counting, trigger checking, cache."""
+    """Internal mixin: spec storage, event counting, trigger checking, cache.
+
+    All concrete feature classes inherit from this. Timestamp handling is
+    delegated to _ts_ns() which selects the right field based on
+    spec.trigger.time_semantics.
+    """
 
     def __init__(self, spec: FeatureSpec) -> None:
         self._spec = spec
         self._event_count: int = 0
-        self._last_trigger_ts: int = 0
+        self._last_trigger_ts: int = 0  # nanoseconds
         self._cached = FeatureValue(name=spec.name, value=None, is_ready=False)
 
     @property
@@ -92,19 +105,20 @@ class _AbstractFeature:
         return self._cached
 
     # ------------------------------------------------------------------
-    # Trigger policy
+    # Trigger policy (nanosecond timestamps)
     # ------------------------------------------------------------------
 
-    def _should_trigger(self, ts_ms: int) -> bool:
+    def _should_trigger(self, ts_ns: int) -> bool:
+        """Check whether the trigger condition fires for this event."""
         kind = self._spec.trigger.kind
         if kind in ("on_event", "on_bar_close"):
             return True
         n = self._spec.trigger.n
         if kind in ("on_n_events", "on_n_bars"):
             return n is not None and (self._event_count % n == 0)
-        interval = self._spec.trigger.interval_ms or 0
+        interval_ns = self._spec.trigger.interval_ns or 0
         if kind in ("on_timer", "on_window_close"):
-            return (ts_ms - self._last_trigger_ts) >= interval
+            return (ts_ns - self._last_trigger_ts) >= interval_ns
         return True
 
     # ------------------------------------------------------------------
@@ -151,10 +165,8 @@ class _AbstractFeature:
 class RollingMeanFeature(_AbstractFeature):
     """Rolling mean of one bar field. O(1) update via running sum.
 
-    Parameters (from FeatureSpec)
-    -----------------------------
-    input_field : str  — bar field to average (e.g. ``"close"``)
-    window : int       — bar count for the rolling window
+    Time semantics: count-based (bars). Trigger time uses time_semantics
+    for on_timer / on_window_close variants.
     """
 
     def __init__(self, spec: FeatureSpec) -> None:
@@ -174,14 +186,14 @@ class RollingMeanFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         v = _field(event, self._spec.input_field)
         if v is None:
             return self._no_change()
         self._state.push(v)
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit(self._state.mean, self._state.is_full, triggered)
 
     def state_dict(self) -> dict:
@@ -191,19 +203,11 @@ class RollingMeanFeature(_AbstractFeature):
         self._load_base(state)
         self._state.load_state_dict(state["rolling"])
         if self._state.is_full:
-            self._cached = FeatureValue(
-                name=self._spec.name, value=self._state.mean, is_ready=True
-            )
+            self._cached = FeatureValue(name=self._spec.name, value=self._state.mean, is_ready=True)
 
 
 class RollingStdFeature(_AbstractFeature):
-    """Rolling sample standard deviation. O(1) update via running sum-of-squares.
-
-    Parameters (from FeatureSpec)
-    -----------------------------
-    input_field : str  — bar field (e.g. ``"close"``)
-    window : int       — bar count for the rolling window
-    """
+    """Rolling sample std. O(1) update via running sum-of-squares."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
@@ -222,14 +226,14 @@ class RollingStdFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         v = _field(event, self._spec.input_field)
         if v is None:
             return self._no_change()
         self._state.push(v)
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit(self._state.std, self._state.is_full, triggered)
 
     def state_dict(self) -> dict:
@@ -239,16 +243,11 @@ class RollingStdFeature(_AbstractFeature):
         self._load_base(state)
         self._state.load_state_dict(state["rolling"])
         if self._state.is_full:
-            self._cached = FeatureValue(
-                name=self._spec.name, value=self._state.std, is_ready=True
-            )
+            self._cached = FeatureValue(name=self._spec.name, value=self._state.std, is_ready=True)
 
 
 class RollingMinFeature(_AbstractFeature):
-    """Rolling minimum of one bar field.
-
-    min/max require O(window) scan; use monotone-deque variant for large windows.
-    """
+    """Rolling minimum. O(window) scan for min."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
@@ -267,14 +266,14 @@ class RollingMinFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         v = _field(event, self._spec.input_field)
         if v is None:
             return self._no_change()
         self._state.push(v)
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit(self._state.min, self._state.is_full, triggered)
 
     def state_dict(self) -> dict:
@@ -284,13 +283,11 @@ class RollingMinFeature(_AbstractFeature):
         self._load_base(state)
         self._state.load_state_dict(state["rolling"])
         if self._state.is_full:
-            self._cached = FeatureValue(
-                name=self._spec.name, value=self._state.min, is_ready=True
-            )
+            self._cached = FeatureValue(name=self._spec.name, value=self._state.min, is_ready=True)
 
 
 class RollingMaxFeature(_AbstractFeature):
-    """Rolling maximum of one bar field."""
+    """Rolling maximum. O(window) scan for max."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
@@ -309,14 +306,14 @@ class RollingMaxFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         v = _field(event, self._spec.input_field)
         if v is None:
             return self._no_change()
         self._state.push(v)
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit(self._state.max, self._state.is_full, triggered)
 
     def state_dict(self) -> dict:
@@ -326,41 +323,47 @@ class RollingMaxFeature(_AbstractFeature):
         self._load_base(state)
         self._state.load_state_dict(state["rolling"])
         if self._state.is_full:
-            self._cached = FeatureValue(
-                name=self._spec.name, value=self._state.max, is_ready=True
-            )
+            self._cached = FeatureValue(name=self._spec.name, value=self._state.max, is_ready=True)
 
 
 class VWAPFeature(_AbstractFeature):
     """Volume-weighted average price.
 
-    Supports three modes selected by window / window_unit:
+    Supports three modes via window / window_unit:
     - Session (unbounded): window=None, window_unit=None.
     - Count-based rolling: window=N, window_unit="bars"/"events".
-    - Time-based rolling: window=N, window_unit in seconds/milliseconds/minutes.
+    - Time-based rolling: window=N, window_unit in seconds/milliseconds/minutes/nanoseconds.
+      Window eviction uses time_semantics timestamp.
+
+    Time-based windows use nanoseconds internally.
 
     Parameters (from FeatureSpec)
     -----------------------------
     window : int | None     — window size
-    window_unit : str | None — "bars", "events", "seconds", "milliseconds", "minutes"
-    params["price_field"]   — bar field used as price (default "close")
-    params["volume_field"]  — bar field used as volume (default "volume")
+    window_unit : str       — "bars", "events", "nanoseconds", "milliseconds", "seconds", "minutes"
+    params["price_field"]   — bar field for price (default "close")
+    params["volume_field"]  — bar field for volume (default "volume")
     """
 
-    _MS_PER_UNIT = {"seconds": 1_000, "milliseconds": 1, "minutes": 60_000}
+    _NS_PER_UNIT: dict[str, int] = {
+        "nanoseconds": 1,
+        "milliseconds": 1_000_000,
+        "seconds": 1_000_000_000,
+        "minutes": 60_000_000_000,
+    }
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
         window = spec.window
         unit = spec.window_unit or "bars"
-        window_ms: int | None = None
+        window_ns: int | None = None
         count_window: int | None = None
         if window is not None:
-            if unit in self._MS_PER_UNIT:
-                window_ms = window * self._MS_PER_UNIT[unit]
+            if unit in self._NS_PER_UNIT:
+                window_ns = window * self._NS_PER_UNIT[unit]
             else:
                 count_window = window
-        self._state = VWAPState(window=count_window, window_ms=window_ms)
+        self._state = VWAPState(window=count_window, window_ns=window_ns)
         self._price_field: str = spec.params.get("price_field", "close")
         self._volume_field: str = spec.params.get("volume_field", "volume")
 
@@ -378,15 +381,15 @@ class VWAPFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         price = _field(event, self._price_field)
         volume = _field(event, self._volume_field)
         if price is None or volume is None:
             return self._no_change()
-        self._state.push(price, volume, ts_ms=ts)
-        triggered = self._should_trigger(ts)
+        self._state.push(price, volume, ts_ns=ts_ns)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit(self._state.vwap, True, triggered)
 
     def state_dict(self) -> dict:
@@ -400,12 +403,7 @@ class VWAPFeature(_AbstractFeature):
 
 
 class SimpleReturnFeature(_AbstractFeature):
-    """Simple close-to-close return: (close_t - close_{t-1}) / close_{t-1}.
-
-    Parameters (from FeatureSpec)
-    -----------------------------
-    input_field : str  — bar field (default "close")
-    """
+    """Simple close-to-close return: (close_t - close_{t-1}) / close_{t-1}."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
@@ -424,14 +422,13 @@ class SimpleReturnFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
-        field = self._spec.input_field or "close"
-        cur = _field(event, field)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        cur = _field(event, self._spec.input_field or "close")
         if cur is None:
             return self._no_change()
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         if self._prev is None or self._prev == 0.0:
             self._prev = cur
             return self._emit(None, False, False)
@@ -448,12 +445,7 @@ class SimpleReturnFeature(_AbstractFeature):
 
 
 class LogReturnFeature(_AbstractFeature):
-    """Log return: log(close_t / close_{t-1}).
-
-    Parameters (from FeatureSpec)
-    -----------------------------
-    input_field : str  — bar field (default "close")
-    """
+    """Log return: log(close_t / close_{t-1})."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
@@ -472,14 +464,13 @@ class LogReturnFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
-        field = self._spec.input_field or "close"
-        cur = _field(event, field)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        cur = _field(event, self._spec.input_field or "close")
         if cur is None:
             return self._no_change()
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         if self._prev is None or self._prev <= 0.0 or cur <= 0.0:
             self._prev = cur
             return self._emit(None, False, False)
@@ -496,20 +487,16 @@ class LogReturnFeature(_AbstractFeature):
 
 
 class EWMAFeature(_AbstractFeature):
-    """Exponentially weighted moving average of one bar field.
-
-    Parameters (from FeatureSpec)
-    -----------------------------
-    input_field : str     — bar field (e.g. ``"close"``)
-    params["span"] : int  — span n (alpha = 2/(n+1)). Default 10.
-    params["alpha"] : float — explicit alpha, overrides span.
-    """
+    """Exponentially weighted moving average of one bar field."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
         alpha = spec.params.get("alpha")
         span = spec.params.get("span") or spec.window or 10
-        self._state = EWMAState(span=None if alpha else int(span), alpha=float(alpha) if alpha else None)
+        self._state = EWMAState(
+            span=None if alpha else int(span),
+            alpha=float(alpha) if alpha else None,
+        )
 
     def warmup_required(self) -> WarmupRequirement:
         span = self._spec.params.get("span") or self._spec.window or 10
@@ -525,14 +512,14 @@ class EWMAFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         v = _field(event, self._spec.input_field)
         if v is None:
             return self._no_change()
         self._state.push(v)
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit(self._state.value, True, triggered)
 
     def state_dict(self) -> dict:
@@ -542,9 +529,7 @@ class EWMAFeature(_AbstractFeature):
         self._load_base(state)
         self._state.load_state_dict(state["ewma"])
         if self._state.value is not None:
-            self._cached = FeatureValue(
-                name=self._spec.name, value=self._state.value, is_ready=True
-            )
+            self._cached = FeatureValue(name=self._spec.name, value=self._state.value, is_ready=True)
 
 
 # ---------------------------------------------------------------------------
@@ -552,10 +537,7 @@ class EWMAFeature(_AbstractFeature):
 # ---------------------------------------------------------------------------
 
 class SpreadFeature(_AbstractFeature):
-    """Bid-ask spread: ask_price - bid_price.
-
-    Expects events with ask_price and bid_price attributes (QuoteTickInput).
-    """
+    """Bid-ask spread: ask_price - bid_price."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
@@ -572,14 +554,14 @@ class SpreadFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         bid = _field(event, "bid_price")
         ask = _field(event, "ask_price")
         if bid is None or ask is None:
             return self._no_change()
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit(ask - bid, True, triggered)
 
     def state_dict(self) -> dict:
@@ -590,10 +572,7 @@ class SpreadFeature(_AbstractFeature):
 
 
 class MidPriceFeature(_AbstractFeature):
-    """Mid price: (ask_price + bid_price) / 2.
-
-    Expects events with ask_price and bid_price attributes (QuoteTickInput).
-    """
+    """Mid price: (ask_price + bid_price) / 2."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
@@ -610,14 +589,14 @@ class MidPriceFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         bid = _field(event, "bid_price")
         ask = _field(event, "ask_price")
         if bid is None or ask is None:
             return self._no_change()
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit((ask + bid) / 2.0, True, triggered)
 
     def state_dict(self) -> dict:
@@ -632,14 +611,7 @@ class MidPriceFeature(_AbstractFeature):
 # ---------------------------------------------------------------------------
 
 class BookImbalanceFeature(_AbstractFeature):
-    """Order-book volume imbalance: (bid_vol - ask_vol) / (bid_vol + ask_vol).
-
-    Works with either:
-    - OrderBookInput (bids/asks as list[tuple[price, size]]): sums all levels.
-    - Any event with bid_volume and ask_volume scalar attributes.
-
-    Result in [-1, +1]: +1 means all volume on bid side, -1 all on ask side.
-    """
+    """Order-book volume imbalance: (bid_vol - ask_vol) / (bid_vol + ask_vol)."""
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
@@ -656,11 +628,9 @@ class BookImbalanceFeature(_AbstractFeature):
 
     def update(self, event: Any) -> FeatureUpdate:
         self._event_count += 1
-        ts = _ts(event)
-
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
         bid_vol: float | None = None
         ask_vol: float | None = None
-
         bids = getattr(event, "bids", None)
         asks = getattr(event, "asks", None)
         if bids is not None and asks is not None:
@@ -669,15 +639,13 @@ class BookImbalanceFeature(_AbstractFeature):
         else:
             bid_vol = _field(event, "bid_volume")
             ask_vol = _field(event, "ask_volume")
-
         if bid_vol is None or ask_vol is None:
             return self._no_change()
-
         total = bid_vol + ask_vol
         imbalance = (bid_vol - ask_vol) / total if total > 0.0 else None
-        triggered = self._should_trigger(ts)
+        triggered = self._should_trigger(ts_ns)
         if triggered:
-            self._last_trigger_ts = ts
+            self._last_trigger_ts = ts_ns
         return self._emit(imbalance, imbalance is not None, triggered)
 
     def state_dict(self) -> dict:

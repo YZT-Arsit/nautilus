@@ -7,9 +7,11 @@ from typing import Any
 @dataclass(frozen=True)
 class MarketEvent:
     event_type: str = "market"
-    ts_event: int | None = None
-    ts_init: int | None = None
+    ts_event: int | None = None        # milliseconds (legacy field, kept for compatibility)
+    ts_init: int | None = None         # milliseconds (legacy field, kept for compatibility)
     instrument_id: str | None = None
+    event_time_ns: int | None = None   # nanoseconds — exchange/source timestamp
+    receive_time_ns: int | None = None  # nanoseconds — local system reception timestamp
 
 
 @dataclass(frozen=True)
