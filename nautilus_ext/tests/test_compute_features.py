@@ -102,12 +102,16 @@ from nautilus_ext.features.compute.state import (
     TimeWindowState,
     VWAPState,
 )
+from nautilus_ext.features.compute.clock import ManualClock, SystemClock
+from nautilus_ext.features.compute.engine import LateEventError
 from nautilus_ext.features.compute.timestamps import (
     EventTimestamps,
+    TimestampConfig,
+    convert_legacy_ts_event_to_ns,
     extract_timestamps,
     select_timestamp,
 )
-from nautilus_ext.features.compute.watermark import WatermarkTracker
+from nautilus_ext.features.compute.watermark import StreamKey, WatermarkTracker
 
 
 # ---------------------------------------------------------------------------
@@ -1019,8 +1023,10 @@ class TestSpecFeatureEngine:
             engine.on_event(b)
         mean_before = engine.get("mean3").value
 
-        # Quote must carry a proper timestamp — events without timestamps are
-        # treated as ts=0, which falls before the bar-driven watermark.
+        # Watermarks are partitioned by stream (instrument_id + input_type).
+        # The bar stream watermark does NOT affect the quote stream, so a quote
+        # at any timestamp is not late from the bar perspective.
+        # We still set an explicit timestamp as good practice.
         engine.on_event(Quote(bid_price=99.0, ask_price=101.0, event_time_ns=_s(4)))
         assert engine.get("mean3").value == mean_before   # bar feature unchanged by quote
         assert engine.get("spread").is_ready
@@ -1277,3 +1283,359 @@ class TestFeatureBaseProtocol:
             spec = FeatureSpec(name="test", **kwargs)
             f = cls(spec)
             assert isinstance(f, FeatureBase), f"{cls.__name__} does not satisfy FeatureBase"
+
+
+# ===========================================================================
+# TimestampConfig — legacy unit conversion and live strictness
+# ===========================================================================
+
+@dataclass
+class _LegacyEvent:
+    ts_event: int = 0
+    event_type: str = "bar"
+
+
+@dataclass
+class _NsEvent:
+    event_time_ns: int = 0
+    event_type: str = "bar"
+
+
+class TestTimestampConfig:
+    def test_convert_ms_default(self):
+        """Default config treats ts_event as milliseconds."""
+        ts = extract_timestamps(_LegacyEvent(ts_event=5000))
+        assert ts.event_time_ns == 5_000_000_000   # 5000 ms → 5s in ns
+
+    def test_convert_us(self):
+        config = TimestampConfig(legacy_ts_event_unit="us")
+        ts = extract_timestamps(_LegacyEvent(ts_event=5_000_000), config)
+        assert ts.event_time_ns == 5_000_000_000   # 5_000_000 μs → 5s in ns
+
+    def test_convert_ns(self):
+        config = TimestampConfig(legacy_ts_event_unit="ns")
+        ts = extract_timestamps(_LegacyEvent(ts_event=5_000_000_000), config)
+        assert ts.event_time_ns == 5_000_000_000   # already ns, no conversion
+
+    def test_require_event_time_ns_raises_in_live_mode(self):
+        config = TimestampConfig(require_event_time_ns_for_live=True)
+        with pytest.raises(RuntimeError, match="event_time_ns"):
+            extract_timestamps(_LegacyEvent(ts_event=1000), config, is_live=True)
+
+    def test_require_event_time_ns_no_raise_when_field_present(self):
+        config = TimestampConfig(require_event_time_ns_for_live=True)
+        ts = extract_timestamps(_NsEvent(event_time_ns=_s(3)), config, is_live=True)
+        assert ts.event_time_ns == _s(3)
+
+    def test_require_event_time_ns_no_raise_in_warmup(self):
+        config = TimestampConfig(require_event_time_ns_for_live=True)
+        # is_live=False → no raise even if event_time_ns is absent
+        ts = extract_timestamps(_LegacyEvent(ts_event=2000), config, is_live=False)
+        assert ts.event_time_ns == 2_000_000_000
+
+    def test_convert_helper_ms(self):
+        assert convert_legacy_ts_event_to_ns(5000, "ms") == 5_000_000_000
+
+    def test_convert_helper_us(self):
+        assert convert_legacy_ts_event_to_ns(5_000_000, "us") == 5_000_000_000
+
+    def test_convert_helper_ns(self):
+        assert convert_legacy_ts_event_to_ns(5_000_000_000, "ns") == 5_000_000_000
+
+    def test_convert_helper_unknown_unit_raises(self):
+        with pytest.raises(ValueError, match="Unknown legacy_ts_event_unit"):
+            convert_legacy_ts_event_to_ns(5000, "seconds")
+
+
+# ===========================================================================
+# Partitioned watermarks — multi-stream correctness
+# ===========================================================================
+
+class TestPartitionedWatermarks:
+    def _bar_engine(self):
+        return SpecFeatureEngine(
+            specs=[FeatureSpec(name="m3", input_type="bar", input_field="close",
+                               window=3, params={"type": "rolling_mean"})],
+            stamp_process_time=False,
+        )
+
+    def test_bar_stream_watermark_advances_independently(self):
+        """BTC bar watermark does not affect ETH bar watermark."""
+        engine = self._bar_engine()
+        for i in range(1, 6):
+            engine.on_event(Bar(close=float(i), event_time_ns=_s(i), instrument_id="BTC/USDT"))
+
+        assert engine.watermark_for("BTC/USDT", "bar") == _s(5)
+        assert engine.watermark_for("ETH/USDT", "bar") == 0   # no ETH events
+
+    def test_quote_stream_not_affected_by_bar_watermark(self):
+        """Quote events use their own stream watermark, not the bar watermark."""
+        bar_spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                               window=3, params={"type": "rolling_mean"})
+        quote_spec = FeatureSpec(name="spread", input_type="quote",
+                                 params={"type": "spread"})
+        engine = SpecFeatureEngine(specs=[bar_spec, quote_spec], stamp_process_time=False)
+
+        # Advance bar stream to 10s
+        for i in range(1, 11):
+            engine.on_event(Bar(close=float(i), event_time_ns=_s(i)))
+
+        # Quote at t=1s: quote stream is fresh (watermark=0), NOT late
+        snap = engine.on_event(Quote(bid_price=99.0, ask_price=101.0, event_time_ns=_s(1)))
+        assert snap.values["spread"].is_ready
+        assert snap.values["spread"].value == pytest.approx(2.0)
+
+        assert engine.watermark_for("BTC/USDT", "bar") == _s(10)
+        assert engine.watermark_for("BTC/USDT", "quote") == _s(1)
+
+    def test_all_watermarks_returns_per_stream_dict(self):
+        engine = self._bar_engine()
+        engine.on_event(Bar(close=1.0, event_time_ns=_s(1), instrument_id="BTC/USDT"))
+        engine.on_event(Bar(close=2.0, event_time_ns=_s(5), instrument_id="ETH/USDT"))
+
+        wms = engine.all_watermarks()
+        assert wms[StreamKey("BTC/USDT", "bar")] == _s(1)
+        assert wms[StreamKey("ETH/USDT", "bar")] == _s(5)
+
+    def test_reset_clears_all_watermarks(self):
+        engine = self._bar_engine()
+        engine.on_event(Bar(close=1.0, event_time_ns=_s(3), instrument_id="BTC/USDT"))
+        engine.reset()
+        assert engine.watermark_ns == 0
+        assert engine.all_watermarks() == {}
+
+    def test_state_dict_round_trip_multi_stream(self):
+        engine = self._bar_engine()
+        for i in range(1, 6):
+            engine.on_event(Bar(close=float(i), event_time_ns=_s(i), instrument_id="BTC/USDT"))
+
+        state = engine.state_dict()
+        engine2 = self._bar_engine()
+        engine2.load_state_dict(state)
+
+        assert engine2.watermark_for("BTC/USDT", "bar") == engine.watermark_for("BTC/USDT", "bar")
+        assert engine2.get("m3").value == pytest.approx(engine.get("m3").value)
+
+    def test_watermark_ns_returns_max_across_streams(self):
+        """watermark_ns property returns max across all streams for backward compat."""
+        engine = self._bar_engine()
+        engine.on_event(Bar(close=1.0, event_time_ns=_s(1), instrument_id="BTC/USDT"))
+        engine.on_event(Bar(close=2.0, event_time_ns=_s(7), instrument_id="ETH/USDT"))
+        # max(1s, 7s) = 7s
+        assert engine.watermark_ns == _s(7)
+        assert engine.max_event_time_ns == _s(7)
+
+
+# ===========================================================================
+# Clock abstraction — deterministic process_time_ns
+# ===========================================================================
+
+class TestClockAbstraction:
+    def _spec(self):
+        return [FeatureSpec(name="m3", input_type="bar", input_field="close",
+                            window=3, params={"type": "rolling_mean"})]
+
+    def test_manual_clock_stamps_deterministic_process_time(self):
+        clock = ManualClock(initial_ns=1_000_000_000)
+        engine = SpecFeatureEngine(specs=self._spec(), stamp_process_time=True, clock=clock)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert snap.process_time_ns == 1_000_000_000
+
+    def test_manual_clock_advance_reflects_in_latency(self):
+        clock = ManualClock(initial_ns=0)
+        engine = SpecFeatureEngine(specs=self._spec(), stamp_process_time=True, clock=clock)
+        clock.set(_s(5))
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1), receive_time_ns=_s(1)))
+        # processing_latency = process_time - receive_time = 5s - 1s = 4s
+        assert snap.processing_latency_ns() == _s(4)
+
+    def test_system_clock_is_positive(self):
+        sc = SystemClock()
+        assert sc.now_ns() > 0
+
+    def test_manual_clock_set_and_advance(self):
+        clock = ManualClock(initial_ns=100)
+        clock.advance(50)
+        assert clock.now_ns() == 150
+        clock.set(9_000_000_000)
+        assert clock.now_ns() == 9_000_000_000
+
+    def test_no_clock_stamp_when_disabled(self):
+        clock = ManualClock(initial_ns=999)
+        engine = SpecFeatureEngine(specs=self._spec(), stamp_process_time=False, clock=clock)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert snap.process_time_ns is None
+
+    def test_manual_clock_satisfies_clock_protocol(self):
+        from nautilus_ext.features.compute.clock import Clock
+        assert isinstance(ManualClock(), Clock)
+        assert isinstance(SystemClock(), Clock)
+
+
+# ===========================================================================
+# Late event policies — explicit per-policy tests
+# ===========================================================================
+
+class TestLateEventPoliciesExplicit:
+    """One test per late event policy; verifies both state and exception semantics."""
+
+    def _make_ready_engine(self, policy: str, allowed_lateness_ns: int = 0):
+        """Engine with 5 ready bars. Returns (engine, value_before_late_event)."""
+        spec = FeatureSpec(
+            name="mean5",
+            input_type="bar",
+            input_field="close",
+            window=5,
+            trigger=TriggerPolicy(
+                kind="on_event",
+                allowed_lateness_ns=allowed_lateness_ns,
+                late_event_policy=policy,
+            ),
+            params={"type": "rolling_mean"},
+        )
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        for i in range(5):
+            engine.on_event(Bar(close=float(i + 1), event_time_ns=_s(i + 1)))
+        return engine, engine.get("mean5").value
+
+    def test_drop_leaves_state_unchanged(self):
+        engine, val_before = self._make_ready_engine("drop")
+        engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))  # late
+        assert engine.get("mean5").value == val_before
+
+    def test_log_only_leaves_state_unchanged_and_emits_warning(self, caplog):
+        import logging
+        engine, val_before = self._make_ready_engine("log_only")
+        with caplog.at_level(logging.WARNING):
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))
+        assert engine.get("mean5").value == val_before
+        assert "Late event dropped" in caplog.text
+
+    def test_update_if_not_finalized_incorporates_late_value(self):
+        engine, val_before = self._make_ready_engine("update_if_not_finalized")
+        engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))  # late, but accepted
+        assert engine.get("mean5").value != val_before   # state changed
+
+    def test_raise_raises_late_event_error(self):
+        engine, _ = self._make_ready_engine("raise")
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))
+        err = exc_info.value
+        assert err.feature_name == "mean5"
+        assert err.trigger_ts_ns == _s(1)
+        assert err.watermark_ns > 0
+
+    def test_raise_error_has_full_context(self):
+        engine, _ = self._make_ready_engine("raise", allowed_lateness_ns=_s(1))
+        # bars at 1..5s → max=5s, allowed=1s → effective watermark=4s
+        # event at 3s: 3 < 4 → late → should raise
+        with pytest.raises(LateEventError) as exc_info:
+            engine.on_event(Bar(close=9999.0, event_time_ns=_s(3)))
+        err = exc_info.value
+        assert err.allowed_lateness_ns == _s(1)
+
+    def test_recompute_for_backtest_drops_in_live(self):
+        engine, val_before = self._make_ready_engine("recompute_for_backtest_only")
+        engine.on_event(Bar(close=9999.0, event_time_ns=_s(1)))
+        assert engine.get("mean5").value == val_before   # dropped in live mode
+
+    def test_recompute_for_backtest_processes_in_warmup(self):
+        spec = FeatureSpec(
+            name="mean5",
+            input_type="bar",
+            input_field="close",
+            window=5,
+            trigger=TriggerPolicy(late_event_policy="recompute_for_backtest_only"),
+            params={"type": "rolling_mean"},
+        )
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        # During warmup all events are processed regardless of policy
+        engine.warmup(bars([1.0, 2.0, 3.0, 4.0, 5.0]))
+        assert engine.is_ready("mean5")
+
+
+# ===========================================================================
+# Window metadata — FeatureValue.window_start_ns / window_end_ns / source_event_time_ns
+# ===========================================================================
+
+class TestWindowMetadata:
+    def test_vwap_time_window_populates_bounds(self):
+        """Time-based VWAP emits window_start_ns and window_end_ns."""
+        spec = FeatureSpec(name="vwap5s", input_type="bar", window=5,
+                           window_unit="seconds", params={"type": "vwap"})
+        f = VWAPFeature(spec)
+        ts_ns = _s(10)
+        u = f.update(Bar(close=100.0, volume=1.0, event_time_ns=ts_ns))
+        assert u.value.window_start_ns == ts_ns - _s(5)
+        assert u.value.window_end_ns == ts_ns
+
+    def test_vwap_count_window_no_bounds(self):
+        """Count-based VWAP does not emit window bounds."""
+        spec = FeatureSpec(name="vwap3", input_type="bar", window=3,
+                           window_unit="bars", params={"type": "vwap"})
+        f = VWAPFeature(spec)
+        u = f.update(Bar(close=100.0, volume=1.0, event_time_ns=_s(1)))
+        assert u.value.window_start_ns is None
+        assert u.value.window_end_ns is None
+
+    def test_session_vwap_no_bounds(self):
+        """Unbounded session VWAP has no window bounds."""
+        spec = FeatureSpec(name="vwap", input_type="bar", params={"type": "vwap"})
+        f = VWAPFeature(spec)
+        u = f.update(Bar(close=100.0, volume=1.0, event_time_ns=_s(1)))
+        assert u.value.window_start_ns is None
+        assert u.value.window_end_ns is None
+
+    def test_rolling_mean_no_window_bounds(self):
+        """Count-based rolling mean does not emit window bounds."""
+        spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        f = RollingMeanFeature(spec)
+        for i in range(3):
+            u = f.update(Bar(close=float(i + 1), event_time_ns=_s(i)))
+        assert u.value.window_start_ns is None
+        assert u.value.window_end_ns is None
+
+    def test_source_event_time_ns_rolling_mean(self):
+        """Rolling mean sets source_event_time_ns on every update."""
+        spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        f = RollingMeanFeature(spec)
+        ts_ns = _s(7)
+        for i in range(3):
+            u = f.update(Bar(close=float(i + 1), event_time_ns=_s(i)))
+        u = f.update(Bar(close=4.0, event_time_ns=ts_ns))
+        assert u.value.source_event_time_ns == ts_ns
+
+    def test_source_event_time_ns_spread(self):
+        """Quote spread sets source_event_time_ns."""
+        spec = FeatureSpec(name="spread", input_type="quote", params={"type": "spread"})
+        f = SpreadFeature(spec)
+        ts_ns = _s(3)
+        u = f.update(Quote(bid_price=99.0, ask_price=101.0, event_time_ns=ts_ns))
+        assert u.value.source_event_time_ns == ts_ns
+
+    def test_source_event_time_ns_vwap_time_window(self):
+        """Time-based VWAP sets source_event_time_ns = window_end_ns."""
+        spec = FeatureSpec(name="vwap5s", input_type="bar", window=5,
+                           window_unit="seconds", params={"type": "vwap"})
+        f = VWAPFeature(spec)
+        ts_ns = _s(10)
+        u = f.update(Bar(close=100.0, volume=1.0, event_time_ns=ts_ns))
+        assert u.value.source_event_time_ns == ts_ns
+        assert u.value.window_end_ns == u.value.source_event_time_ns
+
+    def test_engine_snapshot_feature_value_has_source_time(self):
+        """FeatureSnapshot values include source_event_time_ns via engine."""
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="m3", input_type="bar", input_field="close",
+                               window=3, params={"type": "rolling_mean"})],
+            stamp_process_time=False,
+        )
+        ts_ns = _s(7)
+        for i in range(3):
+            engine.on_event(Bar(close=float(i + 1), event_time_ns=_s(i)))
+        snap = engine.on_event(Bar(close=4.0, event_time_ns=ts_ns))
+        fv = snap.get("m3")
+        assert fv is not None
+        assert fv.source_event_time_ns == ts_ns

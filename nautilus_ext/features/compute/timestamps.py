@@ -16,7 +16,7 @@ receive_time_ns
 
 process_time_ns
     When SpecFeatureEngine.on_event() processed the event (stamped by the
-    engine at processing time using time.time_ns()). Use only for system
+    engine at processing time using clock.now_ns()). Use only for system
     latency monitoring — never for feature window computation unless a
     feature explicitly declares process-time semantics.
 
@@ -27,17 +27,103 @@ BarInput with only ts_event in milliseconds), the helpers fall back
 gracefully:
 
     event_time_ns  = event.event_time_ns
-                  or event.ts_event * 1_000_000   (ms → ns)
+                  or convert_legacy_ts_event_to_ns(event.ts_event, config.legacy_ts_event_unit)
                   or 0
 
     receive_time_ns = event.receive_time_ns
                    or event_time_ns               (assume no latency if absent)
+
+Legacy ts_event units
+---------------------
+Different data vendors use different units for the legacy ts_event field.
+Configure via TimestampConfig:
+
+    TimestampConfig(legacy_ts_event_unit="ms")  # NautilusTrader default
+    TimestampConfig(legacy_ts_event_unit="us")  # microseconds
+    TimestampConfig(legacy_ts_event_unit="ns")  # nanoseconds (no conversion)
+
+Production strictness
+---------------------
+In live mode, if require_event_time_ns_for_live=True and an event lacks
+event_time_ns, extract_timestamps raises RuntimeError with a clear message.
+This acts as a data-quality gate so production pipelines catch misconfigured
+feeds at startup rather than silently computing wrong feature windows.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# TimestampConfig
+# ---------------------------------------------------------------------------
+
+_LEGACY_TS_MULTIPLIERS: dict[str, int] = {
+    "ns": 1,
+    "us": 1_000,
+    "ms": 1_000_000,
+}
+
+
+@dataclass(frozen=True)
+class TimestampConfig:
+    """Configuration for legacy ts_event unit conversion.
+
+    Parameters
+    ----------
+    legacy_ts_event_unit : str
+        Unit of the legacy ts_event field when event_time_ns is absent.
+        One of ``"ns"``, ``"us"``, ``"ms"`` (default ``"ms"`` — the
+        NautilusTrader convention).
+    require_event_time_ns_for_live : bool
+        If True and the event lacks event_time_ns, ``extract_timestamps``
+        raises RuntimeError when ``is_live=True``.  Default False (silent
+        fallback to legacy ts_event conversion).  Enable in production to
+        catch misconfigured feeds early.
+    """
+
+    legacy_ts_event_unit: str = "ms"  # "ns" | "us" | "ms"
+    require_event_time_ns_for_live: bool = False
+
+
+def convert_legacy_ts_event_to_ns(value: int, unit: str) -> int:
+    """Convert a legacy ts_event integer to nanoseconds.
+
+    Parameters
+    ----------
+    value : int
+        The ts_event value in the source unit.
+    unit : str
+        Source unit: ``"ns"``, ``"us"``, or ``"ms"``.
+
+    Returns
+    -------
+    int
+        Equivalent value in nanoseconds.
+
+    Raises
+    ------
+    ValueError
+        If ``unit`` is not one of the recognised units.
+    """
+    multiplier = _LEGACY_TS_MULTIPLIERS.get(unit)
+    if multiplier is None:
+        raise ValueError(
+            f"Unknown legacy_ts_event_unit {unit!r}; expected one of "
+            f"{sorted(_LEGACY_TS_MULTIPLIERS)}"
+        )
+    return int(value) * multiplier
+
+
+_DEFAULT_CONFIG = TimestampConfig()
+
+
+# ---------------------------------------------------------------------------
+# EventTimestamps
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class EventTimestamps:
@@ -71,28 +157,58 @@ class EventTimestamps:
         return self.process_time_ns - self.receive_time_ns
 
 
-def extract_timestamps(event: Any) -> EventTimestamps:
+# ---------------------------------------------------------------------------
+# Extraction helpers
+# ---------------------------------------------------------------------------
+
+def extract_timestamps(
+    event: Any,
+    config: TimestampConfig | None = None,
+    *,
+    is_live: bool = False,
+) -> EventTimestamps:
     """Extract an EventTimestamps from any duck-typed event.
 
-    Falls back from ns-precision fields to ms-precision ts_event.
+    Falls back from ns-precision fields to the legacy ts_event field,
+    converting according to ``config.legacy_ts_event_unit``.
     process_time_ns is always None here — the engine stamps it later.
 
     Parameters
     ----------
     event : Any
-        Any object with optional event_time_ns, receive_time_ns, ts_event attrs.
+        Any object with optional ``event_time_ns``, ``receive_time_ns``,
+        ``ts_event`` attributes.
+    config : TimestampConfig | None
+        Conversion config.  Defaults to ``TimestampConfig()`` (ms legacy,
+        no strict live check).
+    is_live : bool
+        When True and ``config.require_event_time_ns_for_live`` is True,
+        raise RuntimeError if ``event_time_ns`` is absent from the event.
 
     Returns
     -------
     EventTimestamps
         With event_time_ns and receive_time_ns populated.
+
+    Raises
+    ------
+    RuntimeError
+        If ``is_live=True`` and ``config.require_event_time_ns_for_live=True``
+        and the event lacks ``event_time_ns``.
     """
+    cfg = config if config is not None else _DEFAULT_CONFIG
+
     # Primary: nanosecond-precision exchange timestamp
     et = getattr(event, "event_time_ns", None)
     if et is None:
-        # Legacy fallback: ts_event is milliseconds → convert
-        ts_ms = getattr(event, "ts_event", None) or 0
-        et = int(ts_ms) * 1_000_000
+        if is_live and cfg.require_event_time_ns_for_live:
+            raise RuntimeError(
+                f"event_time_ns is required in live mode but was not set on "
+                f"{type(event).__name__!r}. Set event_time_ns on the event, or "
+                f"disable require_event_time_ns_for_live in TimestampConfig."
+            )
+        ts_legacy = getattr(event, "ts_event", None) or 0
+        et = convert_legacy_ts_event_to_ns(int(ts_legacy), cfg.legacy_ts_event_unit)
 
     # Primary: nanosecond-precision receive timestamp
     rt = getattr(event, "receive_time_ns", None)

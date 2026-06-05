@@ -166,11 +166,26 @@ class FeatureValue:
         Computed value; None when the feature is not yet ready.
     is_ready : bool
         True when the feature has processed enough events for reliable output.
+    window_start_ns : int | None
+        Start of the time window this value represents (nanoseconds POSIX).
+        Populated by time-based features (VWAP with window_unit in seconds,
+        etc.).  None for count-based rolling features.
+    window_end_ns : int | None
+        End of the time window (nanoseconds POSIX).  Equals the event_time_ns
+        of the triggering event for rolling time windows.  None for
+        count-based rolling features.
+    source_event_time_ns : int | None
+        event_time_ns (or configured time_semantics timestamp) of the event
+        that produced this value.  Set on every update so downstream code
+        can trace which event triggered the computation.
     """
 
     name: str
     value: float | int | bool | None
     is_ready: bool
+    window_start_ns: int | None = None
+    window_end_ns: int | None = None
+    source_event_time_ns: int | None = None
 
 
 @dataclass(frozen=True)

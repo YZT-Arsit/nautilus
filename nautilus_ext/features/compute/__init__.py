@@ -14,6 +14,22 @@ Specs / values (stable, strategy-facing):
 Protocol:
     FeatureBase         — structural protocol for incremental features
 
+Timestamps:
+    TimestampConfig     — configures legacy ts_event unit and live strictness
+    EventTimestamps     — three-field timestamp bundle (event/receive/process)
+    extract_timestamps  — duck-typed extraction with configurable fallback
+    select_timestamp    — selects field based on time_semantics string
+    convert_legacy_ts_event_to_ns — explicit unit conversion helper
+
+Watermark / stream identity:
+    StreamKey           — (instrument_id, input_type, source) stream identity
+    WatermarkTracker    — per-stream event-time progress tracker
+
+Clock:
+    Clock               — structural protocol (now_ns() -> int)
+    SystemClock         — live clock backed by time.time_ns()
+    ManualClock         — deterministic clock for tests and replay
+
 State containers (for building custom features):
     RollingWindowState  — fixed ring buffer, O(1) sum/mean/variance/std
     TimeWindowState     — time-based sliding window with eviction
@@ -29,13 +45,14 @@ Backend / registry:
 Engines:
     SpecFeatureEngine       — standalone spec-driven engine; returns FeatureSnapshot
     SpecDrivenFeatureEngine — adapter implementing FeatureEngineBase for FeaturePipeline
+    LateEventError          — raised by late_event_policy='raise'
 
 Example
 -------
     from nautilus_ext.features.compute import (
-        FeatureSpec, TriggerPolicy, SpecFeatureEngine
+        FeatureSpec, TriggerPolicy, SpecFeatureEngine, TimestampConfig
     )
-    from nautilus_ext.strategies.interfaces.input_types import BarInput
+    from nautilus_ext.features.compute.clock import ManualClock
 
     specs = [
         FeatureSpec(
@@ -46,18 +63,18 @@ Example
             window_unit="bars",
             trigger=TriggerPolicy(kind="on_bar_close"),
         ),
-        FeatureSpec(
-            name="vwap_50",
-            input_type="bar",
-            window=50,
-            window_unit="bars",
-            trigger=TriggerPolicy(kind="on_bar_close"),
-        ),
     ]
 
-    engine = SpecFeatureEngine(specs=specs)
-    engine.warmup(historical_bars)            # pre-heat with history
-    snapshot = engine.on_event(live_bar)      # hot path
+    # Deterministic test
+    clock = ManualClock(initial_ns=0)
+    engine = SpecFeatureEngine(
+        specs=specs,
+        clock=clock,
+        ts_config=TimestampConfig(require_event_time_ns_for_live=True),
+    )
+    engine.warmup(historical_bars)
+    clock.set(1_000_000_000)           # fix process_time for reproducibility
+    snapshot = engine.on_event(live_bar)
     mean_value = snapshot.scalar("rolling_mean_close_20")
 """
 from nautilus_ext.features.compute.backend import (
@@ -66,7 +83,8 @@ from nautilus_ext.features.compute.backend import (
     PythonBackend,
     build_default_registry,
 )
-from nautilus_ext.features.compute.engine import SpecDrivenFeatureEngine, SpecFeatureEngine
+from nautilus_ext.features.compute.clock import Clock, ManualClock, SystemClock
+from nautilus_ext.features.compute.engine import LateEventError, SpecDrivenFeatureEngine, SpecFeatureEngine
 from nautilus_ext.features.compute.feature_base import FeatureBase
 from nautilus_ext.features.compute.spec import (
     FeatureSnapshot,
@@ -84,10 +102,12 @@ from nautilus_ext.features.compute.state import (
 )
 from nautilus_ext.features.compute.timestamps import (
     EventTimestamps,
+    TimestampConfig,
+    convert_legacy_ts_event_to_ns,
     extract_timestamps,
     select_timestamp,
 )
-from nautilus_ext.features.compute.watermark import WatermarkTracker
+from nautilus_ext.features.compute.watermark import StreamKey, WatermarkTracker
 
 __all__ = [
     # Specs / values (stable, strategy-facing)
@@ -100,11 +120,18 @@ __all__ = [
     # Protocol
     "FeatureBase",
     # Timestamps
+    "TimestampConfig",
     "EventTimestamps",
     "extract_timestamps",
     "select_timestamp",
-    # Watermark
+    "convert_legacy_ts_event_to_ns",
+    # Watermark / stream identity
+    "StreamKey",
     "WatermarkTracker",
+    # Clock
+    "Clock",
+    "SystemClock",
+    "ManualClock",
     # State containers
     "RollingWindowState",
     "TimeWindowState",
@@ -118,4 +145,5 @@ __all__ = [
     # Engines
     "SpecFeatureEngine",
     "SpecDrivenFeatureEngine",
+    "LateEventError",
 ]

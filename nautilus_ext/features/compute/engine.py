@@ -2,34 +2,49 @@
 SpecFeatureEngine and SpecDrivenFeatureEngine.
 
 SpecFeatureEngine
-    Standalone spec-driven engine. Processes market events, maintains a
-    per-engine WatermarkTracker, and applies late event policy before
-    calling feature.update(). Returns FeatureSnapshot with all three
-    timestamps (event_time_ns, receive_time_ns, process_time_ns).
+    Standalone spec-driven engine.  Processes market events, maintains one
+    WatermarkTracker per StreamKey (instrument × event-type × source), and
+    applies per-feature late event policy before calling feature.update().
+    Returns FeatureSnapshot with all three timestamps.
 
-    Watermark semantics
-    -------------------
-    The watermark tracks the maximum event_time_ns seen across all events.
-    Before calling feature.update(), the engine checks:
+    Partitioned watermarks
+    ----------------------
+    A single global watermark is unsafe when the engine receives multiple
+    instruments or multiple event types: a fast BTC/USDT bar stream would
+    advance the watermark and incorrectly classify slower ETH/USDT quote
+    events as late.
 
-        is_late = event_time_ns < (max_event_time_ns - feature.trigger.allowed_lateness_ns)
+    The engine maintains:
+        watermarks: dict[StreamKey, WatermarkTracker]
 
-    Different features can declare different allowed_lateness_ns; the engine
-    uses each feature's own allowed_lateness value for the per-feature check.
+    Each event advances only the watermark for its own stream
+    (instrument_id + input_type + optional source). The per-feature
+    late-event check uses the watermark of the stream that matches the
+    feature's input_type, so bar and quote features are checked
+    independently even when they share the same engine instance.
 
     Late event policies (configured per feature via TriggerPolicy):
         "drop"                      — skip update(), return cached value
         "log_only"                  — log warning, skip update()
-        "update_if_not_finalized"   — call update() anyway (state self-corrects)
+        "update_if_not_finalized"   — call update() anyway (state self-corrects
+                                      for rolling windows with no fixed boundary)
         "recompute_for_backtest_only" — update during warmup; drop in live mode
+        "raise"                     — raise LateEventError immediately
 
-    process_time_ns stamping
-    ------------------------
-    SpecFeatureEngine.on_event() stamps the current wall-clock time as
-    process_time_ns in the returned FeatureSnapshot. This enables
-    pipeline latency measurement: snapshot.processing_latency_ns().
-    During warmup, process_time_ns is NOT stamped (backtest doesn't
-    have meaningful wall-clock processing time).
+    Clock abstraction
+    -----------------
+    process_time_ns is stamped via an injected Clock rather than calling
+    time.time_ns() directly.  Inject ManualClock for deterministic tests:
+
+        from nautilus_ext.features.compute.clock import ManualClock
+        clock = ManualClock(initial_ns=1_000_000_000)
+        engine = SpecFeatureEngine(specs=specs, clock=clock)
+
+    TimestampConfig
+    ---------------
+    Governs how legacy ts_event fields are converted to nanoseconds and
+    whether missing event_time_ns raises in live mode.  Defaults are
+    backward-compatible (ms legacy, no strict check).
 
 SpecDrivenFeatureEngine
     Adapter that implements FeatureEngineBase, allowing SpecFeatureEngine
@@ -39,14 +54,18 @@ SpecDrivenFeatureEngine
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any, Iterable
 
 from nautilus_ext.features.compute.backend import BackendRegistry, build_default_registry
+from nautilus_ext.features.compute.clock import Clock, SystemClock
 from nautilus_ext.features.compute.feature_base import FeatureBase
 from nautilus_ext.features.compute.spec import FeatureSnapshot, FeatureSpec, FeatureValue
-from nautilus_ext.features.compute.timestamps import EventTimestamps, extract_timestamps, select_timestamp
-from nautilus_ext.features.compute.watermark import WatermarkTracker
+from nautilus_ext.features.compute.timestamps import (
+    TimestampConfig,
+    extract_timestamps,
+    select_timestamp,
+)
+from nautilus_ext.features.compute.watermark import StreamKey, WatermarkTracker
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +89,46 @@ def _extract_instrument_id(event: Any) -> str | None:
     return getattr(event, "instrument_id", None)
 
 
+# ---------------------------------------------------------------------------
+# LateEventError
+# ---------------------------------------------------------------------------
+
+class LateEventError(RuntimeError):
+    """Raised by late_event_policy='raise' when a late event is received.
+
+    Attributes
+    ----------
+    feature_name : str
+    trigger_ts_ns : int
+        The event's trigger timestamp (based on time_semantics).
+    watermark_ns : int
+        The stream watermark at the time of the check.
+    allowed_lateness_ns : int
+        The feature's allowed_lateness_ns setting.
+    """
+
+    def __init__(
+        self,
+        feature_name: str,
+        trigger_ts_ns: int,
+        watermark_ns: int,
+        allowed_lateness_ns: int,
+    ) -> None:
+        super().__init__(
+            f"Late event for feature {feature_name!r}: "
+            f"trigger_ts_ns={trigger_ts_ns} < watermark_ns={watermark_ns} "
+            f"(allowed_lateness_ns={allowed_lateness_ns})"
+        )
+        self.feature_name = feature_name
+        self.trigger_ts_ns = trigger_ts_ns
+        self.watermark_ns = watermark_ns
+        self.allowed_lateness_ns = allowed_lateness_ns
+
+
+# ---------------------------------------------------------------------------
+# SpecFeatureEngine
+# ---------------------------------------------------------------------------
+
 class SpecFeatureEngine:
     """Spec-driven incremental feature engine with full timestamp semantics.
 
@@ -78,11 +137,17 @@ class SpecFeatureEngine:
     specs : list[FeatureSpec]
         Feature specifications to register and build.
     backend_registry : BackendRegistry | None
-        Registry for feature creation. Defaults to the pure-Python backend.
+        Registry for feature creation.  Defaults to the pure-Python backend.
     stamp_process_time : bool
         If True (default), stamp process_time_ns in FeatureSnapshot during
-        on_event() using time.time_ns(). Set False for deterministic tests
-        or when process_time is not needed.
+        on_event() using ``clock.now_ns()``.  Set False for deterministic
+        tests or when process latency is not needed.
+    clock : Clock | None
+        Clock used to stamp process_time_ns.  Defaults to SystemClock
+        (time.time_ns()).  Inject ManualClock for deterministic tests.
+    ts_config : TimestampConfig | None
+        Controls legacy ts_event unit conversion and live-mode strictness.
+        Defaults to TimestampConfig() (ms legacy, no strict live check).
     """
 
     def __init__(
@@ -90,12 +155,16 @@ class SpecFeatureEngine:
         specs: list[FeatureSpec],
         backend_registry: BackendRegistry | None = None,
         stamp_process_time: bool = True,
+        clock: Clock | None = None,
+        ts_config: TimestampConfig | None = None,
     ) -> None:
         self._specs: list[FeatureSpec] = list(specs)
         self._registry: BackendRegistry = backend_registry or build_default_registry()
         self._features: dict[str, FeatureBase] = {}
-        self._watermark = WatermarkTracker(allowed_lateness_ns=0)
+        self._watermarks: dict[StreamKey, WatermarkTracker] = {}
         self._stamp_process_time = stamp_process_time
+        self._clock: Clock = clock if clock is not None else SystemClock()
+        self._ts_config: TimestampConfig = ts_config or TimestampConfig()
         self._is_warmup: bool = False
         self._build()
 
@@ -103,6 +172,18 @@ class SpecFeatureEngine:
         for spec in self._specs:
             self._features[spec.name] = self._registry.create_feature(spec)
         log.debug("SpecFeatureEngine: built %d features", len(self._features))
+
+    # ------------------------------------------------------------------
+    # Watermark helpers
+    # ------------------------------------------------------------------
+
+    def _get_watermark(self, key: StreamKey) -> WatermarkTracker:
+        """Return (or create) the WatermarkTracker for a stream."""
+        wm = self._watermarks.get(key)
+        if wm is None:
+            wm = WatermarkTracker(allowed_lateness_ns=0)
+            self._watermarks[key] = wm
+        return wm
 
     # ------------------------------------------------------------------
     # Public API
@@ -113,8 +194,8 @@ class SpecFeatureEngine:
 
         During warmup, process_time_ns is NOT stamped and late event policy
         "recompute_for_backtest_only" treats all events as on-time.
-        The watermark still advances so that post-warmup live events that are
-        truly older than history are detected correctly.
+        The per-stream watermarks still advance so post-warmup live events
+        that are truly older than history are detected correctly.
         """
         self._is_warmup = True
         count = 0
@@ -131,44 +212,55 @@ class SpecFeatureEngine:
 
         Steps:
         1. Extract EventTimestamps (event_time_ns, receive_time_ns).
-        2. Optionally stamp process_time_ns.
-        3. Advance the watermark.
+        2. Optionally stamp process_time_ns via clock.now_ns().
+        3. Advance the per-stream watermark (instrument + type + source).
         4. For each matching feature:
-           a. Check per-feature late event condition.
-           b. Dispatch to feature.update() or late-event handler.
+           a. Select the trigger timestamp per time_semantics.
+           b. Check per-feature lateness against the stream watermark.
+           c. Dispatch to feature.update() or _handle_late().
         5. Return FeatureSnapshot with all three timestamps.
         """
-        ts = extract_timestamps(event)
-        process_time_ns: int | None = time.time_ns() if self._stamp_process_time else None
-
-        # Advance the global watermark (used for is_late checks below)
-        self._watermark.update(ts.event_time_ns)
+        ts = extract_timestamps(event, self._ts_config, is_live=True)
+        process_time_ns: int | None = (
+            self._clock.now_ns() if self._stamp_process_time else None
+        )
 
         input_type = _input_type_for(event)
-        values: dict[str, FeatureValue] = {}
+        instrument_id = _extract_instrument_id(event)
+        source = getattr(event, "source", None)
 
+        # Advance only the watermark for this event's stream
+        stream_key = StreamKey(
+            instrument_id=instrument_id,
+            input_type=input_type or "unknown",
+            source=source,
+        )
+        watermark = self._get_watermark(stream_key)
+        watermark.update(ts.event_time_ns)
+
+        values: dict[str, FeatureValue] = {}
         for name, feature in self._features.items():
-            # Route by input_type
+            # Route by input_type: skip features not matching this event
             if input_type is not None and feature.spec.input_type != input_type:
                 values[name] = feature.value
                 continue
 
-            # Per-feature late event check (uses feature's own allowed_lateness_ns)
+            # Per-feature late event check using this stream's watermark
             trigger_ts_ns = select_timestamp(ts, feature.spec.trigger.time_semantics)
-            is_late = self._watermark.is_late_for(
+            is_late = watermark.is_late_for(
                 trigger_ts_ns,
                 feature.spec.trigger.allowed_lateness_ns,
             )
 
             if is_late:
-                values[name] = self._handle_late(feature, event, trigger_ts_ns)
+                values[name] = self._handle_late(feature, event, trigger_ts_ns, watermark)
             else:
                 update = feature.update(event)
                 values[name] = update.value
 
         return FeatureSnapshot(
             ts_event=ts.event_time_ns,
-            instrument_id=_extract_instrument_id(event),
+            instrument_id=instrument_id,
             values=values,
             receive_time_ns=ts.receive_time_ns,
             process_time_ns=process_time_ns,
@@ -187,20 +279,34 @@ class SpecFeatureEngine:
     def reset(self) -> None:
         for f in self._features.values():
             f.reset()
-        self._watermark.reset()
+        self._watermarks.clear()
 
     def state_dict(self) -> dict:
         return {
             "features": {name: f.state_dict() for name, f in self._features.items()},
-            "watermark": self._watermark.state_dict(),
+            "watermarks": [
+                {
+                    "key": {
+                        "instrument_id": k.instrument_id,
+                        "input_type": k.input_type,
+                        "source": k.source,
+                    },
+                    "state": v.state_dict(),
+                }
+                for k, v in self._watermarks.items()
+            ],
         }
 
     def load_state_dict(self, state: dict) -> None:
         for name, f in self._features.items():
             if name in state.get("features", {}):
                 f.load_state_dict(state["features"][name])
-        if "watermark" in state:
-            self._watermark.load_state_dict(state["watermark"])
+        self._watermarks = {}
+        for entry in state.get("watermarks", []):
+            k = StreamKey(**entry["key"])
+            wm = WatermarkTracker(allowed_lateness_ns=0)
+            wm.load_state_dict(entry["state"])
+            self._watermarks[k] = wm
 
     def specs(self) -> list[FeatureSpec]:
         return list(self._specs)
@@ -208,13 +314,42 @@ class SpecFeatureEngine:
     def feature_names(self) -> list[str]:
         return list(self._features)
 
+    # ------------------------------------------------------------------
+    # Watermark access
+    # ------------------------------------------------------------------
+
+    def watermark_for(
+        self,
+        instrument_id: str | None,
+        input_type: str,
+        source: str | None = None,
+    ) -> int:
+        """Get watermark_ns for a specific stream.  Returns 0 if no events seen."""
+        key = StreamKey(instrument_id=instrument_id, input_type=input_type, source=source)
+        wm = self._watermarks.get(key)
+        return wm.watermark_ns if wm is not None else 0
+
+    def all_watermarks(self) -> dict[StreamKey, int]:
+        """All stream watermarks as {StreamKey: watermark_ns}."""
+        return {k: v.watermark_ns for k, v in self._watermarks.items()}
+
     @property
     def watermark_ns(self) -> int:
-        return self._watermark.watermark_ns
+        """Maximum watermark_ns across all streams.
+
+        For multi-stream engines use watermark_for() or all_watermarks()
+        to get per-stream values.
+        """
+        if not self._watermarks:
+            return 0
+        return max(wm.watermark_ns for wm in self._watermarks.values())
 
     @property
     def max_event_time_ns(self) -> int:
-        return self._watermark.max_event_time_ns
+        """Maximum event_time_ns seen across all streams."""
+        if not self._watermarks:
+            return 0
+        return max(wm.max_event_time_ns for wm in self._watermarks.values())
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -222,9 +357,16 @@ class SpecFeatureEngine:
 
     def _route_warmup(self, event: Any) -> None:
         """Update all matching features during warmup (no late event check)."""
-        ts = extract_timestamps(event)
-        self._watermark.update(ts.event_time_ns)
+        ts = extract_timestamps(event, self._ts_config, is_live=False)
         input_type = _input_type_for(event)
+        instrument_id = _extract_instrument_id(event)
+        source = getattr(event, "source", None)
+        stream_key = StreamKey(
+            instrument_id=instrument_id,
+            input_type=input_type or "unknown",
+            source=source,
+        )
+        self._get_watermark(stream_key).update(ts.event_time_ns)
         for feature in self._features.values():
             if input_type is None or feature.spec.input_type == input_type:
                 feature.update(event)
@@ -234,6 +376,7 @@ class SpecFeatureEngine:
         feature: FeatureBase,
         event: Any,
         trigger_ts_ns: int,
+        watermark: WatermarkTracker,
     ) -> FeatureValue:
         """Dispatch a late event according to the feature's late_event_policy."""
         policy = feature.spec.trigger.late_event_policy
@@ -243,29 +386,39 @@ class SpecFeatureEngine:
 
         if policy == "log_only":
             log.warning(
-                "Late event dropped: feature=%s event_time_ns=%d watermark_ns=%d "
+                "Late event dropped: feature=%s trigger_ts_ns=%d watermark_ns=%d "
                 "allowed_lateness_ns=%d",
                 feature.spec.name,
                 trigger_ts_ns,
-                self._watermark.watermark_ns,
+                watermark.watermark_ns,
                 feature.spec.trigger.allowed_lateness_ns,
             )
             return feature.value
 
         if policy == "update_if_not_finalized":
-            # For rolling time-based windows: the feature's state container
-            # handles out-of-order entries naturally (eviction is self-correcting).
-            # For count-based windows: finalization doesn't apply, so always update.
+            # For rolling time-based windows: state self-corrects on out-of-order entries.
+            # For count-based windows: no fixed boundary, so always update.
             return feature.update(event).value
 
         if policy == "recompute_for_backtest_only":
-            # In live mode (not warmup) this behaves as "drop".
-            # In warmup mode, _route_warmup() bypasses this method entirely,
-            # so we should not reach here during warmup.
+            # In live mode (not warmup): behaves as "drop".
+            # Warmup bypasses _handle_late entirely via _route_warmup().
             return feature.value
 
-        # Unknown policy: safe default is drop.
-        log.warning("Unknown late_event_policy %r for feature %s; dropping", policy, feature.spec.name)
+        if policy == "raise":
+            raise LateEventError(
+                feature_name=feature.spec.name,
+                trigger_ts_ns=trigger_ts_ns,
+                watermark_ns=watermark.watermark_ns,
+                allowed_lateness_ns=feature.spec.trigger.allowed_lateness_ns,
+            )
+
+        # Unknown policy: safe default is drop
+        log.warning(
+            "Unknown late_event_policy %r for feature %s; dropping",
+            policy,
+            feature.spec.name,
+        )
         return feature.value
 
 
@@ -295,8 +448,10 @@ def _make_spec_driven_engine_class():  # type: ignore[return]
         version : str
         backend_registry : BackendRegistry | None
         stamp_process_time : bool
-            Passed to SpecFeatureEngine. Default False to avoid wall-clock
+            Passed to SpecFeatureEngine.  Default False to avoid wall-clock
             non-determinism when used with FeaturePipeline in backtests.
+        ts_config : TimestampConfig | None
+            Legacy timestamp conversion config for SpecFeatureEngine.
         """
 
         def __init__(
@@ -306,9 +461,13 @@ def _make_spec_driven_engine_class():  # type: ignore[return]
             version: str = "1",
             backend_registry: BackendRegistry | None = None,
             stamp_process_time: bool = False,
+            ts_config: TimestampConfig | None = None,
         ) -> None:
             self._engine = SpecFeatureEngine(
-                specs, backend_registry, stamp_process_time=stamp_process_time
+                specs,
+                backend_registry,
+                stamp_process_time=stamp_process_time,
+                ts_config=ts_config,
             )
             self._feature_set_id = feature_set_id
             self._version = version
@@ -374,6 +533,7 @@ def SpecDrivenFeatureEngine(
     version: str = "1",
     backend_registry: BackendRegistry | None = None,
     stamp_process_time: bool = False,
+    ts_config: TimestampConfig | None = None,
 ):
     """Factory that returns an instance of the adapter class (lazy import)."""
     global _SpecDrivenFeatureEngineClass
@@ -385,4 +545,5 @@ def SpecDrivenFeatureEngine(
         version=version,
         backend_registry=backend_registry,
         stamp_process_time=stamp_process_time,
+        ts_config=ts_config,
     )

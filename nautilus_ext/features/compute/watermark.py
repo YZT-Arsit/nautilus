@@ -1,6 +1,21 @@
 """
-WatermarkTracker — event-time progress tracking for streaming feature windows.
+WatermarkTracker and StreamKey — partitioned event-time progress tracking.
 
+StreamKey
+---------
+Identifies one logical market data stream. Watermarks are tracked
+independently per StreamKey so that a fast stream (e.g. BTC/USDT 1-min bars)
+cannot advance the watermark of a slower stream (e.g. ETH/USDT quotes) and
+incorrectly classify its events as late.
+
+    StreamKey("BTC/USDT", "bar")   — BTC bar stream
+    StreamKey("ETH/USDT", "quote") — ETH quote stream
+
+SpecFeatureEngine maintains one WatermarkTracker per StreamKey; each tracker
+advances only when an event of that instrument+type arrives.
+
+WatermarkTracker
+----------------
 In streaming systems, out-of-order events are normal. The watermark is the
 engine's estimate of how far event time has progressed, accounting for the
 maximum expected lateness of late events.
@@ -33,12 +48,48 @@ as "drop" in live mode.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# StreamKey
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class StreamKey:
+    """Identity of one market data stream for partitioned watermark tracking.
+
+    Watermarks are tracked independently per StreamKey to prevent a fast
+    stream (e.g. BTC/USDT bars) from advancing the watermark of a slow
+    stream (e.g. ETH/USDT quotes) and incorrectly classifying its events
+    as late.
+
+    Parameters
+    ----------
+    instrument_id : str | None
+        Instrument identifier (e.g. ``"BTC/USDT"``).
+    input_type : str
+        Event type: ``"bar"``, ``"trade"``, ``"quote"``, ``"book_delta"``,
+        ``"timer"``, or ``"unknown"`` when the type cannot be inferred.
+    source : str | None
+        Optional data source label (e.g. ``"binance"``, ``"okx"``). Use
+        when the same instrument+type is fed from multiple sources that
+        can independently be out of order relative to each other.
+    """
+
+    instrument_id: str | None
+    input_type: str
+    source: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# WatermarkTracker
+# ---------------------------------------------------------------------------
+
 class WatermarkTracker:
-    """Tracks event-time progress and detects late events.
+    """Tracks event-time progress and detects late events for one stream.
 
     Parameters
     ----------
@@ -91,7 +142,9 @@ class WatermarkTracker:
     def is_late_for(self, event_time_ns: int, allowed_lateness_ns: int) -> bool:
         """Lateness check with a per-call allowed_lateness override.
 
-        Used when different features have different allowed_lateness_ns.
+        Used when different features have different allowed_lateness_ns;
+        the engine passes each feature's own value rather than the
+        tracker's constructor value.
         """
         if not self._initialized:
             return False

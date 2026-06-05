@@ -125,11 +125,23 @@ class _AbstractFeature:
     # Cache helpers
     # ------------------------------------------------------------------
 
-    def _emit(self, raw: float | None, ready: bool, triggered: bool) -> FeatureUpdate:
+    def _emit(
+        self,
+        raw: float | None,
+        ready: bool,
+        triggered: bool,
+        *,
+        window_start_ns: int | None = None,
+        window_end_ns: int | None = None,
+        source_event_time_ns: int | None = None,
+    ) -> FeatureUpdate:
         fv = FeatureValue(
             name=self._spec.name,
             value=raw if ready else None,
             is_ready=ready,
+            window_start_ns=window_start_ns,
+            window_end_ns=window_end_ns,
+            source_event_time_ns=source_event_time_ns,
         )
         self._cached = fv
         return FeatureUpdate(value=fv, triggered=triggered)
@@ -194,7 +206,10 @@ class RollingMeanFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit(self._state.mean, self._state.is_full, triggered)
+        return self._emit(
+            self._state.mean, self._state.is_full, triggered,
+            source_event_time_ns=ts_ns,
+        )
 
     def state_dict(self) -> dict:
         return {**self._base_state(), "rolling": self._state.state_dict()}
@@ -234,7 +249,10 @@ class RollingStdFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit(self._state.std, self._state.is_full, triggered)
+        return self._emit(
+            self._state.std, self._state.is_full, triggered,
+            source_event_time_ns=ts_ns,
+        )
 
     def state_dict(self) -> dict:
         return {**self._base_state(), "rolling": self._state.state_dict()}
@@ -274,7 +292,10 @@ class RollingMinFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit(self._state.min, self._state.is_full, triggered)
+        return self._emit(
+            self._state.min, self._state.is_full, triggered,
+            source_event_time_ns=ts_ns,
+        )
 
     def state_dict(self) -> dict:
         return {**self._base_state(), "rolling": self._state.state_dict()}
@@ -314,7 +335,10 @@ class RollingMaxFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit(self._state.max, self._state.is_full, triggered)
+        return self._emit(
+            self._state.max, self._state.is_full, triggered,
+            source_event_time_ns=ts_ns,
+        )
 
     def state_dict(self) -> dict:
         return {**self._base_state(), "rolling": self._state.state_dict()}
@@ -390,7 +414,16 @@ class VWAPFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit(self._state.vwap, True, triggered)
+        # Populate window bounds for time-based VWAP windows
+        window_ns = self._state._window_ns
+        window_start_ns = (ts_ns - window_ns) if window_ns is not None else None
+        window_end_ns = ts_ns if window_ns is not None else None
+        return self._emit(
+            self._state.vwap, True, triggered,
+            window_start_ns=window_start_ns,
+            window_end_ns=window_end_ns,
+            source_event_time_ns=ts_ns,
+        )
 
     def state_dict(self) -> dict:
         return {**self._base_state(), "vwap": self._state.state_dict()}
@@ -431,10 +464,10 @@ class SimpleReturnFeature(_AbstractFeature):
             self._last_trigger_ts = ts_ns
         if self._prev is None or self._prev == 0.0:
             self._prev = cur
-            return self._emit(None, False, False)
+            return self._emit(None, False, False, source_event_time_ns=ts_ns)
         ret = (cur - self._prev) / self._prev
         self._prev = cur
-        return self._emit(ret, True, triggered)
+        return self._emit(ret, True, triggered, source_event_time_ns=ts_ns)
 
     def state_dict(self) -> dict:
         return {**self._base_state(), "prev": self._prev}
@@ -473,10 +506,10 @@ class LogReturnFeature(_AbstractFeature):
             self._last_trigger_ts = ts_ns
         if self._prev is None or self._prev <= 0.0 or cur <= 0.0:
             self._prev = cur
-            return self._emit(None, False, False)
+            return self._emit(None, False, False, source_event_time_ns=ts_ns)
         ret = math.log(cur / self._prev)
         self._prev = cur
-        return self._emit(ret, True, triggered)
+        return self._emit(ret, True, triggered, source_event_time_ns=ts_ns)
 
     def state_dict(self) -> dict:
         return {**self._base_state(), "prev": self._prev}
@@ -520,7 +553,10 @@ class EWMAFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit(self._state.value, True, triggered)
+        return self._emit(
+            self._state.value, True, triggered,
+            source_event_time_ns=ts_ns,
+        )
 
     def state_dict(self) -> dict:
         return {**self._base_state(), "ewma": self._state.state_dict()}
@@ -562,7 +598,7 @@ class SpreadFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit(ask - bid, True, triggered)
+        return self._emit(ask - bid, True, triggered, source_event_time_ns=ts_ns)
 
     def state_dict(self) -> dict:
         return self._base_state()
@@ -597,7 +633,7 @@ class MidPriceFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit((ask + bid) / 2.0, True, triggered)
+        return self._emit((ask + bid) / 2.0, True, triggered, source_event_time_ns=ts_ns)
 
     def state_dict(self) -> dict:
         return self._base_state()
@@ -646,7 +682,10 @@ class BookImbalanceFeature(_AbstractFeature):
         triggered = self._should_trigger(ts_ns)
         if triggered:
             self._last_trigger_ts = ts_ns
-        return self._emit(imbalance, imbalance is not None, triggered)
+        return self._emit(
+            imbalance, imbalance is not None, triggered,
+            source_event_time_ns=ts_ns,
+        )
 
     def state_dict(self) -> dict:
         return self._base_state()
