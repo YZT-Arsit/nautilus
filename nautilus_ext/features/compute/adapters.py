@@ -182,6 +182,47 @@ def adapt_bar_event(bar: Any) -> BarMarketEvent:
     )
 
 
+def adapt_trade_tick_event(trade: Any) -> TradeMarketEvent:
+    """Convert a trade-tick object to a TradeMarketEvent.
+
+    Same timestamp resolution chain as ``adapt_bar_event``.
+    ``event_type`` is always ``"trade"`` (canonical, expected by the engine).
+
+    Parameters
+    ----------
+    trade : Any
+        Any object with price, size, instrument_id, and ts_event or
+        event_time_ns.  An optional ``side`` field (``"buy"``/``"sell"``) is
+        preserved when present.
+
+    Returns
+    -------
+    TradeMarketEvent
+        Fully populated, frozen dataclass safe to pass to SpecFeatureEngine.
+    """
+    event_time_ns = getattr(trade, "event_time_ns", None)
+    if event_time_ns is None:
+        event_time_ns = _datetime_to_ns(getattr(trade, "ts_event", None))
+    event_time_ns = int(event_time_ns)
+
+    receive_time_ns = getattr(trade, "receive_time_ns", None)
+    if receive_time_ns is None:
+        ts_init = getattr(trade, "ts_init", None)
+        receive_time_ns = _datetime_to_ns(ts_init) if ts_init is not None else event_time_ns
+    receive_time_ns = int(receive_time_ns)
+
+    return TradeMarketEvent(
+        instrument_id=str(getattr(trade, "instrument_id", "unknown")),
+        price=float(getattr(trade, "price", 0.0)),
+        size=float(getattr(trade, "size", 0.0)),
+        event_type="trade",
+        event_time_ns=event_time_ns,
+        receive_time_ns=receive_time_ns,
+        source=getattr(trade, "source", None),
+        side=getattr(trade, "side", None),
+    )
+
+
 def adapt_quote_tick_event(quote: Any) -> QuoteMarketEvent:
     """Convert a QuoteTickEvent (or any quote-like object) to a QuoteMarketEvent.
 

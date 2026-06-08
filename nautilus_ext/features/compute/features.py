@@ -1166,3 +1166,84 @@ class ProductDerivedFeature(_AbstractDerivedFeature):
 
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
+
+
+class RollingStdDerivedFeature(_AbstractDerivedFeature):
+    """Rolling sample std of a single dependency's stream of values.
+
+    Accumulates values from a raw feature (e.g. ``log_return``) into a
+    fixed-size ring buffer and emits the rolling sample standard deviation
+    once the window is full.  All arithmetic is O(1) per update via the
+    running sum and sum-of-squares in ``RollingWindowState``.
+
+    Typical use case — realized volatility from log-returns::
+
+        log_ret_spec = FeatureSpec(
+            "log_return_close", input_type="bar",
+            input_field="close", params={"type": "log_return"},
+        )
+        rvol_spec = FeatureSpec(
+            "realized_vol_60", input_type="derived",
+            depends_on=("log_return_close",),
+            window=60,
+            params={"type": "rolling_std_derived"},
+        )
+
+    Parameters (from ``FeatureSpec``)
+    -----------------------------------
+    depends_on : tuple[str]   — exactly one name; the raw return / signal feature.
+    window     : int          — number of dep values to accumulate (default 20).
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        deps = list(spec.depends_on)
+        if len(deps) != 1:
+            raise ValueError(
+                f"RollingStdDerivedFeature {spec.name!r}: depends_on must have "
+                f"exactly 1 entry (the source feature), got {deps!r}"
+            )
+        self._dep = deps[0]
+        self._state = RollingWindowState(maxlen=spec.window or 20, track_squares=True)
+
+    def warmup_required(self) -> WarmupRequirement:
+        n = self._spec.window or 20
+        return WarmupRequirement(n_events=n, unit="events", mandatory=True)
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update_from_dependencies(
+        self, ctx: DependencyContext, source_event: Any
+    ) -> FeatureUpdate:
+        ts_ns = _ts_ns(source_event, self._spec.trigger.time_semantics)
+        if not ctx.is_ready(self._dep):
+            return self._dep_not_ready(self._dep, ts_ns)
+        v = ctx.value(self._dep)
+        if v is None:
+            return self._dep_not_ready(self._dep, ts_ns)
+        self._state.push(v)
+        ready = self._state.is_full
+        return self._emit(
+            self._state.std if ready else None,
+            ready,
+            ready,
+            source_event_time_ns=ts_ns,
+            update_status="updated" if ready else "not_ready",
+        )
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+        if self._state.is_full:
+            self._cached = FeatureValue(
+                name=self._spec.name, value=self._state.std, is_ready=True,
+            )

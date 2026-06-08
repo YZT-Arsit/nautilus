@@ -19,7 +19,7 @@ PythonBackend
     rolling_min, rolling_max, rolling_sum, rolling_volume_sum, vwap,
     simple_return, log_return, ewma, spread, mid_price, book_imbalance,
     realized_volatility; and derived (feature-to-feature) types: ratio,
-    difference, sum, product.
+    difference, sum, product, rolling_std_derived.
 
     Dispatch priority:
     1. params["type"] — explicit, always wins.
@@ -46,6 +46,7 @@ from nautilus_ext.features.compute.features import (
     RollingMaxFeature,
     RollingMeanFeature,
     RollingMinFeature,
+    RollingStdDerivedFeature,
     RollingStdFeature,
     RollingSumFeature,
     RollingVolumeSumFeature,
@@ -94,6 +95,7 @@ _FEATURE_CLASSES: dict[str, type] = {
     "difference": DifferenceDerivedFeature,
     "sum": SumDerivedFeature,
     "product": ProductDerivedFeature,
+    "rolling_std_derived": RollingStdDerivedFeature,
 }
 
 # Sorted longest-first to avoid prefix ambiguity (e.g. "rolling_std" vs "rolling_std_dev")

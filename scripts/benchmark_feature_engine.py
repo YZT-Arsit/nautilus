@@ -11,22 +11,30 @@ Examples
     # default: 100 000 bar events, 20 features, window 100
     python -m scripts.benchmark_feature_engine
 
+    # raw-only: 20 bar features, no derived
+    python -m scripts.benchmark_feature_engine --event-kind bar --features 20
+
+    # derived feature chains: spread/mid → ratio + log_return → rolling_std
+    python -m scripts.benchmark_feature_engine --event-kind mixed --derived --features 10
+
     # stress: 100 features, large window
     python -m scripts.benchmark_feature_engine --events 100000 --features 100 --window 1000
 
-    # realistic bar-like events (BarMarketEvent via adapter layer)
-    python -m scripts.benchmark_feature_engine --event-kind bar --events 50000
-
-    # mixed bar + quote events (alternating, features split by kind)
+    # mixed bar + quote events (features split by kind)
     python -m scripts.benchmark_feature_engine --event-kind mixed --events 100000 --features 20
+
+    # with profiling
+    python -m scripts.benchmark_feature_engine --derived --event-kind mixed --profile
 
 Metrics reported
 ----------------
-    total elapsed     total wall-clock time for all on_event() calls
-    avg on_event      mean latency per call (µs)
-    p50 / p95 / p99   percentile latencies (µs)
-    events/sec        throughput
-    feature·events/s  throughput × n_features (total incremental updates/sec)
+    total elapsed       total wall-clock time for all on_event() calls
+    avg on_event        mean latency per call (µs)
+    p50 / p95 / p99     percentile latencies (µs)
+    events/sec          throughput
+    feature·events/s    throughput × n_features (total incremental updates/sec)
+    raw features        number of raw (market-event-subscribed) features
+    derived features    number of derived (feature-to-feature) features
 
 Interpretation
 --------------
@@ -37,7 +45,10 @@ Interpretation
   - p99 < 100 µs for 20 features on a quiet machine is a reasonable baseline;
     actual values depend heavily on CPU, Python version, and OS scheduler.
   - For --event-kind mixed: each event advances only features subscribed to that
-    event type; throughput reflects O(n_subscribed_features) per event.
+    event type; throughput reflects O(n_subscribed_features + n_dirty_derived) per event.
+  - --derived adds two practical chains on top of raw features:
+      spread + mid_price → spread_ratio (ratio derived)
+      log_return + [rolling_std_derived × --derived-chains] (realized-vol derived)
 
 IMPORTANT: Do NOT use these numbers as hard CI pass/fail thresholds.
   They are machine- and load-dependent.  Use for relative profiling — compare
@@ -126,6 +137,48 @@ def _make_quote_specs(n_features: int):
     return specs
 
 
+def _make_derived_specs(n_chains: int, rvol_window: int, base_bar_spec_names: list[str]):
+    """Return derived feature specs for two practical chain types.
+
+    Chain A (quote-based): spread + mid_price → spread_ratio (ratio derived).
+    Chain B (bar-based):   log_return → rolling_std_derived (realized volatility).
+
+    ``base_bar_spec_names`` must contain at least one log_return feature name to
+    anchor chain B.  If none are present, chain B specs are skipped.
+
+    Returns a flat list of FeatureSpec (all derived).
+    """
+    from nautilus_ext.features.compute.spec import FeatureSpec
+
+    derived: list = []
+
+    # Chain A: spread_ratio per chain index
+    for i in range(n_chains):
+        spread_name = f"q{i * 2}_spread" if n_chains > 0 else "q0_spread"
+        mid_name    = f"q{i * 2 + 1}_mid_price" if n_chains > 0 else "q1_mid_price"
+        # Only add if both anchors exist in base specs
+        if spread_name in base_bar_spec_names and mid_name in base_bar_spec_names:
+            derived.append(FeatureSpec(
+                name=f"spread_ratio_{i}",
+                input_type="derived",
+                depends_on=(spread_name, mid_name),
+                params={"type": "ratio"},
+            ))
+
+    # Chain B: rolling_std_derived over each log_return feature found
+    log_ret_names = [n for n in base_bar_spec_names if "log_return" in n]
+    for lr_name in log_ret_names[:n_chains]:
+        derived.append(FeatureSpec(
+            name=f"rvol_{lr_name}",
+            input_type="derived",
+            depends_on=(lr_name,),
+            window=rvol_window,
+            params={"type": "rolling_std_derived"},
+        ))
+
+    return derived
+
+
 def _make_bar_events(n: int, start_ns: int = 1_000_000_000) -> list[_SyntheticBar]:
     events: list[_SyntheticBar] = []
     base = 100.0
@@ -199,15 +252,22 @@ def main() -> None:
                         help="warmup events before benchmarking (default: same as --window)")
     parser.add_argument("--event-kind", choices=["bar", "quote", "mixed"], default="bar",
                         help="event stream kind: bar | quote | mixed (default: bar)")
+    parser.add_argument("--derived",    action="store_true",
+                        help="add derived feature chains on top of raw features "
+                             "(spread→ratio, log_return→rolling_std_derived)")
+    parser.add_argument("--derived-chains", type=int, default=2,
+                        help="number of derived chains to add when --derived is set (default: 2)")
     parser.add_argument("--profile",    action="store_true",
                         help="enable engine profiling and print summary")
     args = parser.parse_args()
 
-    n_events   = args.events
-    n_feats    = args.features
-    window     = args.window
-    n_warmup   = args.warmup if args.warmup > 0 else window
-    event_kind = args.event_kind
+    n_events      = args.events
+    n_feats       = args.features
+    window        = args.window
+    n_warmup      = args.warmup if args.warmup > 0 else window
+    event_kind    = args.event_kind
+    add_derived   = args.derived
+    n_der_chains  = args.derived_chains
 
     from nautilus_ext.features.compute.engine import SpecFeatureEngine
 
@@ -219,31 +279,44 @@ def main() -> None:
     print(_fmt("features:",    f"{n_feats}"))
     print(_fmt("window:",      f"{window}"))
     print(_fmt("warmup:",      f"{n_warmup}"))
+    if add_derived:
+        print(_fmt("derived chains:", f"{n_der_chains}"))
 
     # --- build specs ---
     t0 = time.perf_counter_ns()
     if event_kind == "bar":
-        specs = _make_bar_specs(n_feats, window)
-        n_bar_specs   = len(specs)
+        raw_specs     = _make_bar_specs(n_feats, window)
+        n_bar_specs   = len(raw_specs)
         n_quote_specs = 0
     elif event_kind == "quote":
-        specs = _make_quote_specs(n_feats)
+        raw_specs     = _make_quote_specs(n_feats)
         n_bar_specs   = 0
-        n_quote_specs = len(specs)
+        n_quote_specs = len(raw_specs)
     else:  # mixed
-        half = max(1, n_feats // 2)
-        bar_specs   = _make_bar_specs(half, window)
-        quote_specs = _make_quote_specs(n_feats - half)
-        specs = bar_specs + quote_specs
+        half          = max(1, n_feats // 2)
+        bar_specs     = _make_bar_specs(half, window)
+        quote_specs   = _make_quote_specs(n_feats - half)
+        raw_specs     = bar_specs + quote_specs
         n_bar_specs   = len(bar_specs)
         n_quote_specs = len(quote_specs)
 
+    derived_specs: list = []
+    if add_derived:
+        all_raw_names = [s.name for s in raw_specs]
+        derived_specs = _make_derived_specs(n_der_chains, window, all_raw_names)
+
+    specs = raw_specs + derived_specs
+    n_raw_feats     = len(raw_specs)
+    n_derived_feats = len(derived_specs)
+
     engine = SpecFeatureEngine(specs, stamp_process_time=False, profile=args.profile)
     build_ms = (time.perf_counter_ns() - t0) / 1e6
-    print(_fmt("build time:",  f"{build_ms:.1f} ms"))
+    print(_fmt("build time:",       f"{build_ms:.1f} ms"))
+    print(_fmt("raw features:",     f"{n_raw_feats}"))
+    print(_fmt("derived features:", f"{n_derived_feats}"))
     if event_kind == "mixed":
-        print(_fmt("bar features:",   f"{n_bar_specs}"))
-        print(_fmt("quote features:", f"{n_quote_specs}"))
+        print(_fmt("  bar features:",   f"{n_bar_specs}"))
+        print(_fmt("  quote features:", f"{n_quote_specs}"))
 
     # --- warmup events ---
     if event_kind == "bar":
@@ -276,7 +349,7 @@ def main() -> None:
     total_s   = t_total / 1e9
     avg_us    = (t_total / actual_n) / 1e3
     ups       = actual_n / total_s
-    feat_eps  = ups * n_feats
+    feat_eps  = ups * len(specs)
 
     lats.sort()
     p50 = _pct(lats, 0.50)

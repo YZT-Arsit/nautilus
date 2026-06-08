@@ -1399,9 +1399,9 @@ including derived ones. `profile_summary()` includes `update_count`, `skip_count
 
 ---
 
-## §38 v1 Limitations
+## §38 Current Limitations
 
-The following are **intentionally out of scope** for this first implementation:
+The following are **intentionally out of scope** for this stage:
 
 1. **No expression parser.** Arbitrary formula strings like `"(A + B) / C"` are not
    supported. Compose primitive derived features instead.
@@ -1409,9 +1409,7 @@ The following are **intentionally out of scope** for this first implementation:
    not from the previous event. This may change in a future version.
 3. **No complex cross-frequency synchronization.** Mixed-frequency chains use the
    latest-ready policy; there is no per-event alignment or interpolation.
-4. **No rolling-window-over-dependency feature.** A dedicated `rolling_std_of_dep`
-   derived type (accumulating a dependency's history) is not yet implemented.
-5. **No partial-update semantics.** If any dep of a derived feature returns
+4. **No partial-update semantics.** If any dep of a derived feature returns
    `"dependency_not_ready"`, the entire derived feature returns `None`. There is no
    "use last known value" fallback per dependency.
 
@@ -1421,3 +1419,322 @@ Hot-path constraints are fully preserved:
 - No full-history scans in `on_event()`.
 - No sorting inside `on_event()`.
 - Per-event complexity: O(n\_raw\_features\_matching\_type + n\_dirty\_derived\_features).
+
+---
+
+## §39 Event Adapter Layer
+
+`nautilus_ext.features.compute.adapters` provides lightweight converters that bridge
+existing event classes (which use `datetime` for timestamps) to the nanosecond-integer
+types expected by `SpecFeatureEngine`.
+
+### Adapted event types
+
+| Dataclass | `event_type` | Key fields |
+|-----------|--------------|------------|
+| `BarMarketEvent` | `"bar"` | open, high, low, close, volume |
+| `QuoteMarketEvent` | `"quote"` | bid_price, ask_price, bid_size, ask_size |
+| `TradeMarketEvent` | `"trade"` | price, size, side |
+
+All three are frozen dataclasses with `event_time_ns` and `receive_time_ns` in
+nanoseconds.
+
+### Adapter functions
+
+| Function | Input | Output |
+|----------|-------|--------|
+| `adapt_bar_event(bar)` | any bar-like object | `BarMarketEvent` |
+| `adapt_quote_tick_event(quote)` | any quote-like object | `QuoteMarketEvent` |
+| `adapt_trade_tick_event(trade)` | any trade-like object | `TradeMarketEvent` |
+
+All adapters follow the same timestamp resolution chain:
+1. `event_time_ns` (present and non-None) → used as-is.
+2. `ts_event` → converted via `_datetime_to_ns()` (handles `datetime`, int ms, float ms).
+
+### `InMemoryEventProvider`
+
+A list-backed `HistoricalEventProvider` for tests and small-scale warmup.
+Filters by `instrument_id`, `input_type`, and time range; yields in insertion order.
+
+```python
+from nautilus_ext.features.compute.adapters import (
+    adapt_bar_event, adapt_quote_tick_event, InMemoryEventProvider,
+)
+adapted = [adapt_bar_event(b) for b in raw_bars]
+provider = InMemoryEventProvider(adapted)
+engine.warmup(provider.iter_events(instrument_id="BTC/USDT"))
+```
+
+### Recommended production flow
+
+```
+DataFeed  →  adapt_*_event()  →  SpecFeatureEngine.on_event()
+                                          ↓
+                                   FeatureSnapshot
+                                          ↓
+                                  Strategy.on_snapshot()
+```
+
+---
+
+## §40 Practical Feature Catalogue
+
+All features are available as `params={"type": "<type_key>"}` in `FeatureSpec`.
+
+### Raw bar features (`input_type="bar"`)
+
+| `params["type"]` | Formula | `input_field` | `window` |
+|------------------|---------|---------------|----------|
+| `rolling_mean` | mean(field, window) | required | required |
+| `rolling_std` | sample std(field, window) | required | required |
+| `rolling_min` | min(field, window) | required | required |
+| `rolling_max` | max(field, window) | required | required |
+| `rolling_sum` | sum(field, window) | required | required |
+| `rolling_volume_sum` | sum(volume, window) | optional (default: volume) | required |
+| `vwap` | session or rolling VWAP | — | optional |
+| `ewma` | EWMAState(span=window) | required | optional (default: 10) |
+| `simple_return` | (close_t - close_{t-1}) / close_{t-1} | optional (default: close) | — |
+| `log_return` | log(close_t / close_{t-1}) | optional (default: close) | — |
+| `realized_volatility` | rolling std of log returns | optional (default: close) | required |
+
+### Raw quote features (`input_type="quote"`)
+
+| `params["type"]` | Formula |
+|------------------|---------|
+| `spread` | ask_price − bid_price |
+| `mid_price` | (ask_price + bid_price) / 2 |
+
+### Raw orderbook features (`input_type="book_delta"`)
+
+| `params["type"]` | Formula |
+|------------------|---------|
+| `book_imbalance` | (bid_vol − ask_vol) / (bid_vol + ask_vol) |
+
+### Derived (feature-to-feature) types (`input_type="derived"`)
+
+| `params["type"]` | `depends_on` arity | Formula |
+|------------------|--------------------|---------|
+| `ratio` | exactly 2 | dep[0] / dep[1] |
+| `difference` | exactly 2 | dep[0] − dep[1] |
+| `sum` | ≥ 1 | Σ dep[i] |
+| `product` | ≥ 1 | Π dep[i] |
+| `rolling_std_derived` | exactly 1 | rolling sample std of dep[0]'s value stream |
+
+---
+
+## §41 Derived Feature Examples
+
+### Example A — Spread-to-Mid Ratio (Chain A)
+
+Tracks relative spread as a fraction of the mid price.  Updates on every quote
+event in O(1).
+
+```python
+from nautilus_ext.features.compute.spec import FeatureSpec
+from nautilus_ext.features.compute.engine import SpecFeatureEngine
+
+specs = [
+    FeatureSpec("spread",       input_type="quote", params={"type": "spread"}),
+    FeatureSpec("mid_price",    input_type="quote", params={"type": "mid_price"}),
+    FeatureSpec("spread_ratio", input_type="derived",
+                depends_on=("spread", "mid_price"), params={"type": "ratio"}),
+]
+engine = SpecFeatureEngine(specs, stamp_process_time=False)
+snap = engine.on_event(quote_event)
+print(snap.value("spread_ratio"))   # spread / mid_price
+```
+
+### Example B — Realized Volatility from Log Returns (Chain B)
+
+Accumulates log-return values in a rolling ring buffer; emits rolling sample std.
+Becomes ready after `window + 1` bar events.  All arithmetic is O(1) per update.
+
+```python
+specs = [
+    FeatureSpec(
+        "log_return_close",
+        input_type="bar",
+        input_field="close",
+        params={"type": "log_return"},
+    ),
+    FeatureSpec(
+        "realized_vol_60",
+        input_type="derived",
+        depends_on=("log_return_close",),
+        window=60,
+        params={"type": "rolling_std_derived"},
+    ),
+]
+engine = SpecFeatureEngine(specs, stamp_process_time=False)
+# After 62+ bar events (61 log returns → 60 in rolling window):
+snap = engine.on_event(bar_event)
+print(snap.value("realized_vol_60"))   # rolling std of last 60 log returns
+```
+
+The key difference from `realized_volatility` (which is a standalone raw feature
+computing log returns internally): Chain B makes the intermediate log-return value
+visible and addressable as its own named feature, enabling multi-level composition
+such as `z_score_of_vol = (realized_vol_60 - mean(realized_vol_60)) / std(realized_vol_60)`.
+
+---
+
+## §42 `rolling_std_derived` Feature
+
+`RollingStdDerivedFeature` — rolling sample std of a single dependency's value stream.
+
+**Class:** `nautilus_ext.features.compute.features.RollingStdDerivedFeature`
+**Registered type key:** `"rolling_std_derived"`
+
+### Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `depends_on` | Exactly one name — the upstream feature whose values to accumulate. |
+| `window` | Number of dep values in the rolling window (default 20). |
+
+### Semantics
+
+- Each time the dependency is in the `dirty` set (i.e., it was updated this event
+  turn), its current value is pushed into a ring buffer.
+- `is_ready` becomes `True` when the buffer is full (after `window` dep updates).
+- `update_status` transitions: `"dependency_not_ready"` → `"not_ready"` → `"updated"`.
+- `state_dict` / `load_state_dict` persists the full rolling buffer.
+- `reset()` clears the buffer.
+- `warmup_required()` returns `WarmupRequirement(n_events=window, mandatory=True)`.
+
+### Update-status walkthrough for window=2
+
+| Bar # | log_return ready? | Buffer count | rvol status |
+|-------|-------------------|--------------|-------------|
+| 1     | No (no prev)      | 0            | `dependency_not_ready` |
+| 2     | Yes               | 1            | `not_ready` |
+| 3     | Yes               | 2            | `updated` ✓ |
+
+---
+
+## §43 Benchmark Modes
+
+`scripts/benchmark_feature_engine.py` supports four modes:
+
+| Mode | Flags | Description |
+|------|-------|-------------|
+| Raw bar only | `--event-kind bar` | 100 % bar events, raw features only. |
+| Raw quote only | `--event-kind quote` | 100 % quote events, raw features only. |
+| Mixed raw | `--event-kind mixed` | ~60 % bar + ~40 % quote, raw features split by kind. |
+| Derived chains | any `--event-kind` + `--derived` | Adds derived chains (spread→ratio, log_return→rolling_std) on top of raw features. |
+
+### Metrics reported
+
+```
+raw features        number of raw (market-event-subscribed) features
+derived features    number of derived (feature-to-feature) features
+total elapsed       total wall-clock time for all on_event() calls
+avg on_event        mean latency per call (µs)
+p50 / p95 / p99     percentile latencies (µs)
+events/sec          throughput
+feature·events/s    throughput × total_features
+```
+
+### Example commands
+
+```bash
+# Raw-only: 20 bar features
+python -m scripts.benchmark_feature_engine --event-kind bar --features 20
+
+# Derived chains: 10 raw + derived chains
+python -m scripts.benchmark_feature_engine --event-kind mixed --derived --features 10
+
+# Full stress test with profiling
+python -m scripts.benchmark_feature_engine \
+    --event-kind mixed --derived --features 40 --events 200000 --profile
+```
+
+### Interpreting derived-chain latency
+
+Adding `--derived` chains increases per-event latency by O(n\_dirty\_derived) not
+O(n\_derived\_total).  On a quote event, bar-subscribed derived features (like
+`realized_vol`) are **not** triggered because `log_return_close` is not in the
+dirty set — the engine skips them entirely.
+
+---
+
+## §44 Strategy Integration Pattern
+
+### Import surface for strategy code
+
+Strategy code should only import from these three modules:
+
+```python
+from nautilus_ext.features.compute.spec    import FeatureSpec, FeatureSnapshot
+from nautilus_ext.features.compute.engine  import SpecFeatureEngine
+from nautilus_ext.features.compute.adapters import (
+    adapt_bar_event, adapt_quote_tick_event, adapt_trade_tick_event,
+    InMemoryEventProvider,
+)
+```
+
+Never import from `features.py`, `backend.py`, `state.py`, `watermark.py`.
+
+### Lifecycle
+
+```
+1. Build engine once:
+   engine = SpecFeatureEngine(specs, stamp_process_time=False)
+
+2. Warmup from history (historical data → adapted events → provider → engine.warmup):
+   adapted = [adapt_bar_event(b) for b in historical_bars]
+   provider = InMemoryEventProvider(adapted)
+   engine.warmup(provider.iter_events(instrument_id="BTC/USDT"))
+
+3. Live event loop:
+   while True:
+       raw_event = data_feed.next()
+       adapted   = adapt_bar_event(raw_event)   # or adapt_quote_tick_event
+       snap      = engine.on_event(adapted)
+       signal    = strategy.on_snapshot(snap)   # reads only FeatureSnapshot API
+       # ... submit signal if enabled (NOT order submission via engine)
+
+4. Feature readiness gate:
+   if not snap.all_ready():
+       return None   # skip signal generation during warm-up phase
+
+5. Read feature values:
+   mean  = snap.value("rolling_mean_close")   # returns None if not ready
+   vol   = snap.value("realized_vol", 0.0)    # custom default
+   ready = snap.is_ready("spread_ratio")
+```
+
+### State persistence
+
+```python
+# Checkpoint (e.g. before restart):
+state = engine.state_dict()
+json.dump(state, open("engine_state.json", "w"))
+
+# Restore (warm restart — skips full warmup):
+state = json.load(open("engine_state.json"))
+engine.load_state_dict(state)
+```
+
+### Full example
+
+See `nautilus_ext/features/templates/strategy_integration_example.py` for a
+complete self-contained example that builds a multi-chain spec list, warms up from
+synthetic history, processes live events, and generates signals — all without
+touching any backend internals.
+
+---
+
+## §45 v2 Roadmap (Not Yet Implemented)
+
+Items deferred from the current stage:
+
+1. **Expression parser.** Formula strings like `"(A + B) / C"` composed into a
+   derived feature tree at engine init.
+2. **Previous-value dependency mode.** B sees A's value from event_{t-1}.
+3. **Per-dependency alignment.** Explicit synchronization primitives for
+   cross-frequency chains (not just latest-ready).
+4. **Partial-update semantics.** "Use last known value" fallback per dependency
+   instead of `dependency_not_ready` for the whole feature.
+5. **Rust backend.** Zero-copy event dispatch and ring-buffer arithmetic via FFI.
+6. **RSI, Bollinger Bands, ATR.** Incremental implementations using `RollingWindowState`.

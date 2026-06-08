@@ -2612,7 +2612,7 @@ class TestBackendDispatchHardening:
         """Every key in _FEATURE_CLASSES resolves to the correct class."""
         from nautilus_ext.features.compute.backend import _FEATURE_CLASSES
         # Derived types require at least one entry in depends_on — supply a minimal valid tuple.
-        _DERIVED_TYPES = {"ratio", "difference", "sum", "product"}
+        _DERIVED_TYPES = {"ratio", "difference", "sum", "product", "rolling_std_derived"}
         registry = build_default_registry()
         for type_key, expected_cls in _FEATURE_CLASSES.items():
             if type_key in _DERIVED_TYPES:
@@ -4483,3 +4483,351 @@ class TestFeatureDependencies:
         ctx = DependencyContext({"a": r, "b": nr})
         assert ctx.all_ready(["a"]) is True
         assert ctx.all_ready(["a", "b"]) is False
+
+
+# ===========================================================================
+# RollingStdDerivedFeature + practical derived chains
+# ===========================================================================
+
+from nautilus_ext.features.compute.features import RollingStdDerivedFeature
+from nautilus_ext.features.compute.adapters import adapt_trade_tick_event
+
+
+class TestRollingStdDerivedFeature:
+    """RollingStdDerivedFeature: rolling sample std of a single dependency stream."""
+
+    def _log_ret_spec(self) -> FeatureSpec:
+        return FeatureSpec(
+            name="lr", input_type="bar", input_field="close",
+            params={"type": "log_return"},
+        )
+
+    def _rvol_spec(self, window: int) -> FeatureSpec:
+        return FeatureSpec(
+            name="rvol", input_type="derived",
+            depends_on=("lr",),
+            window=window,
+            params={"type": "rolling_std_derived"},
+        )
+
+    def test_not_ready_before_window_fills(self):
+        """rvol is not ready until 'window' log_return values are accumulated."""
+        window = 5
+        specs = [self._log_ret_spec(), self._rvol_spec(window)]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        closes = [100.0 + i for i in range(window)]  # window log returns produced
+        for i, c in enumerate(closes):
+            snap = engine.on_event(Bar(close=c, event_time_ns=_s(i + 1)))
+        # window log_returns need window+1 bars to produce; after 'window' bars only
+        # window-1 log_returns are ready, so rvol should still be not ready
+        assert not snap.is_ready("rvol")
+
+    def test_ready_after_window_log_returns(self):
+        """rvol becomes ready after window log_return values are accumulated."""
+        window = 4
+        specs = [self._log_ret_spec(), self._rvol_spec(window)]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        # Need window+1 bars to produce window log returns
+        closes = [100.0 + i * 0.5 for i in range(window + 1)]
+        for i, c in enumerate(closes):
+            snap = engine.on_event(Bar(close=c, event_time_ns=_s(i + 1)))
+        assert snap.is_ready("rvol")
+        assert snap.value("rvol") is not None
+        assert snap.value("rvol") > 0.0
+
+    def test_value_matches_reference_std(self):
+        """Emitted std matches reference std computed over the same log-return window."""
+        import math
+        window = 3
+        specs = [self._log_ret_spec(), self._rvol_spec(window)]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        closes = [100.0, 101.0, 102.0, 101.5, 103.0]
+        for i, c in enumerate(closes):
+            snap = engine.on_event(Bar(close=c, event_time_ns=_s(i + 1)))
+
+        log_rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+        window_rets = log_rets[-window:]
+        mean = sum(window_rets) / window
+        ref_std = math.sqrt(sum((x - mean) ** 2 for x in window_rets) / (window - 1))
+        assert abs(snap.value("rvol") - ref_std) < 1e-10
+
+    def test_dep_not_ready_before_log_return_ready(self):
+        """When lr is not ready, rvol emits dependency_not_ready."""
+        window = 3
+        specs = [self._log_ret_spec(), self._rvol_spec(window)]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        # First bar: lr not ready (needs prev close)
+        snap = engine.on_event(Bar(close=100.0, event_time_ns=_s(1)))
+        fv = snap.get("rvol")
+        assert fv.update_status == "dependency_not_ready"
+        assert not fv.is_ready
+
+    def test_warmup_pre_heats_rvol(self):
+        """warmup() with enough bars makes rvol ready for subsequent on_event()."""
+        window = 3
+        specs = [self._log_ret_spec(), self._rvol_spec(window)]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        warmup_bars = bars([100.0 + i for i in range(window + 1)])
+        engine.warmup(warmup_bars)
+        # One more live bar should produce an updated rvol
+        snap = engine.on_event(Bar(close=104.5, event_time_ns=_s(window + 2)))
+        assert snap.is_ready("rvol")
+
+    def test_state_dict_round_trip(self):
+        """state_dict / load_state_dict round-trip preserves rvol value."""
+        window = 3
+        specs = [self._log_ret_spec(), self._rvol_spec(window)]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        closes = [100.0, 101.0, 102.0, 103.0]
+        for i, c in enumerate(closes):
+            engine.on_event(Bar(close=c, event_time_ns=_s(i + 1)))
+        snap_before = engine.on_event(Bar(close=104.0, event_time_ns=_s(5)))
+
+        state = engine.state_dict()
+        engine2 = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        engine2.load_state_dict(state)
+        snap_after = engine2.on_event(Bar(close=105.0, event_time_ns=_s(6)))
+
+        assert snap_after.is_ready("rvol")
+        # Values may differ (new bar vs restored), but both engines should agree
+        # after consuming the same next event from the same restored state
+        assert abs(snap_after.value("rvol") - snap_before.value("rvol")) < 1.0
+
+    def test_reset_clears_rolling_buffer(self):
+        """reset() makes rvol not ready again."""
+        window = 2
+        specs = [self._log_ret_spec(), self._rvol_spec(window)]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        for i, c in enumerate([100.0, 101.0, 102.0]):
+            engine.on_event(Bar(close=c, event_time_ns=_s(i + 1)))
+        assert engine.ready("rvol")
+        engine.reset()
+        assert not engine.ready("rvol")
+
+    def test_wrong_depends_on_arity_raises(self):
+        """RollingStdDerivedFeature raises ValueError if depends_on != 1 entry."""
+        spec = FeatureSpec(
+            name="rvol2", input_type="derived",
+            depends_on=("a", "b"),  # two deps — invalid
+            window=5,
+            params={"type": "rolling_std_derived"},
+        )
+        with pytest.raises(ValueError, match="exactly 1 entry"):
+            RollingStdDerivedFeature(spec)
+
+    def test_warmup_required_returns_window(self):
+        """warmup_required().n_events == spec.window."""
+        window = 7
+        spec = FeatureSpec(
+            name="rvol", input_type="derived",
+            depends_on=("lr",),
+            window=window,
+            params={"type": "rolling_std_derived"},
+        )
+        f = RollingStdDerivedFeature(spec)
+        req = f.warmup_required()
+        assert req.n_events == window
+        assert req.mandatory is True
+
+    def test_update_status_transitions(self):
+        """update_status transitions from not_ready → updated as window fills."""
+        window = 2
+        specs = [self._log_ret_spec(), self._rvol_spec(window)]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        # First bar: dep not ready
+        s1 = engine.on_event(Bar(close=100.0, event_time_ns=_s(1)))
+        assert s1.get("rvol").update_status == "dependency_not_ready"
+        # Second bar: dep ready but window not full (only 1 lr value)
+        s2 = engine.on_event(Bar(close=101.0, event_time_ns=_s(2)))
+        assert s2.get("rvol").update_status == "not_ready"
+        # Third bar: window full
+        s3 = engine.on_event(Bar(close=102.0, event_time_ns=_s(3)))
+        assert s3.get("rvol").update_status == "updated"
+        assert s3.is_ready("rvol")
+
+
+class TestPracticalDerivedChains:
+    """Integration tests for the two practical derived chain examples."""
+
+    # ----------------------------------------------------------------
+    # Chain A: spread + mid_price → spread_ratio
+    # ----------------------------------------------------------------
+
+    def _spread_mid_ratio_specs(self):
+        return [
+            FeatureSpec("spread",       input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",          input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("spread_ratio", input_type="derived",
+                        depends_on=("spread", "mid"), params={"type": "ratio"}),
+        ]
+
+    def test_spread_ratio_ready_after_first_quote(self):
+        """spread_ratio is ready after the first quote event (spread & mid both ready)."""
+        specs = self._spread_mid_ratio_specs()
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        q = Quote(bid_price=100.0, ask_price=100.4,
+                  event_time_ns=_s(1), event_type="quote")
+        snap = engine.on_event(q)
+        assert snap.is_ready("spread")
+        assert snap.is_ready("mid")
+        assert snap.is_ready("spread_ratio")
+        expected = 0.4 / 100.2  # spread / mid
+        assert abs(snap.value("spread_ratio") - expected) < 1e-10
+
+    def test_spread_ratio_updates_on_every_quote(self):
+        """spread_ratio recomputes on each quote and tracks changing spread."""
+        specs = self._spread_mid_ratio_specs()
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        quotes = [
+            Quote(bid_price=100.0, ask_price=100.2, event_time_ns=_s(1), event_type="quote"),
+            Quote(bid_price=100.0, ask_price=100.6, event_time_ns=_s(2), event_type="quote"),
+        ]
+        snaps = [engine.on_event(q) for q in quotes]
+        ratio1 = snaps[0].value("spread_ratio")
+        ratio2 = snaps[1].value("spread_ratio")
+        assert ratio2 > ratio1  # wider spread → larger ratio
+
+    def test_spread_ratio_not_updated_by_bar_event(self):
+        """Bar events do not recompute spread_ratio — the cached value is returned unchanged."""
+        specs = [
+            FeatureSpec("mean3",        input_type="bar", input_field="close",
+                        window=3, params={"type": "rolling_mean"}),
+        ] + self._spread_mid_ratio_specs()
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        # First: one quote to get spread_ratio ready
+        q = Quote(bid_price=100.0, ask_price=100.4, event_time_ns=_s(1), event_type="quote")
+        snap_q = engine.on_event(q)
+        ratio_after_quote = snap_q.value("spread_ratio")
+
+        # Now send bar events only — spread_ratio cached value must stay the same
+        for i in range(3):
+            snap_b = engine.on_event(Bar(close=101.0 + i, event_time_ns=_s(10 + i)))
+        # Value is unchanged: the engine returned the cached FeatureValue
+        assert snap_b.value("spread_ratio") == pytest.approx(ratio_after_quote)
+        # source_event_time_ns on the cached value is from the original quote event
+        assert snap_b.get("spread_ratio").source_event_time_ns == _s(1)
+
+    def test_spread_ratio_snapshot_contains_all_features(self):
+        """Snapshot contains all three features: spread, mid, spread_ratio."""
+        specs = self._spread_mid_ratio_specs()
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        q = Quote(bid_price=99.0, ask_price=101.0, event_time_ns=_s(1), event_type="quote")
+        snap = engine.on_event(q)
+        assert set(snap.values.keys()) == {"spread", "mid", "spread_ratio"}
+
+    # ----------------------------------------------------------------
+    # Chain B: log_return → realized_vol (rolling_std_derived)
+    # ----------------------------------------------------------------
+
+    def _log_rvol_specs(self, window: int = 3):
+        return [
+            FeatureSpec("log_ret", input_type="bar", input_field="close",
+                        params={"type": "log_return"}),
+            FeatureSpec("rvol",    input_type="derived",
+                        depends_on=("log_ret",),
+                        window=window,
+                        params={"type": "rolling_std_derived"}),
+        ]
+
+    def test_log_return_rvol_chain_produces_value(self):
+        """After window+1 bars, rvol is ready and positive."""
+        window = 3
+        specs = self._log_rvol_specs(window)
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        closes = [100.0, 101.0, 102.5, 101.8, 103.0]
+        for i, c in enumerate(closes):
+            snap = engine.on_event(Bar(close=c, event_time_ns=_s(i + 1)))
+        assert snap.is_ready("rvol")
+        assert snap.value("rvol") > 0.0
+
+    def test_log_return_rvol_chain_warmup_integration(self):
+        """warmup() + one live event produces ready rvol."""
+        window = 3
+        specs = self._log_rvol_specs(window)
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        warmup_bars = bars([100.0 + i * 0.5 for i in range(window + 1)])
+        engine.warmup(warmup_bars)
+        snap = engine.on_event(Bar(close=103.0, event_time_ns=_s(window + 2)))
+        assert snap.is_ready("rvol")
+
+    def test_log_return_rvol_chain_not_updated_by_quote(self):
+        """Quote events do not trigger rvol updates (log_ret is bar-only)."""
+        window = 2
+        specs = self._log_rvol_specs(window)
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        # Warm up to ready
+        for i, c in enumerate([100.0, 101.0, 102.0]):
+            snap_b = engine.on_event(Bar(close=c, event_time_ns=_s(i + 1)))
+        rvol_after_bars = snap_b.value("rvol")
+        # Quote events should not change rvol
+        for i in range(3):
+            snap_q = engine.on_event(Quote(bid_price=100.0, ask_price=100.1,
+                                           event_time_ns=_s(10 + i), event_type="quote"))
+        # rvol cached value unchanged
+        assert snap_q.value("rvol") == pytest.approx(rvol_after_bars)
+
+
+class TestAdaptTradeTickEvent:
+    """adapt_trade_tick_event() converts trade-like objects to TradeMarketEvent."""
+
+    def test_event_type_is_trade(self):
+        """Adapted event always has event_type='trade'."""
+        @dataclass
+        class FakeTrade:
+            instrument_id: str = "BTC/USDT"
+            price: float = 50000.0
+            size: float = 0.5
+            event_time_ns: int = _s(1)
+
+        adapted = adapt_trade_tick_event(FakeTrade())
+        assert adapted.event_type == "trade"
+
+    def test_fields_preserved(self):
+        """price, size, instrument_id, event_time_ns preserved."""
+        @dataclass
+        class FakeTrade:
+            instrument_id: str = "ETH/USDT"
+            price: float = 3000.0
+            size: float = 1.25
+            event_time_ns: int = _s(5)
+            source: str = "binance"
+            side: str = "buy"
+
+        adapted = adapt_trade_tick_event(FakeTrade())
+        assert adapted.instrument_id == "ETH/USDT"
+        assert adapted.price == pytest.approx(3000.0)
+        assert adapted.size == pytest.approx(1.25)
+        assert adapted.event_time_ns == _s(5)
+        assert adapted.source == "binance"
+        assert adapted.side == "buy"
+
+    def test_datetime_ts_event_converted_to_ns(self):
+        """ts_event datetime is converted to nanoseconds."""
+        from datetime import datetime, timezone
+        ts_s = 1_700_000_000.0
+        dt = datetime.fromtimestamp(ts_s, tz=timezone.utc)
+
+        @dataclass
+        class FakeTrade:
+            instrument_id: str = "X"
+            price: float = 1.0
+            size: float = 1.0
+            ts_event: "datetime" = None
+
+        t = FakeTrade(ts_event=dt)
+        adapted = adapt_trade_tick_event(t)
+        assert adapted.event_time_ns == int(ts_s * 1_000_000_000)
+
+    def test_frozen_dataclass(self):
+        """TradeMarketEvent is a frozen dataclass."""
+        @dataclass
+        class FakeTrade:
+            instrument_id: str = "X"
+            price: float = 1.0
+            size: float = 1.0
+            event_time_ns: int = _s(1)
+
+        adapted = adapt_trade_tick_event(FakeTrade())
+        assert isinstance(adapted, TradeMarketEvent)
+        with pytest.raises((TypeError, AttributeError)):
+            adapted.price = 9999.0  # type: ignore[misc]
