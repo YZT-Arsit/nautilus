@@ -302,6 +302,10 @@ class SpecFeatureEngine:
         self._profile_skip_count: dict[str, int] = {}
         self._profile_late_drop_count: dict[str, int] = {}
         self._profile_last_status: dict[str, str | None] = {}
+        # Finer-grained health counters (populated only when profile=True)
+        self._profile_missing_field_count: dict[str, int] = {}
+        self._profile_dep_not_ready_count: dict[str, int] = {}
+        self._profile_last_update_ns: dict[str, int] = {}
         # Dependency graph state — populated by _build_dependency_graph()
         self._raw_features: dict[str, FeatureBase] = {}
         self._derived_names: list[str] = []          # topo-sorted derived feature names
@@ -312,6 +316,9 @@ class SpecFeatureEngine:
             self._profile_skip_count = {n: 0 for n in self._features}
             self._profile_late_drop_count = {n: 0 for n in self._features}
             self._profile_last_status = {n: None for n in self._features}
+            self._profile_missing_field_count = {n: 0 for n in self._features}
+            self._profile_dep_not_ready_count = {n: 0 for n in self._features}
+            self._profile_last_update_ns = {n: 0 for n in self._features}
 
     def _build(self) -> None:
         _validate_spec_list(self._specs, self._registry)
@@ -492,7 +499,11 @@ class SpecFeatureEngine:
                     status = update.value.update_status
                     if status == "updated":
                         self._profile_update_count[name] += 1
-                    elif status in ("not_ready", "skipped_missing_field"):
+                        self._profile_last_update_ns[name] = ts.event_time_ns
+                    elif status == "skipped_missing_field":
+                        self._profile_skip_count[name] += 1
+                        self._profile_missing_field_count[name] += 1
+                    elif status == "not_ready":
                         self._profile_skip_count[name] += 1
                     self._profile_last_status[name] = status
 
@@ -520,8 +531,11 @@ class SpecFeatureEngine:
                     status = update.value.update_status
                     if status == "updated":
                         self._profile_update_count[name] += 1
-                    elif status in ("not_ready", "dependency_not_ready",
-                                    "skipped_missing_field"):
+                        self._profile_last_update_ns[name] = ts.event_time_ns
+                    elif status == "dependency_not_ready":
+                        self._profile_skip_count[name] += 1
+                        self._profile_dep_not_ready_count[name] += 1
+                    elif status in ("not_ready", "skipped_missing_field"):
                         self._profile_skip_count[name] += 1
                     self._profile_last_status[name] = status
 
@@ -667,6 +681,72 @@ class SpecFeatureEngine:
                 for name in self._features
             },
         }
+
+    def health_summary(self, stale_threshold_ns: int | None = None) -> dict:
+        """Return a feature health diagnostic report.
+
+        When ``profile=True`` (set at engine construction), returns per-feature
+        counters broken down by status type.  When ``profile=False``, returns
+        only readiness info (no counters — zero overhead on the hot path).
+
+        Parameters
+        ----------
+        stale_threshold_ns : int | None
+            If provided and ``profile=True``, features whose ``last_update_ns``
+            is older than ``stale_threshold_ns`` nanoseconds behind the engine's
+            max watermark are listed in ``stale_features``.  None disables
+            stale detection.
+
+        Returns
+        -------
+        dict with keys:
+            ``profiling_enabled`` (bool),
+            ``n_features`` (int),
+            ``n_ready`` (int),
+            ``n_derived`` (int),
+            ``ready_features`` (list[str]),
+            ``not_ready_features`` (list[str]),
+            ``features`` (dict, only when ``profile=True``):
+                per-feature ``update_count``, ``skipped_missing_field_count``,
+                ``dependency_not_ready_count``, ``late_dropped_count``,
+                ``last_status``, ``last_update_ns``,
+            ``stale_features`` (list[str], only when profile+threshold set).
+        """
+        ready     = [n for n, f in self._features.items() if f.is_ready]
+        not_ready = [n for n, f in self._features.items() if not f.is_ready]
+        summary: dict = {
+            "profiling_enabled": self._profile,
+            "n_features": len(self._features),
+            "n_ready": len(ready),
+            "n_derived": len(self._derived_names),
+            "ready_features": ready,
+            "not_ready_features": not_ready,
+        }
+        if not self._profile:
+            return summary
+
+        feature_health = {}
+        for name in self._features:
+            feature_health[name] = {
+                "update_count":              self._profile_update_count.get(name, 0),
+                "skipped_missing_field_count": self._profile_missing_field_count.get(name, 0),
+                "dependency_not_ready_count":  self._profile_dep_not_ready_count.get(name, 0),
+                "late_dropped_count":          self._profile_late_drop_count.get(name, 0),
+                "last_status":                 self._profile_last_status.get(name),
+                "last_update_ns":              self._profile_last_update_ns.get(name, 0),
+            }
+        summary["features"] = feature_health
+
+        if stale_threshold_ns is not None:
+            max_wm = self.watermark_ns
+            stale = [
+                name
+                for name, h in feature_health.items()
+                if h["last_update_ns"] > 0 and (max_wm - h["last_update_ns"]) > stale_threshold_ns
+            ]
+            summary["stale_features"] = stale
+
+        return summary
 
     # ------------------------------------------------------------------
     # Watermark access

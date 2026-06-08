@@ -259,6 +259,8 @@ def main() -> None:
                         help="number of derived chains to add when --derived is set (default: 2)")
     parser.add_argument("--profile",    action="store_true",
                         help="enable engine profiling and print summary")
+    parser.add_argument("--report",     action="store_true",
+                        help="write markdown benchmark report to outputs/")
     args = parser.parse_args()
 
     n_events      = args.events
@@ -392,6 +394,158 @@ def main() -> None:
                     f"{last:>16}"
                 )
             print()
+
+    if args.report:
+        _write_report(
+            args=args,
+            n_events=n_events,
+            event_kind=event_kind,
+            window=window,
+            n_warmup=n_warmup,
+            n_raw_feats=n_raw_feats,
+            n_derived_feats=n_derived_feats,
+            build_ms=build_ms,
+            actual_n=actual_n,
+            total_s=total_s,
+            avg_us=avg_us,
+            p50=p50,
+            p95=p95,
+            p99=p99,
+            ups=ups,
+            feat_eps=feat_eps,
+            engine=engine,
+        )
+
+
+def _write_report(
+    args,
+    n_events: int,
+    event_kind: str,
+    window: int,
+    n_warmup: int,
+    n_raw_feats: int,
+    n_derived_feats: int,
+    build_ms: float,
+    actual_n: int,
+    total_s: float,
+    avg_us: float,
+    p50: float,
+    p95: float,
+    p99: float,
+    ups: float,
+    feat_eps: float,
+    engine,
+) -> None:
+    """Write a markdown benchmark report to outputs/benchmark_<counter>.md."""
+    import os
+    import glob
+
+    outputs_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs"
+    )
+    os.makedirs(outputs_dir, exist_ok=True)
+
+    # Auto-increment filename so multiple runs don't overwrite each other
+    existing = glob.glob(os.path.join(outputs_dir, "benchmark_*.md"))
+    run_idx = len(existing) + 1
+    report_path = os.path.join(outputs_dir, f"benchmark_{run_idx:03d}.md")
+
+    # Build the command string that was (approximately) run
+    cmd_parts = ["python -m scripts.benchmark_feature_engine",
+                 f"--events {n_events}",
+                 f"--features {args.features}",
+                 f"--window {window}",
+                 f"--event-kind {event_kind}"]
+    if args.derived:
+        cmd_parts += [f"--derived --derived-chains {args.derived_chains}"]
+    if args.profile:
+        cmd_parts.append("--profile")
+    cmd_parts.append("--report")
+    command_str = " ".join(cmd_parts)
+
+    lines = [
+        "# Feature Engine Benchmark Report",
+        "",
+        "## Command",
+        "",
+        f"```",
+        command_str,
+        "```",
+        "",
+        "## Configuration",
+        "",
+        f"| Parameter | Value |",
+        f"|-----------|-------|",
+        f"| events | {n_events:,} |",
+        f"| event kind | {event_kind} |",
+        f"| features (raw) | {n_raw_feats} |",
+        f"| features (derived) | {n_derived_feats} |",
+        f"| window | {window} |",
+        f"| warmup events | {n_warmup} |",
+        f"| build time | {build_ms:.1f} ms |",
+        "",
+        "## Results",
+        "",
+        f"| Metric | Value |",
+        f"|--------|-------|",
+        f"| actual events | {actual_n:,} |",
+        f"| total elapsed | {total_s * 1000:.1f} ms |",
+        f"| avg on_event | {avg_us:.2f} µs |",
+        f"| p50 on_event | {p50:.2f} µs |",
+        f"| p95 on_event | {p95:.2f} µs |",
+        f"| p99 on_event | {p99:.2f} µs |",
+        f"| events/sec | {ups:,.0f} |",
+        f"| feature·ev/sec | {feat_eps:,.0f} |",
+        "",
+    ]
+
+    if args.profile:
+        summary = engine.profile_summary()
+        if summary.get("profile"):
+            lines += [
+                "## Profile Summary (top 10 by update_count)",
+                "",
+                "| Feature | updated | skipped | late_dropped | last_status |",
+                "|---------|---------|---------|--------------|-------------|",
+            ]
+            rows = sorted(
+                summary["features"].items(),
+                key=lambda kv: kv[1]["update_count"],
+                reverse=True,
+            )[:10]
+            for name, counts in rows:
+                last = counts.get("last_status") or "-"
+                lines.append(
+                    f"| `{name}` | {counts['update_count']} "
+                    f"| {counts['skip_count']} "
+                    f"| {counts['late_drop_count']} "
+                    f"| {last} |"
+                )
+            lines.append("")
+
+    lines += [
+        "## Health Summary",
+        "",
+    ]
+    health = engine.health_summary()
+    lines += [
+        f"| n_features | {health['n_features']} |",
+        f"| n_ready | {health['n_ready']} |",
+        f"| n_derived | {health['n_derived']} |",
+        "",
+        f"**Not ready:** {', '.join(health['not_ready_features']) or 'none'}",
+        "",
+        "---",
+        "",
+        f"*Generated by `scripts/benchmark_feature_engine.py --report`*",
+        "",
+    ]
+
+    report_text = "\n".join(lines)
+    with open(report_path, "w") as fh:
+        fh.write(report_text)
+
+    print(f"  Report written → {report_path}")
 
 
 if __name__ == "__main__":
