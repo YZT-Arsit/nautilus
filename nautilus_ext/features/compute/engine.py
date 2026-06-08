@@ -86,6 +86,9 @@ _EVENT_TYPE_MAP: dict[str, str] = {
     "funding_rate": "timer",
 }
 
+# All recognized FeatureSpec.input_type values (canonical + normalizable aliases).
+_VALID_INPUT_TYPES: frozenset[str] = frozenset(_EVENT_TYPE_MAP.keys())
+
 
 def input_type_for_event(event: Any) -> str | None:
     """Return the canonical input_type string for a market event.
@@ -113,6 +116,62 @@ _input_type_for = input_type_for_event
 
 def _extract_instrument_id(event: Any) -> str | None:
     return getattr(event, "instrument_id", None)
+
+
+# ---------------------------------------------------------------------------
+# Pre-build spec validation
+# ---------------------------------------------------------------------------
+
+def _validate_spec_list(specs: list[FeatureSpec], registry: BackendRegistry) -> None:
+    """Validate a list of FeatureSpecs before any feature instances are created.
+
+    Raises ``ValueError`` on the first violation found.  Checks:
+    - ``name`` is non-empty.
+    - No duplicate names within the list.
+    - ``input_type`` is a known canonical or alias value.
+    - ``window`` is a positive integer when present.
+    - ``backend`` is registered in the registry.
+
+    Unknown feature *type* (name prefix / params["type"]) is not checked here
+    because it is caught by the backend's ``create_feature()`` with a clear
+    ``ValueError`` during ``_build()``.
+
+    Whether ``input_field`` is required is validated inside the concrete feature
+    class constructor (e.g. ``RollingSumFeature.__init__``), which also fires
+    during ``_build()``.
+    """
+    registered = set(registry.available_backends())
+    seen: set[str] = set()
+    for spec in specs:
+        if not spec.name:
+            raise ValueError(
+                "FeatureSpec.name must be non-empty. "
+                "Each feature needs a stable, unique name."
+            )
+        if spec.name in seen:
+            raise ValueError(
+                f"Duplicate feature name {spec.name!r}. "
+                "Every FeatureSpec in the engine must have a unique name."
+            )
+        seen.add(spec.name)
+
+        if spec.input_type not in _VALID_INPUT_TYPES:
+            raise ValueError(
+                f"FeatureSpec {spec.name!r}: unknown input_type {spec.input_type!r}. "
+                f"Valid values: {sorted(_VALID_INPUT_TYPES)}"
+            )
+
+        if spec.window is not None and spec.window <= 0:
+            raise ValueError(
+                f"FeatureSpec {spec.name!r}: window must be a positive integer, "
+                f"got {spec.window!r}."
+            )
+
+        if spec.backend not in registered:
+            raise ValueError(
+                f"FeatureSpec {spec.name!r}: backend {spec.backend!r} is not "
+                f"registered. Available backends: {sorted(registered)}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +255,11 @@ class SpecFeatureEngine:
     ts_config : TimestampConfig | None
         Controls legacy ts_event unit conversion and live-mode strictness.
         Defaults to TimestampConfig() (ms legacy, no strict live check).
+    profile : bool
+        When True, collect per-feature event counters (update_count,
+        skip_count, late_drop_count).  Access via ``profile_summary()``.
+        Adds one dict-lookup + increment per feature per event when enabled.
+        Default False — zero overhead on the hot path.
     """
 
     def __init__(
@@ -206,6 +270,7 @@ class SpecFeatureEngine:
         clock: Clock | None = None,
         ts_config: TimestampConfig | None = None,
         is_live: bool = True,
+        profile: bool = False,
     ) -> None:
         self._specs: list[FeatureSpec] = list(specs)
         self._registry: BackendRegistry = backend_registry or build_default_registry()
@@ -216,9 +281,18 @@ class SpecFeatureEngine:
         self._ts_config: TimestampConfig = ts_config or TimestampConfig()
         self._is_live_mode: bool = is_live
         self._is_warmup: bool = False
+        self._profile: bool = profile
+        self._profile_update_count: dict[str, int] = {}
+        self._profile_skip_count: dict[str, int] = {}
+        self._profile_late_drop_count: dict[str, int] = {}
         self._build()
+        if profile:
+            self._profile_update_count = {n: 0 for n in self._features}
+            self._profile_skip_count = {n: 0 for n in self._features}
+            self._profile_late_drop_count = {n: 0 for n in self._features}
 
     def _build(self) -> None:
+        _validate_spec_list(self._specs, self._registry)
         for spec in self._specs:
             self._features[spec.name] = self._registry.create_feature(spec)
         log.debug("SpecFeatureEngine: built %d features", len(self._features))
@@ -307,9 +381,19 @@ class SpecFeatureEngine:
                     feature, event, trigger_ts_ns, watermark,
                     stream_key, ts, process_time_ns,
                 )
+                if self._profile:
+                    policy = feature.spec.trigger.late_event_policy
+                    if policy in ("drop", "log_only", "recompute_for_backtest_only"):
+                        self._profile_late_drop_count[name] += 1
             else:
                 update = feature.update(event)
                 values[name] = update.value
+                if self._profile:
+                    status = update.value.update_status
+                    if status == "updated":
+                        self._profile_update_count[name] += 1
+                    elif status in ("not_ready", "skipped_missing_field"):
+                        self._profile_skip_count[name] += 1
 
         return FeatureSnapshot(
             ts_event=ts.event_time_ns,
@@ -319,9 +403,50 @@ class SpecFeatureEngine:
             process_time_ns=process_time_ns,
         )
 
-    def get(self, name: str) -> FeatureValue | None:
+    def get(self, name: str, default: FeatureValue | None = None) -> FeatureValue | None:
+        """Return the cached FeatureValue for a feature, or default if not found."""
         f = self._features.get(name)
-        return f.value if f is not None else None
+        return f.value if f is not None else default
+
+    def value(self, name: str, default: Any = None) -> Any:
+        """Return the cached scalar for a feature, or default if absent or not ready."""
+        f = self._features.get(name)
+        if f is None or not f.is_ready:
+            return default
+        return f.value.value
+
+    def latest(self) -> dict[str, FeatureValue]:
+        """Return all features' current FeatureValues as a dict keyed by name."""
+        return {name: f.value for name, f in self._features.items()}
+
+    def latest_values(self, include_not_ready: bool = False) -> dict[str, Any]:
+        """Return all feature scalars.
+
+        When ``include_not_ready=False`` (default) only ready features are
+        included.  When ``True``, all features are included with ``None``
+        for unready ones.
+        """
+        if include_not_ready:
+            return {name: f.value.value for name, f in self._features.items()}
+        return {
+            name: f.value.value
+            for name, f in self._features.items()
+            if f.is_ready
+        }
+
+    def ready(self, name: str) -> bool:
+        """True if the named feature exists and is currently ready."""
+        f = self._features.get(name)
+        return f is not None and f.is_ready
+
+    def statuses(self) -> dict[str, str | None]:
+        """Return ``update_status`` for every feature keyed by name.
+
+        Reflects the status from the most recent ``on_event()`` call (or
+        ``None`` for features that have never been updated, or legacy features
+        that do not populate the field).
+        """
+        return {name: f.value.update_status for name, f in self._features.items()}
 
     def is_ready(self, name: str | None = None) -> bool:
         if name is not None:
@@ -365,7 +490,52 @@ class SpecFeatureEngine:
         return list(self._specs)
 
     def feature_names(self) -> list[str]:
+        """Return all registered feature names in insertion order."""
         return list(self._features)
+
+    def feature_specs(self) -> dict[str, FeatureSpec]:
+        """Return all FeatureSpecs keyed by name.
+
+        ``FeatureSpec`` is frozen, so the returned objects are safe to read
+        without copying.  The dict preserves insertion order (same as
+        ``feature_names()``).
+        """
+        return {spec.name: spec for spec in self._specs}
+
+    def profile_summary(self) -> dict:
+        """Return per-feature event counters collected since engine construction.
+
+        Returns ``{"profile": False}`` when profiling is disabled (the default).
+
+        When ``profile=True``, returns::
+
+            {
+                "profile": True,
+                "features": {
+                    "feat_name": {
+                        "update_count":    int,   # on_event() calls that produced "updated"
+                        "skip_count":      int,   # "not_ready" + "skipped_missing_field"
+                        "late_drop_count": int,   # dropped late events (policy=drop/log_only)
+                    },
+                    ...
+                }
+            }
+
+        Counters cover only ``on_event()`` calls — warmup events are excluded.
+        """
+        if not self._profile:
+            return {"profile": False}
+        return {
+            "profile": True,
+            "features": {
+                name: {
+                    "update_count": self._profile_update_count.get(name, 0),
+                    "skip_count": self._profile_skip_count.get(name, 0),
+                    "late_drop_count": self._profile_late_drop_count.get(name, 0),
+                }
+                for name in self._features
+            },
+        }
 
     # ------------------------------------------------------------------
     # Watermark access

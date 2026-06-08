@@ -259,14 +259,40 @@ class FeatureSnapshot:
     # Convenience accessors
     # ------------------------------------------------------------------
 
-    def get(self, name: str) -> FeatureValue | None:
-        """Return the FeatureValue for a named feature, or None if absent."""
-        return self.values.get(name)
+    def get(self, name: str, default: FeatureValue | None = None) -> FeatureValue | None:
+        """Return the FeatureValue for a named feature, or default if absent."""
+        return self.values.get(name, default)
+
+    def value(self, name: str, default: Any = None) -> Any:
+        """Return the scalar for a named feature, or default if absent or not ready.
+
+        Unlike ``scalar()``, this method accepts a custom default and returns it
+        when the feature is absent **or** not yet ready.  Strategy code should
+        prefer this over ``scalar()`` when a sentinel value (e.g. 0.0, ``nan``)
+        is more convenient than ``None``.
+        """
+        fv = self.values.get(name)
+        if fv is None or not fv.is_ready:
+            return default
+        return fv.value
 
     def scalar(self, name: str) -> float | int | bool | None:
         """Return the raw scalar for a feature, or None if absent or not ready."""
         fv = self.values.get(name)
         return fv.value if fv is not None else None
+
+    def is_ready(self, name: str) -> bool:
+        """True if the named feature exists and its is_ready flag is True."""
+        fv = self.values.get(name)
+        return fv is not None and fv.is_ready
+
+    def updated_names(self) -> list[str]:
+        """Names of features whose update_status is 'updated' in this snapshot.
+
+        Useful for routing logic that should only act when new values are
+        computed (as opposed to cached / not-ready returns).
+        """
+        return [k for k, v in self.values.items() if v.update_status == "updated"]
 
     def to_dict(self) -> dict[str, float | int | bool | None]:
         """All values as a plain dict (None for unready features)."""
@@ -275,6 +301,30 @@ class FeatureSnapshot:
     def ready_values(self) -> dict[str, float | int | bool | None]:
         """Only ready features as a plain dict."""
         return {k: v.value for k, v in self.values.items() if v.is_ready}
+
+    def as_dict(self, include_not_ready: bool = False) -> dict[str, Any]:
+        """Feature values as a plain dict.
+
+        Parameters
+        ----------
+        include_not_ready : bool
+            When ``False`` (default) only ready features are included.
+            When ``True`` all features are included; unready features have
+            ``value=None``.
+        """
+        if include_not_ready:
+            return {k: v.value for k, v in self.values.items()}
+        return {k: v.value for k, v in self.values.items() if v.is_ready}
+
+    def statuses(self) -> dict[str, str | None]:
+        """``update_status`` for every feature keyed by name.
+
+        Returns a dict mapping each feature name to its ``update_status``
+        string (``"updated"``, ``"not_ready"``, ``"skipped_missing_field"``,
+        or ``None`` for legacy features that do not populate the field).
+        Useful for observability and debugging pipelines.
+        """
+        return {k: v.update_status for k, v in self.values.items()}
 
     def all_ready(self) -> bool:
         """True when every feature in this snapshot is ready."""

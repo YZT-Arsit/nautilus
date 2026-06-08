@@ -85,6 +85,8 @@ from nautilus_ext.features.compute.features import (
     RollingMeanFeature,
     RollingMinFeature,
     RollingStdFeature,
+    RollingSumFeature,
+    RollingVolumeSumFeature,
     SimpleReturnFeature,
     SpreadFeature,
     VWAPFeature,
@@ -2797,3 +2799,582 @@ class TestPerformanceGuard:
         # Bar event updates all 5 bar features; quote feature stays not_ready
         assert all(snap.values[f"m{i}"] is not None for i in range(5))
         assert not snap.values["spread"].is_ready
+
+
+# ===========================================================================
+# FeatureSnapshot consumption API
+# ===========================================================================
+
+class TestFeatureSnapshotAPI:
+    """FeatureSnapshot strategy-facing accessor methods."""
+
+    def _engine_and_snap(self, n_warmup=3):
+        """Build a small engine, warm up, return (engine, snapshot)."""
+        spec_m = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                             window=3, params={"type": "rolling_mean"})
+        spec_s = FeatureSpec(name="sum3", input_type="bar", input_field="close",
+                             window=3, params={"type": "rolling_sum"})
+        engine = SpecFeatureEngine(specs=[spec_m, spec_s], stamp_process_time=False)
+        for b in bars([1.0, 2.0, 3.0, 4.0]):
+            snap = engine.on_event(b)
+        return engine, snap
+
+    def test_get_returns_feature_value(self):
+        _, snap = self._engine_and_snap()
+        fv = snap.get("m3")
+        assert isinstance(fv, FeatureValue)
+        assert fv.name == "m3"
+
+    def test_get_missing_returns_none_default(self):
+        _, snap = self._engine_and_snap()
+        assert snap.get("no_such") is None
+
+    def test_get_missing_returns_custom_default(self):
+        _, snap = self._engine_and_snap()
+        sentinel = FeatureValue(name="x", value=99.0, is_ready=True)
+        assert snap.get("no_such", sentinel) is sentinel
+
+    def test_value_returns_raw_scalar_for_ready_feature(self):
+        _, snap = self._engine_and_snap()
+        v = snap.value("m3")
+        assert isinstance(v, float)
+        assert v == pytest.approx((2.0 + 3.0 + 4.0) / 3)
+
+    def test_value_missing_returns_none_default(self):
+        _, snap = self._engine_and_snap()
+        assert snap.value("no_such") is None
+
+    def test_value_missing_returns_custom_default(self):
+        _, snap = self._engine_and_snap()
+        assert snap.value("no_such", 0.0) == 0.0
+
+    def test_value_not_ready_returns_default(self):
+        """Feature that has not yet reached is_ready returns default from value()."""
+        spec = FeatureSpec(name="m10", input_type="bar", input_field="close",
+                           window=10, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert snap.value("m10") is None
+        assert snap.value("m10", float("nan")) != snap.value("m10", float("nan"))  # nan != nan
+
+    def test_is_ready_true_for_ready_feature(self):
+        _, snap = self._engine_and_snap()
+        assert snap.is_ready("m3") is True
+
+    def test_is_ready_false_for_not_ready_feature(self):
+        spec = FeatureSpec(name="m10", input_type="bar", input_field="close",
+                           window=10, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert snap.is_ready("m10") is False
+
+    def test_is_ready_false_for_missing_feature(self):
+        _, snap = self._engine_and_snap()
+        assert snap.is_ready("nonexistent") is False
+
+    def test_ready_values_excludes_not_ready(self):
+        spec_ready = FeatureSpec(name="r1", input_type="bar", input_field="close",
+                                 window=2, params={"type": "rolling_mean"})
+        spec_not   = FeatureSpec(name="r10", input_type="bar", input_field="close",
+                                 window=10, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec_ready, spec_not], stamp_process_time=False)
+        for b in bars([1.0, 2.0, 3.0]):
+            snap = engine.on_event(b)
+        rv = snap.ready_values()
+        assert "r1" in rv
+        assert "r10" not in rv
+
+    def test_as_dict_excludes_not_ready_by_default(self):
+        spec_ready = FeatureSpec(name="r1", input_type="bar", input_field="close",
+                                 window=2, params={"type": "rolling_mean"})
+        spec_not   = FeatureSpec(name="r10", input_type="bar", input_field="close",
+                                 window=10, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec_ready, spec_not], stamp_process_time=False)
+        for b in bars([1.0, 2.0, 3.0]):
+            snap = engine.on_event(b)
+        d = snap.as_dict()
+        assert "r1" in d
+        assert "r10" not in d
+
+    def test_as_dict_include_not_ready_true_includes_all(self):
+        spec_ready = FeatureSpec(name="r1", input_type="bar", input_field="close",
+                                 window=2, params={"type": "rolling_mean"})
+        spec_not   = FeatureSpec(name="r10", input_type="bar", input_field="close",
+                                 window=10, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec_ready, spec_not], stamp_process_time=False)
+        for b in bars([1.0, 2.0, 3.0]):
+            snap = engine.on_event(b)
+        d = snap.as_dict(include_not_ready=True)
+        assert "r1" in d and d["r1"] is not None
+        assert "r10" in d and d["r10"] is None
+
+    def test_updated_names_contains_rolling_sum_after_ready(self):
+        """RollingSumFeature emits update_status='updated' once ready."""
+        _, snap = self._engine_and_snap()
+        updated = snap.updated_names()
+        assert "sum3" in updated
+
+    def test_updated_names_excludes_not_ready_status(self):
+        """A not_ready feature must not appear in updated_names()."""
+        spec = FeatureSpec(name="big", input_type="bar", input_field="close",
+                           window=10, params={"type": "rolling_sum"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert "big" not in snap.updated_names()
+
+    def test_statuses_includes_updated_status(self):
+        _, snap = self._engine_and_snap()
+        st = snap.statuses()
+        assert st["sum3"] == "updated"
+
+    def test_statuses_includes_not_ready_status(self):
+        spec = FeatureSpec(name="big", input_type="bar", input_field="close",
+                           window=10, params={"type": "rolling_sum"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert snap.statuses()["big"] == "not_ready"
+
+    def test_statuses_includes_skipped_missing_field(self):
+        """FeatureSnapshot.statuses() shows skipped_missing_field when field absent."""
+        spec = FeatureSpec(name="s1", input_type="bar", input_field="no_such_field",
+                           window=2, params={"type": "rolling_sum"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert snap.statuses()["s1"] == "skipped_missing_field"
+
+    def test_statuses_legacy_features_return_none(self):
+        """RollingMeanFeature (legacy) has update_status=None in statuses()."""
+        spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert snap.statuses()["m3"] is None
+
+    def test_strategy_helper_uses_only_feature_snapshot(self):
+        """Simulate a strategy that imports only FeatureSnapshot and FeatureSpec."""
+        def _strategy_signal(snap: FeatureSnapshot) -> float | None:
+            if not snap.is_ready("mean3") or not snap.is_ready("sum3"):
+                return None
+            m = snap.value("mean3", 0.0)
+            s = snap.value("sum3", 0.0)
+            return m - s / 3.0
+
+        spec_m = FeatureSpec(name="mean3", input_type="bar", input_field="close",
+                             window=3, params={"type": "rolling_mean"})
+        spec_s = FeatureSpec(name="sum3", input_type="bar", input_field="close",
+                             window=3, params={"type": "rolling_sum"})
+        engine = SpecFeatureEngine(specs=[spec_m, spec_s], stamp_process_time=False)
+        result = None
+        for b in bars([1.0, 2.0, 3.0, 4.0]):
+            snap = engine.on_event(b)
+            result = _strategy_signal(snap)
+        assert result is not None
+        assert result == pytest.approx(0.0)   # mean == sum/3 for equal-weight window
+
+
+# ===========================================================================
+# Engine latest-value API
+# ===========================================================================
+
+class TestEngineLatestValueAPI:
+    """SpecFeatureEngine latest-value accessor methods."""
+
+    def _make_engine(self, window=3):
+        spec_m = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                             window=window, params={"type": "rolling_mean"})
+        spec_s = FeatureSpec(name="sum3", input_type="bar", input_field="close",
+                             window=window, params={"type": "rolling_sum"})
+        return SpecFeatureEngine(specs=[spec_m, spec_s], stamp_process_time=False)
+
+    def test_get_default_returns_none_before_warmup(self):
+        engine = self._make_engine()
+        fv = engine.get("m3")
+        assert fv is not None                # cached stub exists; returns initial FeatureValue
+        assert fv.is_ready is False
+
+    def test_get_with_custom_default_for_unknown_name(self):
+        engine = self._make_engine()
+        sentinel = FeatureValue(name="x", value=42.0, is_ready=True)
+        assert engine.get("no_such", sentinel) is sentinel
+
+    def test_get_returns_feature_value_after_warmup(self):
+        engine = self._make_engine()
+        for b in bars([10.0, 20.0, 30.0]):
+            engine.on_event(b)
+        fv = engine.get("m3")
+        assert isinstance(fv, FeatureValue)
+        assert fv.is_ready is True
+        assert fv.value == pytest.approx(20.0)
+
+    def test_value_returns_scalar_after_warmup(self):
+        engine = self._make_engine()
+        for b in bars([10.0, 20.0, 30.0]):
+            engine.on_event(b)
+        assert engine.value("m3") == pytest.approx(20.0)
+
+    def test_value_returns_default_before_warmup(self):
+        engine = self._make_engine()
+        engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert engine.value("m3") is None
+        assert engine.value("m3", -1.0) == -1.0
+
+    def test_value_returns_default_for_unknown_name(self):
+        engine = self._make_engine()
+        assert engine.value("ghost") is None
+        assert engine.value("ghost", 0.0) == 0.0
+
+    def test_latest_returns_all_feature_values(self):
+        engine = self._make_engine()
+        for b in bars([1.0, 2.0, 3.0]):
+            engine.on_event(b)
+        lat = engine.latest()
+        assert set(lat.keys()) == {"m3", "sum3"}
+        assert all(isinstance(v, FeatureValue) for v in lat.values())
+
+    def test_latest_values_excludes_not_ready_by_default(self):
+        spec_m = FeatureSpec(name="m3",  input_type="bar", input_field="close",
+                             window=3,  params={"type": "rolling_mean"})
+        spec_big = FeatureSpec(name="m10", input_type="bar", input_field="close",
+                               window=10, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec_m, spec_big], stamp_process_time=False)
+        for b in bars([1.0, 2.0, 3.0, 4.0]):
+            engine.on_event(b)
+        lv = engine.latest_values()
+        assert "m3"  in lv
+        assert "m10" not in lv
+
+    def test_latest_values_include_not_ready_includes_all(self):
+        spec_m = FeatureSpec(name="m3",  input_type="bar", input_field="close",
+                             window=3,  params={"type": "rolling_mean"})
+        spec_big = FeatureSpec(name="m10", input_type="bar", input_field="close",
+                               window=10, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec_m, spec_big], stamp_process_time=False)
+        for b in bars([1.0, 2.0, 3.0, 4.0]):
+            engine.on_event(b)
+        lv = engine.latest_values(include_not_ready=True)
+        assert "m3"  in lv and lv["m3"]  is not None
+        assert "m10" in lv and lv["m10"] is None
+
+    def test_ready_true_after_warmup(self):
+        engine = self._make_engine()
+        for b in bars([1.0, 2.0, 3.0]):
+            engine.on_event(b)
+        assert engine.ready("m3") is True
+
+    def test_ready_false_before_warmup(self):
+        engine = self._make_engine()
+        engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert engine.ready("m3") is False
+
+    def test_ready_false_for_unknown_name(self):
+        engine = self._make_engine()
+        assert engine.ready("ghost") is False
+
+    def test_statuses_shows_skipped_missing_field(self):
+        """skipped_missing_field is visible in the snapshot returned by on_event().
+
+        engine.statuses() reads the feature's internal _cached value, which is NOT
+        updated on a skip (by design — the cached state reflects the last real emit).
+        The skip status is visible in the FeatureSnapshot returned by on_event().
+        """
+        spec = FeatureSpec(name="s1", input_type="bar", input_field="no_field",
+                           window=2, params={"type": "rolling_sum"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        snap = engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        # Snapshot captures the per-event update (including skip status)
+        assert snap.statuses()["s1"] == "skipped_missing_field"
+        # Engine-level statuses() reflects _cached, which is unchanged on skip
+        assert engine.statuses()["s1"] is None  # initial cached value
+
+    def test_statuses_contains_all_feature_names(self):
+        engine = self._make_engine()
+        for b in bars([1.0, 2.0, 3.0]):
+            engine.on_event(b)
+        st = engine.statuses()
+        assert set(st.keys()) == {"m3", "sum3"}
+
+    def test_apis_are_backend_independent(self):
+        """All new APIs work identically through the default and a custom registry."""
+        class _PassthroughBackend:
+            def __init__(self):
+                self._inner = PythonBackend()
+            def create_feature(self, spec):
+                return self._inner.create_feature(spec)
+
+        spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+
+        reg = BackendRegistry()
+        reg.register("python", _PassthroughBackend())
+
+        engine_a = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        engine_b = SpecFeatureEngine(specs=[spec], backend_registry=reg,
+                                     stamp_process_time=False)
+
+        for b in bars([10.0, 20.0, 30.0]):
+            engine_a.on_event(b)
+            engine_b.on_event(b)
+
+        assert engine_a.value("m3") == pytest.approx(engine_b.value("m3"))
+        assert engine_a.ready("m3") == engine_b.ready("m3")
+        assert set(engine_a.latest()) == set(engine_b.latest())
+
+
+# ===========================================================================
+# FeatureSpec validation
+# ===========================================================================
+
+class TestFeatureSpecValidation:
+    """SpecFeatureEngine rejects invalid specs at construction time."""
+
+    def test_empty_name_raises(self):
+        with pytest.raises(ValueError, match="non-empty"):
+            SpecFeatureEngine(
+                specs=[FeatureSpec(name="", input_type="bar", input_field="close",
+                                   window=3, params={"type": "rolling_mean"})],
+                stamp_process_time=False,
+            )
+
+    def test_duplicate_name_raises(self):
+        spec = FeatureSpec(name="dup", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        with pytest.raises(ValueError, match="[Dd]uplicate"):
+            SpecFeatureEngine(specs=[spec, spec], stamp_process_time=False)
+
+    def test_invalid_input_type_raises(self):
+        with pytest.raises(ValueError, match="input_type"):
+            SpecFeatureEngine(
+                specs=[FeatureSpec(name="x", input_type="candle", input_field="close",
+                                   window=3, params={"type": "rolling_mean"})],
+                stamp_process_time=False,
+            )
+
+    def test_window_zero_raises(self):
+        with pytest.raises(ValueError, match="window"):
+            SpecFeatureEngine(
+                specs=[FeatureSpec(name="x", input_type="bar", input_field="close",
+                                   window=0, params={"type": "rolling_mean"})],
+                stamp_process_time=False,
+            )
+
+    def test_window_negative_raises(self):
+        with pytest.raises(ValueError, match="window"):
+            SpecFeatureEngine(
+                specs=[FeatureSpec(name="x", input_type="bar", input_field="close",
+                                   window=-5, params={"type": "rolling_mean"})],
+                stamp_process_time=False,
+            )
+
+    def test_rolling_sum_without_input_field_raises(self):
+        """RollingSumFeature (no _DEFAULT_FIELD) must raise when input_field is absent."""
+        with pytest.raises(ValueError, match="input_field"):
+            SpecFeatureEngine(
+                specs=[FeatureSpec(name="s", input_type="bar", window=3,
+                                   params={"type": "rolling_sum"})],  # no input_field
+                stamp_process_time=False,
+            )
+
+    def test_rolling_volume_sum_without_input_field_is_valid(self):
+        """RollingVolumeSumFeature has _DEFAULT_FIELD='volume' so no input_field needed."""
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="vs", input_type="bar", window=3,
+                               params={"type": "rolling_volume_sum"})],
+            stamp_process_time=False,
+        )
+        assert engine.feature_names() == ["vs"]
+
+    def test_unknown_backend_raises(self):
+        with pytest.raises(ValueError, match="backend"):
+            SpecFeatureEngine(
+                specs=[FeatureSpec(name="x", input_type="bar", input_field="close",
+                                   window=3, backend="rust",
+                                   params={"type": "rolling_mean"})],
+                stamp_process_time=False,
+            )
+
+    def test_unknown_feature_type_raises_clear_error(self):
+        """Unknown params['type'] raises ValueError naming the bad type."""
+        with pytest.raises(ValueError, match="no_such_feature_type"):
+            SpecFeatureEngine(
+                specs=[FeatureSpec(name="x", input_type="bar", input_field="close",
+                                   window=3, params={"type": "no_such_feature_type"})],
+                stamp_process_time=False,
+            )
+
+    def test_unknown_name_prefix_raises_clear_error(self):
+        """A name that matches no known prefix raises ValueError."""
+        with pytest.raises(ValueError, match="cannot determine"):
+            SpecFeatureEngine(
+                specs=[FeatureSpec(name="totally_unknown_xyz", input_type="bar",
+                                   input_field="close", window=3)],
+                stamp_process_time=False,
+            )
+
+    def test_valid_spec_builds_successfully(self):
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="m3", input_type="bar", input_field="close",
+                               window=3, params={"type": "rolling_mean"})],
+            stamp_process_time=False,
+        )
+        assert engine.feature_names() == ["m3"]
+
+    def test_input_type_vendor_alias_is_accepted(self):
+        """'quote_tick' is a recognised alias and should not raise on validation."""
+        engine = SpecFeatureEngine(
+            specs=[FeatureSpec(name="sp", input_type="quote_tick",
+                               params={"type": "spread"})],
+            stamp_process_time=False,
+        )
+        assert engine.feature_names() == ["sp"]
+
+
+# ===========================================================================
+# Feature catalog / registry introspection
+# ===========================================================================
+
+class TestFeatureCatalogIntrospection:
+    """Backend and engine introspection APIs."""
+
+    def test_available_feature_types_includes_rolling_sum(self):
+        assert "rolling_sum" in PythonBackend().available_feature_types()
+
+    def test_available_feature_types_includes_rolling_volume_sum(self):
+        assert "rolling_volume_sum" in PythonBackend().available_feature_types()
+
+    def test_available_feature_types_is_sorted(self):
+        types = PythonBackend().available_feature_types()
+        assert types == sorted(types)
+
+    def test_available_feature_types_contains_all_13_types(self):
+        types = PythonBackend().available_feature_types()
+        expected = {
+            "rolling_mean", "rolling_std", "rolling_min", "rolling_max",
+            "rolling_sum", "rolling_volume_sum", "vwap", "simple_return",
+            "log_return", "ewma", "spread", "mid_price", "book_imbalance",
+        }
+        assert expected.issubset(set(types))
+
+    def test_engine_feature_names_is_deterministic(self):
+        specs = [
+            FeatureSpec(name="b", input_type="bar", input_field="close",
+                        window=3, params={"type": "rolling_mean"}),
+            FeatureSpec(name="a", input_type="bar", input_field="close",
+                        window=3, params={"type": "rolling_mean"}),
+            FeatureSpec(name="c", input_type="bar", input_field="close",
+                        window=3, params={"type": "rolling_mean"}),
+        ]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        # Insertion order must be preserved
+        assert engine.feature_names() == ["b", "a", "c"]
+
+    def test_feature_specs_returns_correct_mapping(self):
+        spec_a = FeatureSpec(name="alpha", input_type="bar", input_field="close",
+                             window=3, params={"type": "rolling_mean"})
+        spec_b = FeatureSpec(name="beta", input_type="bar", input_field="volume",
+                             window=5, params={"type": "rolling_sum"})
+        engine = SpecFeatureEngine(specs=[spec_a, spec_b], stamp_process_time=False)
+        fs = engine.feature_specs()
+        assert fs["alpha"] is spec_a
+        assert fs["beta"]  is spec_b
+
+    def test_feature_specs_keys_match_feature_names(self):
+        specs = [
+            FeatureSpec(name="x", input_type="bar", input_field="close",
+                        window=3, params={"type": "rolling_mean"}),
+            FeatureSpec(name="y", input_type="bar", input_field="close",
+                        window=5, params={"type": "rolling_std"}),
+        ]
+        engine = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        assert set(engine.feature_specs().keys()) == set(engine.feature_names())
+
+    def test_feature_specs_are_frozen_dataclasses(self):
+        """FeatureSpecs are frozen — verifies safe to return without copying."""
+        spec = FeatureSpec(name="z", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        returned = engine.feature_specs()["z"]
+        with pytest.raises((TypeError, AttributeError)):
+            returned.name = "modified"  # type: ignore[misc]
+
+
+# ===========================================================================
+# Profiling hook
+# ===========================================================================
+
+class TestProfilingHook:
+    """SpecFeatureEngine optional profiling mode."""
+
+    def _make_engine(self, profile: bool = True):
+        spec_s = FeatureSpec(name="sum3", input_type="bar", input_field="close",
+                             window=3, params={"type": "rolling_sum"})
+        spec_s5 = FeatureSpec(name="sum5", input_type="bar", input_field="close",
+                              window=5, params={"type": "rolling_sum"})
+        return SpecFeatureEngine(specs=[spec_s, spec_s5], stamp_process_time=False,
+                                 profile=profile)
+
+    def test_profile_summary_disabled_returns_false(self):
+        engine = self._make_engine(profile=False)
+        assert engine.profile_summary() == {"profile": False}
+
+    def test_profile_summary_enabled_returns_profile_true(self):
+        engine = self._make_engine(profile=True)
+        summary = engine.profile_summary()
+        assert summary["profile"] is True
+        assert "features" in summary
+
+    def test_profile_summary_contains_all_feature_names(self):
+        engine = self._make_engine(profile=True)
+        summary = engine.profile_summary()
+        assert set(summary["features"].keys()) == {"sum3", "sum5"}
+
+    def test_update_count_increments_after_ready(self):
+        """update_count increases once the feature has enough history.
+
+        Uses RollingSumFeature because it explicitly sets update_status='updated'.
+        Legacy features (RollingMean etc.) return update_status=None so they
+        do not increment the update_count counter.
+        """
+        engine = self._make_engine(profile=True)
+        # sum3 is ready after 3 events; sum5 after 5
+        for b in bars([1.0, 2.0, 3.0, 4.0, 5.0, 6.0]):
+            engine.on_event(b)
+        summary = engine.profile_summary()["features"]
+        assert summary["sum3"]["update_count"] >= 3   # ready from bar 3 → bars 3,4,5,6
+        assert summary["sum5"]["update_count"] >= 1   # ready from bar 5 → bars 5,6
+
+    def test_skip_count_increments_while_not_ready(self):
+        """Not-ready events increment skip_count (update_status='not_ready')."""
+        engine = self._make_engine(profile=True)
+        for b in bars([1.0, 2.0]):  # only 2 events — sum3 (window=3) stays not_ready
+            engine.on_event(b)
+        summary = engine.profile_summary()["features"]
+        # Both features have skips; sum3 definitely skipped 2 times
+        assert summary["sum3"]["skip_count"] == 2
+
+    def test_late_drop_count_increments_on_dropped_late_event(self):
+        """Late events with policy='drop' increment late_drop_count."""
+        spec = FeatureSpec(
+            name="m3",
+            input_type="bar",
+            input_field="close",
+            window=3,
+            params={"type": "rolling_mean"},
+            trigger=TriggerPolicy(kind="on_event", allowed_lateness_ns=0,
+                                  late_event_policy="drop"),
+        )
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False,
+                                   profile=True)
+        # Advance watermark
+        for b in bars([1.0, 2.0, 3.0]):
+            engine.on_event(b)
+        # Send a late event (ts_event in the past)
+        engine.on_event(Bar(close=99.0, event_time_ns=_s(0)))
+        summary = engine.profile_summary()["features"]
+        assert summary["m3"]["late_drop_count"] >= 1
+
+    def test_no_profile_dicts_when_disabled(self):
+        """Disabling profile leaves the count dicts empty (no wasted memory)."""
+        engine = self._make_engine(profile=False)
+        assert engine._profile_update_count == {}
+        assert engine._profile_skip_count   == {}
+        assert engine._profile_late_drop_count == {}

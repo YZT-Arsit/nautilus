@@ -581,6 +581,11 @@ This means:
 - **Backend replacement equivalence**: DebugPythonBackend produces same names/values/readiness as PythonBackend; strategy code uses only FeatureSpec/FeatureSnapshot
 - **Update status / observability**: update_status field on FeatureValue, "updated"/"not_ready"/"skipped_missing_field", reason/source_field on skip, cached value unchanged after skip, backward compat (legacy features return None)
 - **Performance guard**: RollingWindowState buffer bounded at maxlen, deque.maxlen proves O(1) construction, no pandas import in hot-path modules, engine per-event routing is linear in subscribed features only
+- **FeatureSnapshot consumption API**: get/value/is_ready/updated_names/as_dict/statuses; backward-compatible; strategy-style helper uses only FeatureSnapshot
+- **Engine latest-value API**: get/value/latest/latest_values/ready/statuses/feature_specs; API-independence across backends
+- **FeatureSpec validation**: empty name, duplicate name, invalid input_type, window ≤ 0, missing input_field for rolling_sum, unknown backend, unknown feature type
+- **Feature catalog introspection**: available_feature_types(), feature_names() determinism, feature_specs() returns frozen originals
+- **Profiling hook**: update_count/skip_count/late_drop_count per feature; zero overhead when disabled; profile=False leaves dicts empty
 
 ---
 
@@ -631,3 +636,273 @@ self._state.push(v)
 return self._emit(value, ready, triggered,
                   update_status="updated" if ready else "not_ready")
 ```
+
+---
+
+## 16. Strategy-Facing FeatureSnapshot API
+
+Strategy code should consume feature outputs exclusively through `FeatureSnapshot`.
+This decouples strategies from backend implementation details and allows the backend
+to be swapped without any strategy change.
+
+### Full method reference
+
+```python
+snap = engine.on_event(event)
+
+# Retrieve a FeatureValue (includes is_ready, update_status, timestamps)
+fv: FeatureValue | None = snap.get("feat_name")           # None if absent
+fv = snap.get("feat_name", default_fv)                    # custom default
+
+# Get the raw scalar — None or custom default if absent / not ready
+v: float | None = snap.value("feat_name")
+v = snap.value("feat_name", float("nan"))                 # custom default
+
+# Readiness check for a single feature
+snap.is_ready("feat_name")   # → bool
+
+# Bulk access
+snap.ready_values()                         # dict[str, Any] — ready only
+snap.as_dict()                              # dict[str, Any] — ready only (default)
+snap.as_dict(include_not_ready=True)        # dict[str, Any] — all features, None for unready
+snap.to_dict()                              # legacy: all features including None for unready
+
+# Observability
+snap.updated_names()   # list[str] — features with update_status == "updated"
+snap.statuses()        # dict[str, str|None] — update_status for every feature
+
+# Cross-feature readiness
+snap.all_ready()       # True when every feature is ready
+len(snap)              # number of features in the snapshot
+```
+
+### Strategy pattern
+
+```python
+def on_bar(snap: FeatureSnapshot) -> float | None:
+    # Guard on readiness — no backend imports needed
+    if not snap.is_ready("mean_20") or not snap.is_ready("vol_20"):
+        return None
+
+    mean = snap.value("mean_20", 0.0)
+    vol  = snap.value("vol_20",  1.0)
+    return (snap.value("close_last", mean) - mean) / vol
+
+# Diagnostics: log features that are not computing
+not_updated = [
+    name for name, status in snap.statuses().items()
+    if status != "updated"
+]
+```
+
+### Important: skip status lives in the snapshot, not the engine cache
+
+`FeatureSnapshot.statuses()` reflects the per-event update returned by
+`feature.update()`.  For skipped events (`"skipped_missing_field"`), this shows
+the skip status.
+
+`engine.statuses()` reads from each feature's internal `_cached` value, which is
+**not updated on a skip** (by design — the cached state reflects the last real emit).
+Use `snap.statuses()` for per-event observability; use `engine.statuses()` to check
+the state of the engine between events.
+
+---
+
+## 17. Engine Latest-Value API
+
+`SpecFeatureEngine` exposes accessors that mirror `FeatureSnapshot` for use outside
+of an `on_event()` call — useful for initialisation checks, health monitors, and REPL
+inspection.
+
+```python
+# FeatureValue accessors
+engine.get("feat_name")               # FeatureValue | None (default None)
+engine.get("feat_name", my_default)   # custom default when feature absent
+
+# Raw scalar
+engine.value("feat_name")             # Any | None — None if absent or not ready
+engine.value("feat_name", 0.0)        # custom default
+
+# Readiness
+engine.ready("feat_name")             # bool — True if present and is_ready
+engine.is_ready("feat_name")          # bool — same as ready()
+engine.is_ready()                     # bool — True if ALL features are ready
+
+# Bulk access (all features)
+engine.latest()                       # dict[str, FeatureValue]
+engine.latest_values()                # dict[str, Any] — ready only (default)
+engine.latest_values(include_not_ready=True)  # all features, None for unready
+
+# Observability
+engine.statuses()                     # dict[str, str|None] — update_status per feature
+
+# Spec / catalog inspection
+engine.feature_names()                # list[str] — insertion order
+engine.feature_specs()                # dict[str, FeatureSpec] — frozen originals
+engine.specs()                        # list[FeatureSpec] — original list
+```
+
+---
+
+## 18. FeatureSpec Validation
+
+`SpecFeatureEngine` validates all specs at construction time, before any feature
+instance is created.  Obvious configuration mistakes are caught with a descriptive
+`ValueError` rather than failing silently at runtime.
+
+### Validation rules
+
+| Rule | Error trigger | Example |
+|---|---|---|
+| Non-empty name | `name == ""` | `FeatureSpec(name="")` |
+| Unique names | Duplicate name in list | Two specs both named `"vol"` |
+| Known input_type | Not in canonical + alias set | `input_type="candle"` |
+| Positive window | `window <= 0` | `window=0` or `window=-1` |
+| input_field for rolling_sum | `input_field=None` and `_DEFAULT_FIELD=None` | `FeatureSpec(..., params={"type": "rolling_sum"})` without `input_field` |
+| Registered backend | `spec.backend` not in registry | `backend="rust"` when no Rust backend registered |
+| Known feature type | Name matches no prefix and `params["type"]` is unrecognised | `params={"type": "magic_alpha"}` |
+
+`rolling_volume_sum` does **not** require `input_field` — its `_DEFAULT_FIELD = "volume"`
+acts as the fallback.
+
+```python
+# These all raise ValueError at construction time:
+SpecFeatureEngine(specs=[FeatureSpec(name="")], ...)              # empty name
+SpecFeatureEngine(specs=[spec, spec], ...)                        # duplicate
+SpecFeatureEngine(specs=[FeatureSpec(input_type="candle")], ...)  # bad input_type
+SpecFeatureEngine(specs=[FeatureSpec(window=-1)], ...)            # bad window
+SpecFeatureEngine(
+    specs=[FeatureSpec(name="s", params={"type": "rolling_sum"})],
+    ...
+)                                                                  # missing input_field
+```
+
+---
+
+## 19. Feature Catalog and Registry Introspection
+
+### PythonBackend
+
+```python
+from nautilus_ext.features.compute.backend import PythonBackend
+
+backend = PythonBackend()
+types = backend.available_feature_types()   # sorted list of all registered type keys
+# → ['book_imbalance', 'ewma', 'log_return', 'mid_price',
+#    'rolling_max', 'rolling_mean', 'rolling_min', 'rolling_std',
+#    'rolling_sum', 'rolling_volume_sum', 'simple_return', 'spread', 'vwap']
+```
+
+### SpecFeatureEngine
+
+```python
+engine.feature_names()    # list[str] — insertion order, deterministic
+engine.feature_specs()    # dict[str, FeatureSpec] — frozen originals, safe to read
+```
+
+`feature_specs()` returns references to the original `FeatureSpec` objects (which are
+frozen dataclasses), so no copying is needed.  The dict preserves insertion order.
+
+---
+
+## 20. Benchmark Script
+
+`scripts/benchmark_feature_engine.py` measures the incremental hot-path latency
+for `SpecFeatureEngine.on_event()` without pandas or DataFrame recomputation.
+
+### Usage
+
+```bash
+# default: 100 000 events, 20 features, window 100
+python -m scripts.benchmark_feature_engine
+
+# stress test: 100 features, large window
+python -m scripts.benchmark_feature_engine --events 100000 --features 100 --window 1000
+
+# with engine profiling summary
+python -m scripts.benchmark_feature_engine --events 50000 --features 20 --profile
+```
+
+### Reported metrics
+
+| Metric | Meaning |
+|---|---|
+| `total elapsed` | Wall-clock time for all `on_event()` calls |
+| `avg on_event` | Mean latency per call (µs) |
+| `p50 / p95 / p99` | Percentile latencies (µs) |
+| `events/sec` | Throughput |
+| `feature·ev/sec` | Throughput × n_features (total incremental updates/sec) |
+
+### How to interpret results
+
+- **avg on_event should scale linearly with `--features`**.  If it does not, something
+  on the hot path is no longer O(n_features).
+- **`--window` must not affect steady-state latency**.  The ring buffer is bounded at
+  construction; a window-1000 feature costs the same as a window-5 feature once warm.
+  Any regression here indicates an O(window) scan crept in.
+- **p99 << 1 ms** for 20 features on a quiet machine is a reasonable baseline.  Actual
+  numbers depend on CPU, Python version, OS scheduler, and machine load.
+
+### Profiling mode
+
+With `--profile`, the engine collects per-feature event counters and prints a summary:
+
+```
+  Profile summary (top 10 by update_count)
+  --------------------------------------------------------
+  feature                        updated  skipped     late
+  f0_rolling_mean                  99980    20           0
+  f1_rolling_std                   99980    20           0
+  ...
+```
+
+### IMPORTANT: no CI timing gate
+
+**Do not use these numbers as hard pass/fail thresholds in CI.**
+They are machine- and load-dependent.  Use the benchmark for relative profiling:
+compare runs before and after a hot-path change, or at different `--features` counts
+to verify linearity.  A true performance regression should appear as a clear
+O-complexity change, not a small absolute difference in µs.
+
+---
+
+## 21. Optional Engine Profiling Hook
+
+`SpecFeatureEngine` accepts an optional `profile=True` flag that collects per-feature
+event counters with minimal overhead.
+
+```python
+engine = SpecFeatureEngine(specs, profile=True)
+
+for event in live_feed:
+    engine.on_event(event)
+
+summary = engine.profile_summary()
+# {
+#     "profile": True,
+#     "features": {
+#         "feat_name": {
+#             "update_count":    int,   # events that produced update_status="updated"
+#             "skip_count":      int,   # update_status in ("not_ready", "skipped_missing_field")
+#             "late_drop_count": int,   # late events dropped (policy=drop/log_only)
+#         },
+#         ...
+#     }
+# }
+```
+
+When `profile=False` (default), `profile_summary()` returns `{"profile": False}` and
+the three counter dicts remain empty — zero memory overhead and zero hot-path cost.
+
+### Counter semantics
+
+| Counter | Increments when |
+|---|---|
+| `update_count` | `feature.update()` returned `update_status="updated"` |
+| `skip_count` | `update_status` was `"not_ready"` or `"skipped_missing_field"` |
+| `late_drop_count` | Event was late and policy was `"drop"`, `"log_only"`, or `"recompute_for_backtest_only"` |
+
+**Note**: legacy features (`RollingMeanFeature`, etc.) return `update_status=None`; their
+events are not counted in `update_count` or `skip_count`.  Only features that explicitly
+set `update_status` (currently `RollingSumFeature` and subclasses) contribute to these
+counters.  Warmup events are excluded — counters only reflect `on_event()` calls.

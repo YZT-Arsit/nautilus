@@ -484,6 +484,13 @@ class RollingSumFeature(_AbstractFeature):
         super().__init__(spec)
         self._state = RollingWindowState(maxlen=spec.window or 1)
         self._field_name: str | None = spec.input_field or self._DEFAULT_FIELD
+        if self._field_name is None:
+            raise ValueError(
+                f"RollingSumFeature requires spec.input_field to be set (or use a "
+                f"subclass that defines _DEFAULT_FIELD, e.g. RollingVolumeSumFeature). "
+                f"Spec {spec.name!r} has neither. "
+                f"Example fix: FeatureSpec(..., input_field='volume')."
+            )
 
     def warmup_required(self) -> WarmupRequirement:
         return WarmupRequirement(n_events=self._spec.window or 1, unit=self._spec.window_unit or "bars")

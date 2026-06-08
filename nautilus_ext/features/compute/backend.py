@@ -116,6 +116,10 @@ class PythonBackend:
         _FEATURE_CLASSES["my_custom"] = MyCustomFeature
     """
 
+    def available_feature_types(self) -> list[str]:
+        """Return all registered feature type keys, sorted alphabetically."""
+        return sorted(_FEATURE_CLASSES.keys())
+
     def create_feature(self, spec: FeatureSpec) -> FeatureBase:
         # 1. Explicit type key in params
         type_key = spec.params.get("type")
