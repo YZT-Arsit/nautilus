@@ -148,6 +148,39 @@ class FeatureSpec:
     trigger: TriggerPolicy = field(default_factory=lambda: TriggerPolicy(kind="on_event"))
     backend: str = "python"
     params: dict[str, Any] = field(default_factory=dict)
+    depends_on: tuple[str, ...] = ()
+    """Names of features this feature depends on (feature-to-feature dependency).
+
+    When non-empty the spec describes a *derived* feature: it does not subscribe
+    to raw market events but instead receives a :class:`DependencyContext`
+    containing the latest values of the listed features.  The engine updates
+    derived features in topological order after all raw-event features have been
+    processed for each event.
+
+    Rules
+    -----
+    - Every name in ``depends_on`` must be the name of another feature in the
+      same engine instance.  Unknown names raise ``ValueError`` at engine init.
+    - Self-reference (``spec.name in spec.depends_on``) is forbidden.
+    - Circular dependencies (A → B → A) are detected at engine init and raise
+      ``ValueError`` with the cycle printed.
+    - Use ``input_type = "derived"`` to make the intent explicit, though the
+      engine accepts any ``input_type`` on derived features; the ``depends_on``
+      field is the canonical indicator.
+
+    Example
+    -------
+    ::
+
+        spread_spec  = FeatureSpec("spread", input_type="quote", params={"type": "spread"})
+        mid_spec     = FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"})
+        ratio_spec   = FeatureSpec(
+            "spread_ratio",
+            input_type="derived",
+            depends_on=("spread", "mid"),
+            params={"type": "ratio"},
+        )
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +217,9 @@ class FeatureValue:
         - ``"not_ready"``              — not enough history; cached None returned.
         - ``"skipped_missing_field"``  — input field absent on the event; cached
                                          value returned unchanged.
+        - ``"dependency_not_ready"``   — a required dependency feature is not
+                                         ready or produced None; the derived
+                                         feature emits ``value=None, is_ready=False``.
         None for legacy features that do not populate this field.
     reason : str | None
         Human-readable explanation when update_status is an error/skip status.

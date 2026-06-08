@@ -889,3 +889,280 @@ class RealizedVolatilityFeature(_AbstractFeature):
             self._cached = FeatureValue(
                 name=self._spec.name, value=self._state.std, is_ready=True,
             )
+
+
+# ---------------------------------------------------------------------------
+# Dependency context — passed to derived features instead of raw events
+# ---------------------------------------------------------------------------
+
+class DependencyContext:
+    """Read-only view of the current feature values, passed to derived features.
+
+    Derived features receive this object instead of the raw market event.
+    They must not call engine internals directly — doing so would create hidden
+    coupling, make update order implicit, and make cycle detection impossible.
+
+    The dict is held by reference and updated in-place as the engine processes
+    each derived feature in topological order.  Reads always reflect the latest
+    values for all features that have already been updated in this event turn.
+
+    Current-value semantics
+    -----------------------
+    If feature A and feature B are both processed for event_t, and B depends on A,
+    B is guaranteed to see A's value from event_t (not event_{t-1}) because the
+    engine processes A before B (topological order).
+
+    Latest-ready semantics
+    ----------------------
+    If A did not update on event_t (e.g., A is a bar feature and event_t is a
+    quote event), B sees A's most-recently-computed ready value.  This supports
+    cross-frequency derived features.
+    """
+
+    __slots__ = ("_values",)
+
+    def __init__(self, values: dict) -> None:
+        self._values = values
+
+    def value(self, name: str) -> float | int | bool | None:
+        """Return the scalar for a named dependency, or None if absent or not ready."""
+        fv = self._values.get(name)
+        return fv.value if fv is not None else None
+
+    def get(self, name: str):
+        """Return the full FeatureValue for a named dependency, or None if absent."""
+        return self._values.get(name)
+
+    def is_ready(self, name: str) -> bool:
+        """True if the named dependency exists and has is_ready=True."""
+        fv = self._values.get(name)
+        return fv is not None and fv.is_ready
+
+    def all_ready(self, names) -> bool:
+        """True if every name in *names* is ready."""
+        return all(self.is_ready(n) for n in names)
+
+
+# ---------------------------------------------------------------------------
+# Abstract base for derived features
+# ---------------------------------------------------------------------------
+
+class _AbstractDerivedFeature(_AbstractFeature):
+    """Base class for features that compute from other feature values.
+
+    Derived features:
+    - Do NOT subscribe to raw market events (engine skips them in routing).
+    - Implement ``update_from_dependencies(ctx, source_event)`` instead.
+    - Have ``spec.depends_on`` non-empty.
+
+    The ``update()`` stub is present for protocol compatibility; the engine
+    never calls it on derived features.
+    """
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=0, unit="events", mandatory=False)
+
+    def update(self, event: Any) -> FeatureUpdate:
+        # Engine routes to update_from_dependencies(); this stub satisfies FeatureBase.
+        return self._no_change()
+
+    def update_from_dependencies(
+        self, ctx: DependencyContext, source_event: Any
+    ) -> FeatureUpdate:
+        """Compute a new value from dependency context.
+
+        Must be O(1).  Called by the engine in topological order after all
+        raw-event features have been updated for this event turn.
+        """
+        raise NotImplementedError  # pragma: no cover
+
+    def _dep_not_ready(self, dep_name: str, ts_ns: int) -> FeatureUpdate:
+        """Emit a dependency_not_ready value without touching internal state."""
+        fv = FeatureValue(
+            name=self._spec.name,
+            value=None,
+            is_ready=False,
+            source_event_time_ns=ts_ns,
+            update_status="dependency_not_ready",
+            reason=f"Dependency {dep_name!r} is not ready",
+        )
+        return FeatureUpdate(value=fv, triggered=False)
+
+
+# ---------------------------------------------------------------------------
+# Concrete derived feature classes
+# ---------------------------------------------------------------------------
+
+class RatioDerivedFeature(_AbstractDerivedFeature):
+    """ratio: value(depends_on[0]) / value(depends_on[1]).
+
+    ``depends_on`` must list exactly two names: [numerator, denominator].
+    Emits ``dependency_not_ready`` when either dep is not ready.
+    Emits ``dependency_not_ready`` (reason: denominator zero) when denom == 0.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        deps = list(spec.depends_on)
+        if len(deps) != 2:
+            raise ValueError(
+                f"RatioDerivedFeature {spec.name!r}: depends_on must have exactly 2 entries "
+                f"[numerator, denominator], got {deps!r}"
+            )
+        self._dep0 = deps[0]
+        self._dep1 = deps[1]
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update_from_dependencies(
+        self, ctx: DependencyContext, source_event: Any
+    ) -> FeatureUpdate:
+        ts_ns = _ts_ns(source_event, self._spec.trigger.time_semantics)
+        if not ctx.is_ready(self._dep0):
+            return self._dep_not_ready(self._dep0, ts_ns)
+        if not ctx.is_ready(self._dep1):
+            return self._dep_not_ready(self._dep1, ts_ns)
+        numer = ctx.value(self._dep0)
+        denom = ctx.value(self._dep1)
+        if denom == 0.0:
+            fv = FeatureValue(
+                name=self._spec.name,
+                value=None,
+                is_ready=False,
+                source_event_time_ns=ts_ns,
+                update_status="dependency_not_ready",
+                reason="Denominator is zero",
+            )
+            return FeatureUpdate(value=fv, triggered=False)
+        result = numer / denom
+        return self._emit(result, True, True, source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+
+
+class DifferenceDerivedFeature(_AbstractDerivedFeature):
+    """difference: value(depends_on[0]) - value(depends_on[1]).
+
+    ``depends_on`` must list exactly two names: [minuend, subtrahend].
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        deps = list(spec.depends_on)
+        if len(deps) != 2:
+            raise ValueError(
+                f"DifferenceDerivedFeature {spec.name!r}: depends_on must have exactly 2 "
+                f"entries [minuend, subtrahend], got {deps!r}"
+            )
+        self._dep0 = deps[0]
+        self._dep1 = deps[1]
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update_from_dependencies(
+        self, ctx: DependencyContext, source_event: Any
+    ) -> FeatureUpdate:
+        ts_ns = _ts_ns(source_event, self._spec.trigger.time_semantics)
+        for dep in (self._dep0, self._dep1):
+            if not ctx.is_ready(dep):
+                return self._dep_not_ready(dep, ts_ns)
+        result = ctx.value(self._dep0) - ctx.value(self._dep1)
+        return self._emit(result, True, True, source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+
+
+class SumDerivedFeature(_AbstractDerivedFeature):
+    """sum: sum of all dependency values. All deps must be ready.
+
+    ``depends_on`` must list at least one name.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._deps = list(spec.depends_on)
+        if not self._deps:
+            raise ValueError(
+                f"SumDerivedFeature {spec.name!r}: depends_on must be non-empty"
+            )
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update_from_dependencies(
+        self, ctx: DependencyContext, source_event: Any
+    ) -> FeatureUpdate:
+        ts_ns = _ts_ns(source_event, self._spec.trigger.time_semantics)
+        for dep in self._deps:
+            if not ctx.is_ready(dep):
+                return self._dep_not_ready(dep, ts_ns)
+        result = sum(ctx.value(d) for d in self._deps)
+        return self._emit(result, True, True, source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+
+
+class ProductDerivedFeature(_AbstractDerivedFeature):
+    """product: product of all dependency values. All deps must be ready.
+
+    ``depends_on`` must list at least one name.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._deps = list(spec.depends_on)
+        if not self._deps:
+            raise ValueError(
+                f"ProductDerivedFeature {spec.name!r}: depends_on must be non-empty"
+            )
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update_from_dependencies(
+        self, ctx: DependencyContext, source_event: Any
+    ) -> FeatureUpdate:
+        ts_ns = _ts_ns(source_event, self._spec.trigger.time_semantics)
+        for dep in self._deps:
+            if not ctx.is_ready(dep):
+                return self._dep_not_ready(dep, ts_ns)
+        result = 1.0
+        for dep in self._deps:
+            result *= ctx.value(dep)
+        return self._emit(result, True, True, source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)

@@ -59,6 +59,7 @@ from typing import Any, Iterable
 from nautilus_ext.features.compute.backend import BackendRegistry, build_default_registry
 from nautilus_ext.features.compute.clock import Clock, SystemClock
 from nautilus_ext.features.compute.feature_base import FeatureBase
+from nautilus_ext.features.compute.features import DependencyContext
 from nautilus_ext.features.compute.spec import FeatureSnapshot, FeatureSpec, FeatureValue
 from nautilus_ext.features.compute.timestamps import (
     EventTimestamps,
@@ -77,6 +78,7 @@ _EVENT_TYPE_MAP: dict[str, str] = {
     "quote": "quote",
     "book_delta": "book_delta",
     "timer": "timer",
+    "derived": "derived",      # reserved for derived (feature-to-feature) specs
     # Vendor / legacy aliases
     "trade_tick": "trade",
     "quote_tick": "quote",
@@ -172,6 +174,20 @@ def _validate_spec_list(specs: list[FeatureSpec], registry: BackendRegistry) -> 
                 f"FeatureSpec {spec.name!r}: backend {spec.backend!r} is not "
                 f"registered. Available backends: {sorted(registered)}"
             )
+
+    # Second pass: validate depends_on (requires all names to be known)
+    for spec in specs:
+        for dep in spec.depends_on:
+            if dep == spec.name:
+                raise ValueError(
+                    f"FeatureSpec {spec.name!r}: self-dependency not allowed "
+                    f"(depends_on contains {dep!r})."
+                )
+            if dep not in seen:
+                raise ValueError(
+                    f"FeatureSpec {spec.name!r}: unknown dependency {dep!r} in "
+                    f"depends_on. Known feature names: {sorted(seen)}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +302,10 @@ class SpecFeatureEngine:
         self._profile_skip_count: dict[str, int] = {}
         self._profile_late_drop_count: dict[str, int] = {}
         self._profile_last_status: dict[str, str | None] = {}
+        # Dependency graph state — populated by _build_dependency_graph()
+        self._raw_features: dict[str, FeatureBase] = {}
+        self._derived_names: list[str] = []          # topo-sorted derived feature names
+        self._dep_graph: dict[str, list[str]] = {}   # name -> direct dep names (derived only)
         self._build()
         if profile:
             self._profile_update_count = {n: 0 for n in self._features}
@@ -297,7 +317,70 @@ class SpecFeatureEngine:
         _validate_spec_list(self._specs, self._registry)
         for spec in self._specs:
             self._features[spec.name] = self._registry.create_feature(spec)
-        log.debug("SpecFeatureEngine: built %d features", len(self._features))
+        self._build_dependency_graph()
+        log.debug(
+            "SpecFeatureEngine: built %d features (%d raw, %d derived)",
+            len(self._features), len(self._raw_features), len(self._derived_names),
+        )
+
+    def _build_dependency_graph(self) -> None:
+        """Separate raw from derived features; validate and topologically sort derived ones.
+
+        Populates ``_raw_features``, ``_dep_graph``, and ``_derived_names`` (topo order).
+
+        Raises ``ValueError`` on:
+        - Self-dependency (caught earlier in _validate_spec_list, re-checked here).
+        - Unknown dependency name (same).
+        - Circular dependency (detected here via DFS colouring).
+        """
+        self._raw_features = {}
+        self._dep_graph = {}
+
+        for name, feature in self._features.items():
+            deps = list(feature.spec.depends_on)
+            if deps:
+                self._dep_graph[name] = deps
+            else:
+                self._raw_features[name] = feature
+
+        self._derived_names = self._topo_sort()
+
+    def _topo_sort(self) -> list[str]:
+        """Return derived feature names in topological order (deps before dependents).
+
+        Uses iterative DFS with three-colour marking to detect cycles.
+
+        White (0) = not visited, Gray (1) = on the current DFS stack, Black (2) = done.
+        """
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color: dict[str, int] = {n: WHITE for n in self._dep_graph}
+        result: list[str] = []
+
+        def visit(node: str, stack: list[str]) -> None:
+            if color[node] == BLACK:
+                return
+            if color[node] == GRAY:
+                # Reconstruct cycle for the error message
+                cycle_start = stack.index(node)
+                cycle = stack[cycle_start:] + [node]
+                raise ValueError(
+                    f"Circular dependency detected in feature graph: "
+                    f"{' -> '.join(cycle)}"
+                )
+            color[node] = GRAY
+            stack.append(node)
+            for dep in self._dep_graph.get(node, []):
+                if dep in color:          # only recurse into other derived features
+                    visit(dep, stack)
+            stack.pop()
+            color[node] = BLACK
+            result.append(node)
+
+        for node in self._dep_graph:
+            if color[node] == WHITE:
+                visit(node, [])
+
+        return result  # deps before dependents
 
     # ------------------------------------------------------------------
     # Watermark helpers
@@ -336,15 +419,23 @@ class SpecFeatureEngine:
     def on_event(self, event: Any) -> FeatureSnapshot:
         """Process one live market event and return a FeatureSnapshot.
 
-        Steps:
-        1. Extract EventTimestamps (event_time_ns, receive_time_ns).
-        2. Optionally stamp process_time_ns via clock.now_ns().
-        3. Advance the per-stream watermark (instrument + type + source).
-        4. For each matching feature:
-           a. Select the trigger timestamp per time_semantics.
-           b. Check per-feature lateness against the stream watermark.
-           c. Dispatch to feature.update() or _handle_late().
-        5. Return FeatureSnapshot with all three timestamps.
+        Two-phase update
+        ----------------
+        Phase 1 — raw features:
+            Each feature whose ``input_type`` matches the event's type is
+            updated.  Features that do not match return their cached value.
+            Late-event policy is applied per feature.  Updated features are
+            added to the ``dirty`` set.
+
+        Phase 2 — derived features (topological order):
+            For each derived feature (``depends_on`` non-empty), the engine
+            checks whether any direct dependency is dirty.  If so, the feature
+            is updated via ``update_from_dependencies(ctx, event)``; otherwise
+            the cached value is returned.  The ``DependencyContext`` holds a
+            live reference to the values dict and is updated in-place, so each
+            derived feature sees the latest values of all previously computed
+            features (current-value semantics).  Dirty is propagated upward so
+            multi-level chains (A → B → C) work correctly.
         """
         ts = extract_timestamps(event, self._ts_config, is_live=self._is_live_mode)
         process_time_ns: int | None = (
@@ -365,7 +456,12 @@ class SpecFeatureEngine:
         watermark.update(ts.event_time_ns)
 
         values: dict[str, FeatureValue] = {}
-        for name, feature in self._features.items():
+        dirty: set[str] = set()   # names updated (processed) this event turn
+
+        # ----------------------------------------------------------------
+        # Phase 1: raw features
+        # ----------------------------------------------------------------
+        for name, feature in self._raw_features.items():
             # Route by input_type: skip features not matching this event
             if input_type is not None and feature.spec.input_type != input_type:
                 values[name] = feature.value
@@ -391,11 +487,41 @@ class SpecFeatureEngine:
             else:
                 update = feature.update(event)
                 values[name] = update.value
+                dirty.add(name)
                 if self._profile:
                     status = update.value.update_status
                     if status == "updated":
                         self._profile_update_count[name] += 1
                     elif status in ("not_ready", "skipped_missing_field"):
+                        self._profile_skip_count[name] += 1
+                    self._profile_last_status[name] = status
+
+        # ----------------------------------------------------------------
+        # Phase 2: derived features in topological order
+        # ----------------------------------------------------------------
+        if self._derived_names:
+            # DependencyContext holds a live reference; in-place updates to
+            # `values` are immediately visible to downstream derived features.
+            ctx = DependencyContext(values)
+            for name in self._derived_names:
+                feature = self._features[name]
+                deps = self._dep_graph.get(name, [])
+
+                # Only trigger if at least one dep was updated this event turn
+                if not any(d in dirty for d in deps):
+                    values[name] = feature.value   # return cached, no change
+                    continue
+
+                update = feature.update_from_dependencies(ctx, event)  # type: ignore[attr-defined]
+                values[name] = update.value
+                dirty.add(name)   # propagate dirty upward for multi-level chains
+
+                if self._profile:
+                    status = update.value.update_status
+                    if status == "updated":
+                        self._profile_update_count[name] += 1
+                    elif status in ("not_ready", "dependency_not_ready",
+                                    "skipped_missing_field"):
                         self._profile_skip_count[name] += 1
                     self._profile_last_status[name] = status
 
@@ -618,7 +744,12 @@ class SpecFeatureEngine:
     # ------------------------------------------------------------------
 
     def _route_warmup(self, event: Any) -> None:
-        """Update all matching features during warmup (no late event check)."""
+        """Update all matching features during warmup (no late event check).
+
+        Same two-phase approach as on_event():
+        1. Update raw features that match the event's input_type.
+        2. Update derived features in topological order if any dep is dirty.
+        """
         ts = extract_timestamps(event, self._ts_config, is_live=False)
         input_type = _input_type_for(event)
         instrument_id = _extract_instrument_id(event)
@@ -629,9 +760,30 @@ class SpecFeatureEngine:
             source=source,
         )
         self._get_watermark(stream_key).update(ts.event_time_ns)
-        for feature in self._features.values():
+
+        dirty: set[str] = set()
+
+        # Phase 1: raw features
+        for name, feature in self._raw_features.items():
             if input_type is None or feature.spec.input_type == input_type:
                 feature.update(event)
+                dirty.add(name)
+
+        # Phase 2: derived features in topological order
+        if dirty and self._derived_names:
+            # Build a values dict from post-update raw feature state; pre-populate
+            # derived feature cached values so multi-level lookups work correctly.
+            values: dict[str, FeatureValue] = {n: f.value for n, f in self._raw_features.items()}
+            for n in self._derived_names:
+                values[n] = self._features[n].value   # start from cached
+            ctx = DependencyContext(values)
+            for name in self._derived_names:
+                feature = self._features[name]
+                deps = self._dep_graph.get(name, [])
+                if any(d in dirty for d in deps):
+                    update = feature.update_from_dependencies(ctx, event)  # type: ignore[attr-defined]
+                    values[name] = update.value
+                    dirty.add(name)
 
     def _handle_late(
         self,

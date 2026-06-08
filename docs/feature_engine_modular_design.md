@@ -1183,3 +1183,241 @@ The engine, adapters, and snapshot form a stable abstraction boundary.  All thre
 layers can evolve independently: the data feed can change connectors, the engine can
 swap backends, and the strategy can be rewritten — as long as `FeatureSpec` and
 `FeatureSnapshot` remain stable, nothing else in the chain needs to change.
+
+---
+
+## §29 Feature-to-Feature Dependencies — Design Rationale
+
+Some features are not computed directly from raw market event fields. They depend
+on previously-computed feature values:
+
+- `realized_volatility_60` depends on `log_return_close`
+- `spread_ratio` depends on `spread` and `mid_price`
+- `zscore` depends on `rolling_mean` and `rolling_std`
+
+### Why not let features call engine.get()
+
+Feature implementations must **not** call `engine.get()` or access other feature
+instances directly. Doing so would:
+
+1. Make update order implicit (the called feature may not yet be updated).
+2. Create hidden coupling (graph is invisible to the engine; impossible to reorder).
+3. Make cycle detection impossible (A calls B which calls A → infinite recursion).
+
+The explicit `depends_on` field in `FeatureSpec` solves all three problems:
+the engine owns the dependency graph, can validate it, detect cycles, and enforce
+topological update order.
+
+---
+
+## §30 FeatureSpec.depends_on Field
+
+```python
+@dataclass(frozen=True)
+class FeatureSpec:
+    name: str
+    input_type: str = "bar"
+    # ... existing fields ...
+    depends_on: tuple[str, ...] = ()
+```
+
+Rules:
+- If `depends_on` is empty: the spec describes a **raw** feature that subscribes
+  to market events by `input_type`.
+- If `depends_on` is non-empty: the spec describes a **derived** feature that is
+  computed from other features, not directly from raw events.
+- Every name in `depends_on` must refer to another feature registered in the same
+  engine instance. Unknown names raise `ValueError` at engine init.
+- Self-reference (`spec.name in spec.depends_on`) raises `ValueError`.
+- Circular dependencies (A → B → A) raise `ValueError` with the cycle printed.
+- Use `input_type = "derived"` to make derived specs explicit; any `input_type`
+  is accepted for derived features (the `depends_on` field is the canonical indicator).
+
+---
+
+## §31 Dependency Graph Construction
+
+`SpecFeatureEngine._build()` calls `_build_dependency_graph()` after creating
+all feature instances:
+
+```
+_validate_spec_list()       # checks depends_on names exist, no self-dep
+_build_dependency_graph()   # separates raw from derived, topo sorts
+  → _raw_features            # dict[str, FeatureBase] — no depends_on
+  → _dep_graph               # dict[str, list[str]]   — direct deps per derived feature
+  → _derived_names           # list[str]              — topo-sorted derived names
+```
+
+`_topo_sort()` uses iterative DFS with three-colour marking (white/gray/black).
+The cycle error includes the full cycle path:
+
+```
+ValueError: Circular dependency detected in feature graph: A -> B -> C -> A
+```
+
+Topological order guarantees: if feature B depends on feature A, A appears before
+B in `_derived_names`. This holds for chains of arbitrary depth.
+
+---
+
+## §32 Topological Update Order and Two-Phase on_event()
+
+Each call to `on_event(event)` has two phases:
+
+### Phase 1 — Raw features
+```python
+for name, feature in self._raw_features.items():
+    if feature.spec.input_type != event_input_type:
+        values[name] = feature.value   # cached — event not for this type
+        continue
+    update = feature.update(event)
+    values[name] = update.value
+    dirty.add(name)
+```
+
+### Phase 2 — Derived features (topological order)
+```python
+ctx = DependencyContext(values)        # live reference; in-place updates visible
+for name in self._derived_names:       # deps before dependents
+    if not any(d in dirty for d in deps[name]):
+        values[name] = feature.value   # no dep dirty, return cached
+        continue
+    update = feature.update_from_dependencies(ctx, event)
+    values[name] = update.value
+    dirty.add(name)                    # propagate dirty upward
+```
+
+`DependencyContext` holds a **live reference** to `values`. Each derived feature
+that writes `values[name]` immediately makes its value visible to downstream
+derived features — this is what enables multi-level chains to work with a single
+context object.
+
+---
+
+## §33 Current-Value Semantics
+
+For the current implementation, derived features use **current-value semantics**:
+
+> If features A and B are both affected by event_t, and B depends on A, then
+> B sees A's value **after** A was updated on event_t.
+
+This is a consequence of processing in topological order. There is no previous-
+value dependency mode in v1.
+
+---
+
+## §34 Latest-Ready Dependency Policy
+
+If a dependency feature did **not** update on the current event (e.g., a bar
+feature when the event is a quote), the derived feature may still use its
+**latest ready cached value**:
+
+```
+scenario:
+  mean_bar  — updated on bar events only
+  spread    — updated on quote events only
+  ratio     — depends_on=("mean_bar", "spread"), input_type="derived"
+
+event: quote arrives at t=5
+  Phase 1: spread updated → spread dirty
+  Phase 2: ratio deps check → spread ∈ dirty → trigger ratio
+           ctx.value("mean_bar") → latest cached value from last bar event
+           ratio computes using current spread + cached mean_bar ✓
+```
+
+This is the default and only supported dependency policy in v1. Complex same-event
+cross-frequency synchronization is out of scope.
+
+---
+
+## §35 DependencyContext
+
+```python
+class DependencyContext:
+    """Read-only view passed to derived features instead of raw market events."""
+
+    def value(self, name: str) -> float | int | bool | None: ...
+    def get(self, name: str) -> FeatureValue | None: ...
+    def is_ready(self, name: str) -> bool: ...
+    def all_ready(self, names: list[str]) -> bool: ...
+```
+
+Derived feature implementations call `ctx.value("dep_name")`, `ctx.is_ready("dep_name")`,
+etc. They must not reach into the engine via any other path.
+
+---
+
+## §36 Derived Feature Classes (v1)
+
+Four built-in derived feature types (all in `nautilus_ext.features.compute.features`):
+
+| `params["type"]` | `depends_on` arity | Formula |
+|------------------|--------------------|---------|
+| `"ratio"`        | exactly 2          | dep[0] / dep[1] |
+| `"difference"`   | exactly 2          | dep[0] − dep[1] |
+| `"sum"`          | ≥ 1                | Σ dep[i] |
+| `"product"`      | ≥ 1                | Π dep[i] |
+
+All four:
+- Inherit from `_AbstractDerivedFeature` which inherits from `_AbstractFeature`.
+- Implement `update_from_dependencies(ctx, source_event)` (called by engine).
+- Return `FeatureValue(update_status="dependency_not_ready")` when any dep is not
+  ready (no crash; `value=None, is_ready=False`).
+- Are registered in `_FEATURE_CLASSES` in `backend.py` and created via the normal
+  `PythonBackend.create_feature(spec)` dispatch.
+
+### Example
+
+```python
+from nautilus_ext.features.compute.spec import FeatureSpec
+from nautilus_ext.features.compute.engine import SpecFeatureEngine
+
+specs = [
+    FeatureSpec("spread",       input_type="quote",   params={"type": "spread"}),
+    FeatureSpec("mid",          input_type="quote",   params={"type": "mid_price"}),
+    FeatureSpec("spread_ratio", input_type="derived",
+                depends_on=("spread", "mid"), params={"type": "ratio"}),
+]
+engine = SpecFeatureEngine(specs, stamp_process_time=False)
+snap = engine.on_event(quote_event)
+print(snap.value("spread_ratio"))   # spread / mid_price
+```
+
+---
+
+## §37 update_status Values for Derived Features
+
+| `update_status` | Meaning |
+|-----------------|---------|
+| `"updated"` | All deps ready; new value computed. |
+| `"dependency_not_ready"` | At least one dep is not ready; `value=None, is_ready=False`. |
+| `"not_ready"` | Internal rolling state not filled (if any). |
+
+`FeatureSnapshot.statuses()` returns the `update_status` for every feature
+including derived ones. `profile_summary()` includes `update_count`, `skip_count`,
+`late_drop_count`, and `last_status` for derived features.
+
+---
+
+## §38 v1 Limitations
+
+The following are **intentionally out of scope** for this first implementation:
+
+1. **No expression parser.** Arbitrary formula strings like `"(A + B) / C"` are not
+   supported. Compose primitive derived features instead.
+2. **No previous-value dependency mode.** B always sees A's value from the same event,
+   not from the previous event. This may change in a future version.
+3. **No complex cross-frequency synchronization.** Mixed-frequency chains use the
+   latest-ready policy; there is no per-event alignment or interpolation.
+4. **No rolling-window-over-dependency feature.** A dedicated `rolling_std_of_dep`
+   derived type (accumulating a dependency's history) is not yet implemented.
+5. **No partial-update semantics.** If any dep of a derived feature returns
+   `"dependency_not_ready"`, the entire derived feature returns `None`. There is no
+   "use last known value" fallback per dependency.
+
+Hot-path constraints are fully preserved:
+- No pandas.
+- No DataFrame recomputation.
+- No full-history scans in `on_event()`.
+- No sorting inside `on_event()`.
+- Per-event complexity: O(n\_raw\_features\_matching\_type + n\_dirty\_derived\_features).

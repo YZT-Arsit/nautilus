@@ -2611,15 +2611,26 @@ class TestBackendDispatchHardening:
     def test_dispatch_is_deterministic_for_all_registered_types(self):
         """Every key in _FEATURE_CLASSES resolves to the correct class."""
         from nautilus_ext.features.compute.backend import _FEATURE_CLASSES
+        # Derived types require at least one entry in depends_on — supply a minimal valid tuple.
+        _DERIVED_TYPES = {"ratio", "difference", "sum", "product"}
         registry = build_default_registry()
         for type_key, expected_cls in _FEATURE_CLASSES.items():
-            spec = FeatureSpec(
-                name=f"test_{type_key}",
-                input_type="bar",
-                input_field="close",
-                window=3,
-                params={"type": type_key},
-            )
+            if type_key in _DERIVED_TYPES:
+                dep_tuple = ("x", "y") if type_key in ("ratio", "difference") else ("x",)
+                spec = FeatureSpec(
+                    name=f"test_{type_key}",
+                    input_type="derived",
+                    depends_on=dep_tuple,
+                    params={"type": type_key},
+                )
+            else:
+                spec = FeatureSpec(
+                    name=f"test_{type_key}",
+                    input_type="bar",
+                    input_field="close",
+                    window=3,
+                    params={"type": type_key},
+                )
             feat = registry.create_feature(spec)
             assert isinstance(feat, expected_cls), (
                 f"type_key={type_key!r} produced {type(feat).__name__}, "
@@ -3925,3 +3936,550 @@ class TestStrategyIntegrationExample:
             snap = eng.on_event(b)
         assert isinstance(snap, FeatureSnapshot)
         assert snap.value("m3") is not None
+
+
+# ===========================================================================
+# Feature-to-feature dependencies
+# ===========================================================================
+
+class TestFeatureDependencies:
+    """Tests for the feature dependency mechanism (depends_on in FeatureSpec).
+
+    Covers:
+    - Validation at engine init (unknown dep, self-dep, cycles)
+    - Simple A->B chain (ratio, difference, sum, product)
+    - Multi-level A->B->C chain
+    - Current-value semantics: B sees A updated on the same event
+    - Latest-ready semantics across mixed event types
+    - Dirty propagation: unrelated derived features are not updated
+    - dependency_not_ready status
+    - Topological update order
+    - Warmup integration
+    - FeatureSnapshot includes derived features
+    - State dict round-trip for derived features
+    - Profile covers derived features
+    - No backend imports needed for strategy
+    """
+
+    # ----------------------------------------------------------------
+    # Helpers
+    # ----------------------------------------------------------------
+
+    def _bar(self, close=100.0, ts_ns=1_000_000_000, open=100.0, high=101.0,
+             low=99.0, volume=1000.0):
+        from nautilus_ext.features.compute.adapters import BarMarketEvent
+        return BarMarketEvent(
+            instrument_id="X", open=open, high=high, low=low,
+            close=close, volume=volume, event_type="bar", event_time_ns=ts_ns,
+        )
+
+    def _quote(self, bid=100.0, ask=100.2, ts_ns=1_000_000_000):
+        from nautilus_ext.features.compute.adapters import QuoteMarketEvent
+        return QuoteMarketEvent(
+            instrument_id="X", bid_price=bid, ask_price=ask,
+            bid_size=10.0, ask_size=10.0, event_type="quote", event_time_ns=ts_ns,
+        )
+
+    def _engine(self, specs):
+        return SpecFeatureEngine(specs, stamp_process_time=False)
+
+    # ----------------------------------------------------------------
+    # Validation at engine init
+    # ----------------------------------------------------------------
+
+    def test_unknown_dependency_raises_at_init(self):
+        """SpecFeatureEngine rejects depends_on referencing an unknown feature name."""
+        specs = [
+            FeatureSpec("A", input_type="derived", depends_on=("DOES_NOT_EXIST",),
+                        params={"type": "sum"}),
+        ]
+        with pytest.raises(ValueError, match="unknown dependency"):
+            self._engine(specs)
+
+    def test_self_dependency_raises_at_init(self):
+        """Self-dependency (feature depends on itself) raises ValueError."""
+        specs = [
+            FeatureSpec("A", input_type="derived", depends_on=("A",),
+                        params={"type": "sum"}),
+        ]
+        with pytest.raises(ValueError, match="self-dependency"):
+            self._engine(specs)
+
+    def test_cycle_two_features_raises(self):
+        """Two-node cycle A->B->A raises ValueError with cycle info."""
+        raw = FeatureSpec("raw", input_type="bar", input_field="close",
+                          window=2, params={"type": "rolling_mean"})
+        A = FeatureSpec("A", input_type="derived", depends_on=("raw", "B"),
+                        params={"type": "sum"})
+        B = FeatureSpec("B", input_type="derived", depends_on=("raw", "A"),
+                        params={"type": "sum"})
+        with pytest.raises(ValueError, match="Circular dependency"):
+            self._engine([raw, A, B])
+
+    def test_cycle_three_features_raises(self):
+        """Three-node cycle A->B->C->A raises ValueError."""
+        raw = FeatureSpec("raw", input_type="bar", input_field="close",
+                          window=2, params={"type": "rolling_mean"})
+        A = FeatureSpec("A", input_type="derived", depends_on=("raw", "C"),
+                        params={"type": "sum"})
+        B = FeatureSpec("B", input_type="derived", depends_on=("raw", "A"),
+                        params={"type": "sum"})
+        C = FeatureSpec("C", input_type="derived", depends_on=("raw", "B"),
+                        params={"type": "sum"})
+        with pytest.raises(ValueError, match="Circular dependency"):
+            self._engine([raw, A, B, C])
+
+    def test_valid_spec_builds_without_error(self):
+        """A straightforward ratio of spread/mid builds without exceptions."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+        ]
+        engine = self._engine(specs)
+        assert "ratio" in engine.feature_names()
+
+    # ----------------------------------------------------------------
+    # Simple A -> B chains
+    # ----------------------------------------------------------------
+
+    def test_ratio_derived_feature(self):
+        """ratio feature correctly computes value(dep0) / value(dep1)."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+        ]
+        engine = self._engine(specs)
+        snap = engine.on_event(self._quote(bid=100.0, ask=100.4, ts_ns=_s(1)))
+        # spread = 0.4, mid = 100.2
+        expected = 0.4 / 100.2
+        assert abs(snap.value("ratio") - expected) < 1e-10
+
+    def test_difference_derived_feature(self):
+        """difference feature correctly computes value(dep0) - value(dep1)."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("diff",   input_type="derived", depends_on=("mid", "spread"),
+                        params={"type": "difference"}),
+        ]
+        engine = self._engine(specs)
+        snap = engine.on_event(self._quote(bid=100.0, ask=100.4, ts_ns=_s(1)))
+        # mid = 100.2, spread = 0.4; diff = 100.2 - 0.4 = 99.8
+        assert abs(snap.value("diff") - 99.8) < 1e-10
+
+    def test_sum_derived_feature(self):
+        """sum feature correctly sums all dependency values."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("s",      input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "sum"}),
+        ]
+        engine = self._engine(specs)
+        snap = engine.on_event(self._quote(bid=100.0, ask=100.4, ts_ns=_s(1)))
+        assert abs(snap.value("s") - (0.4 + 100.2)) < 1e-10
+
+    def test_product_derived_feature(self):
+        """product feature correctly multiplies all dependency values."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("p",      input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "product"}),
+        ]
+        engine = self._engine(specs)
+        snap = engine.on_event(self._quote(bid=100.0, ask=100.4, ts_ns=_s(1)))
+        # spread ≈ 0.4, mid = 100.2; product ≈ 40.08
+        assert abs(snap.value("p") - 0.4 * 100.2) < 1e-8
+
+    # ----------------------------------------------------------------
+    # Multi-level dependency A -> B -> C
+    # ----------------------------------------------------------------
+
+    def test_multilevel_dependency_chain(self):
+        """Three-level chain A->B->C produces correct values with topo update order."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+            FeatureSpec("doubled", input_type="derived", depends_on=("ratio", "ratio"),
+                        params={"type": "sum"}),
+        ]
+        engine = self._engine(specs)
+        assert engine._derived_names == ["ratio", "doubled"]  # topo order
+
+        snap = engine.on_event(self._quote(bid=100.0, ask=100.4, ts_ns=_s(1)))
+        ratio_val = snap.value("ratio")
+        doubled_val = snap.value("doubled")
+        assert ratio_val is not None
+        assert abs(doubled_val - 2 * ratio_val) < 1e-12
+
+    def test_deterministic_topological_order(self):
+        """Engine stores derived feature names in dep-before-dependent order."""
+        raw = FeatureSpec("raw", input_type="bar", input_field="close", window=2,
+                          params={"type": "rolling_mean"})
+        B = FeatureSpec("B", input_type="derived", depends_on=("raw",),
+                        params={"type": "sum"})
+        C = FeatureSpec("C", input_type="derived", depends_on=("B",),
+                        params={"type": "sum"})
+        engine = self._engine([raw, B, C])
+        names = engine._derived_names
+        assert names.index("B") < names.index("C")
+
+    # ----------------------------------------------------------------
+    # Current-value semantics
+    # ----------------------------------------------------------------
+
+    def test_current_value_semantics_b_sees_a_updated_same_event(self):
+        """B sees A's value from event_t, not A's previous cached value."""
+        # Build: mean2 (bar, window=2), doubled = sum(mean2, mean2)
+        specs = [
+            FeatureSpec("mean2", input_type="bar", input_field="close", window=2,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec("doubled", input_type="derived", depends_on=("mean2", "mean2"),
+                        params={"type": "sum"}),
+        ]
+        engine = self._engine(specs)
+        snap1 = engine.on_event(self._bar(close=100.0, ts_ns=_s(1)))
+        snap2 = engine.on_event(self._bar(close=102.0, ts_ns=_s(2)))
+        # mean2 is ready after 2 bars: mean = (100+102)/2 = 101
+        assert snap2.is_ready("mean2")
+        mean_val = snap2.value("mean2")
+        doubled_val = snap2.value("doubled")
+        # doubled should use the CURRENT mean2 value (101), not the previous None
+        assert doubled_val is not None
+        assert abs(doubled_val - 2 * mean_val) < 1e-12
+
+    # ----------------------------------------------------------------
+    # dependency_not_ready status
+    # ----------------------------------------------------------------
+
+    def test_dependency_not_ready_when_dep_not_warmed_up(self):
+        """Derived feature emits dependency_not_ready while a dep is still warming up."""
+        specs = [
+            FeatureSpec("mean5", input_type="bar", input_field="close", window=5,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("mean5", "spread"),
+                        params={"type": "ratio"}),
+        ]
+        engine = self._engine(specs)
+        # 1 bar (mean5 not ready) then 1 quote
+        engine.on_event(self._bar(close=100.0, ts_ns=_s(1)))
+        snap_q = engine.on_event(self._quote(bid=100.0, ask=100.2, ts_ns=_s(2)))
+
+        assert not snap_q.is_ready("ratio")
+        fv = snap_q.get("ratio")
+        assert fv.update_status == "dependency_not_ready"
+        assert "mean5" in fv.reason
+
+    def test_dependency_not_ready_does_not_crash(self):
+        """No exception is raised when a dependency is not ready."""
+        specs = [
+            FeatureSpec("mean3", input_type="bar", input_field="close", window=3,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec("doubled", input_type="derived", depends_on=("mean3",),
+                        params={"type": "sum"}),
+        ]
+        engine = self._engine(specs)
+        # Feed only 2 bars (mean3 needs 3)
+        for i in range(1, 3):
+            snap = engine.on_event(self._bar(close=float(i) * 100.0, ts_ns=_s(i)))
+        # Should not raise, derived returns dependency_not_ready
+        assert snap.get("doubled").update_status == "dependency_not_ready"
+
+    # ----------------------------------------------------------------
+    # Dirty propagation
+    # ----------------------------------------------------------------
+
+    def test_dirty_propagation_bar_event_does_not_update_quote_derived(self):
+        """Derived feature depending only on quote features is not updated by bar events."""
+        specs = [
+            FeatureSpec("mean3",  input_type="bar",     input_field="close", window=3,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec("spread", input_type="quote",   params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote",   params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+        ]
+        engine = self._engine(specs)
+
+        # Feed quote to make spread/mid ready, get ratio first value
+        snap_q = engine.on_event(self._quote(bid=100.0, ask=100.4, ts_ns=_s(1)))
+        ratio_after_q = snap_q.value("ratio")
+
+        # Now feed a bar event — ratio's deps (spread, mid) are NOT dirty
+        snap_bar = engine.on_event(self._bar(close=101.0, ts_ns=_s(2)))
+        ratio_after_bar = snap_bar.value("ratio")
+
+        # Ratio should return the same cached value (not recomputed from bar event)
+        assert ratio_after_bar == ratio_after_q
+
+    def test_dirty_propagation_quote_event_does_not_update_bar_derived(self):
+        """Derived feature depending only on bar features is not updated by quote events."""
+        specs = [
+            FeatureSpec("mean2",  input_type="bar",     input_field="close", window=2,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec("doubled", input_type="derived", depends_on=("mean2",),
+                        params={"type": "sum"}),
+        ]
+        engine = self._engine(specs)
+
+        # Warm up mean2 with 2 bars
+        engine.on_event(self._bar(close=100.0, ts_ns=_s(1)))
+        snap_bar = engine.on_event(self._bar(close=102.0, ts_ns=_s(2)))
+        doubled_after_bars = snap_bar.value("doubled")
+        assert doubled_after_bars is not None
+
+        # Quote event: mean2 not dirty → doubled not updated
+        snap_q = engine.on_event(self._quote(bid=100.0, ask=100.2, ts_ns=_s(3)))
+        doubled_after_q = snap_q.value("doubled")
+        assert doubled_after_q == doubled_after_bars   # cached, no update
+
+    # ----------------------------------------------------------------
+    # Latest-ready semantics (cross event-type)
+    # ----------------------------------------------------------------
+
+    def test_latest_ready_cross_type_ratio_updates_on_quote_event(self):
+        """Ratio of bar-feature / quote-feature updates when quote event arrives.
+
+        Latest-ready policy: mean5 (bar feature) was computed earlier; when a
+        quote event arrives and updates spread, the ratio should use mean5's
+        latest ready value.
+        """
+        specs = [
+            FeatureSpec("mean3",  input_type="bar",     input_field="close", window=3,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec("spread", input_type="quote",   params={"type": "spread"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("mean3", "spread"),
+                        params={"type": "ratio"}),
+        ]
+        engine = self._engine(specs)
+
+        # Warm up mean3 with 3 bars
+        for i in range(1, 4):
+            engine.on_event(self._bar(close=100.0, ts_ns=_s(i)))
+
+        # Quote event: spread becomes ready; ratio should compute using latest mean3
+        snap = engine.on_event(self._quote(bid=100.0, ask=100.4, ts_ns=_s(4)))
+        assert snap.is_ready("mean3")
+        assert snap.is_ready("spread")
+        assert snap.is_ready("ratio")
+        assert snap.value("ratio") is not None
+
+    # ----------------------------------------------------------------
+    # Snapshot includes derived features
+    # ----------------------------------------------------------------
+
+    def test_snapshot_includes_derived_features(self):
+        """FeatureSnapshot.values contains both raw and derived feature keys."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+        ]
+        engine = self._engine(specs)
+        snap = engine.on_event(self._quote(ts_ns=_s(1)))
+        assert "spread" in snap.values
+        assert "mid" in snap.values
+        assert "ratio" in snap.values
+        assert snap.is_ready("ratio")
+
+    def test_snapshot_ready_values_includes_ready_derived(self):
+        """ready_values() includes derived features that are ready."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+        ]
+        engine = self._engine(specs)
+        snap = engine.on_event(self._quote(ts_ns=_s(1)))
+        rv = snap.ready_values()
+        assert "ratio" in rv
+        assert rv["ratio"] is not None
+
+    # ----------------------------------------------------------------
+    # Warmup integration
+    # ----------------------------------------------------------------
+
+    def test_warmup_updates_derived_features(self):
+        """engine.warmup() correctly pre-heats derived features.
+
+        total = sum(mean3, mean3) has two identical deps → total == 2 * mean3.
+        """
+        specs = [
+            FeatureSpec("mean3",  input_type="bar",     input_field="close", window=3,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec("total",  input_type="derived", depends_on=("mean3", "mean3"),
+                        params={"type": "sum"}),
+        ]
+        engine = self._engine(specs)
+        # Warmup with 3 bars: close = 10, 20, 30 → mean3 = 20
+        warmup_bars = [self._bar(close=float(i+1)*10, ts_ns=_s(i+1)) for i in range(3)]
+        engine.warmup(warmup_bars)
+
+        # One more live bar: close = 40 → mean3 = (20+30+40)/3 = 30
+        snap = engine.on_event(self._bar(close=40.0, ts_ns=_s(10)))
+        assert snap.is_ready("mean3")
+        assert snap.is_ready("total")
+        mean_val = snap.value("mean3")
+        total_val = snap.value("total")
+        assert abs(total_val - 2 * mean_val) < 1e-12
+
+    # ----------------------------------------------------------------
+    # State dict round-trip
+    # ----------------------------------------------------------------
+
+    def test_derived_state_dict_round_trip(self):
+        """Derived feature state_dict / load_state_dict preserves readiness and value."""
+        from nautilus_ext.features.compute.features import RatioDerivedFeature
+        spec = FeatureSpec("r", input_type="derived",
+                           depends_on=("a", "b"), params={"type": "ratio"})
+        feat = RatioDerivedFeature(spec)
+        # Manually push a cached value via _emit
+        from nautilus_ext.features.compute.spec import FeatureValue
+        feat._cached = FeatureValue(name="r", value=1.23, is_ready=True)
+        state = feat.state_dict()
+        feat2 = RatioDerivedFeature(spec)
+        feat2.load_state_dict(state)
+        assert feat2._event_count == feat._event_count
+
+    # ----------------------------------------------------------------
+    # Profile covers derived features
+    # ----------------------------------------------------------------
+
+    def test_profile_covers_derived_features(self):
+        """profile_summary() includes derived feature counters."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+        ]
+        engine = SpecFeatureEngine(specs, stamp_process_time=False, profile=True)
+        engine.on_event(self._quote(ts_ns=_s(1)))
+        summary = engine.profile_summary()
+        assert summary["profile"] is True
+        assert "ratio" in summary["features"]
+        assert summary["features"]["ratio"]["update_count"] == 1
+        assert summary["features"]["ratio"]["last_status"] == "updated"
+
+    def test_profile_dependency_not_ready_counts_as_skip(self):
+        """dependency_not_ready events increment skip_count in profile."""
+        specs = [
+            FeatureSpec("mean5", input_type="bar", input_field="close", window=5,
+                        params={"type": "rolling_mean"}),
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("mean5", "spread"),
+                        params={"type": "ratio"}),
+        ]
+        engine = SpecFeatureEngine(specs, stamp_process_time=False, profile=True)
+        engine.on_event(self._bar(close=100.0, ts_ns=_s(1)))   # mean5 not ready
+        engine.on_event(self._quote(bid=100.0, ask=100.2, ts_ns=_s(2)))  # ratio not ready
+        summary = engine.profile_summary()
+        assert summary["features"]["ratio"]["skip_count"] >= 1
+        assert summary["features"]["ratio"]["last_status"] == "dependency_not_ready"
+
+    # ----------------------------------------------------------------
+    # Ratio denominator zero
+    # ----------------------------------------------------------------
+
+    def test_ratio_denominator_zero_emits_dependency_not_ready(self):
+        """RatioDerivedFeature emits dependency_not_ready when denominator is zero."""
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+        ]
+        engine = self._engine(specs)
+        # bid == ask → spread = 0 (zero denominator if used as dep1)
+        specs2 = [
+            FeatureSpec("spread2", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid2",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("r2",  input_type="derived", depends_on=("mid2", "spread2"),
+                        params={"type": "ratio"}),
+        ]
+        engine2 = self._engine(specs2)
+        snap = engine2.on_event(self._quote(bid=100.0, ask=100.0, ts_ns=_s(1)))
+        fv = snap.get("r2")
+        assert fv.update_status == "dependency_not_ready"
+        assert "zero" in fv.reason.lower()
+
+    # ----------------------------------------------------------------
+    # No backend imports needed for strategy
+    # ----------------------------------------------------------------
+
+    def test_strategy_accesses_derived_via_snapshot_only(self):
+        """Strategy code uses only FeatureSpec, FeatureSnapshot, SpecFeatureEngine."""
+        from nautilus_ext.features.compute.spec import FeatureSpec, FeatureSnapshot
+        from nautilus_ext.features.compute.engine import SpecFeatureEngine
+
+        specs = [
+            FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec("mid",    input_type="quote", params={"type": "mid_price"}),
+            FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
+                        params={"type": "ratio"}),
+        ]
+        from nautilus_ext.features.compute.adapters import QuoteMarketEvent
+        engine = SpecFeatureEngine(specs, stamp_process_time=False)
+        ev = QuoteMarketEvent(instrument_id="X", bid_price=100.0, ask_price=100.4,
+                              bid_size=10.0, ask_size=10.0, event_type="quote",
+                              event_time_ns=1_000_000_000)
+        snap = engine.on_event(ev)
+        assert isinstance(snap, FeatureSnapshot)
+        assert snap.is_ready("ratio")
+        assert snap.value("ratio") is not None
+
+    # ----------------------------------------------------------------
+    # DependencyContext unit tests
+    # ----------------------------------------------------------------
+
+    def test_dependency_context_value_returns_scalar(self):
+        """DependencyContext.value() returns the scalar of a ready FeatureValue."""
+        from nautilus_ext.features.compute.features import DependencyContext
+        from nautilus_ext.features.compute.spec import FeatureValue
+        fv = FeatureValue(name="a", value=3.14, is_ready=True)
+        ctx = DependencyContext({"a": fv})
+        assert ctx.value("a") == 3.14
+        assert ctx.value("missing") is None
+
+    def test_dependency_context_is_ready_reflects_fv_flag(self):
+        """DependencyContext.is_ready() reflects the is_ready flag of the FeatureValue."""
+        from nautilus_ext.features.compute.features import DependencyContext
+        from nautilus_ext.features.compute.spec import FeatureValue
+        ready = FeatureValue(name="a", value=1.0, is_ready=True)
+        not_ready = FeatureValue(name="b", value=None, is_ready=False)
+        ctx = DependencyContext({"a": ready, "b": not_ready})
+        assert ctx.is_ready("a") is True
+        assert ctx.is_ready("b") is False
+        assert ctx.is_ready("c") is False   # absent
+
+    def test_dependency_context_live_reference_reflects_updates(self):
+        """DependencyContext holds a live dict reference — mutations are visible."""
+        from nautilus_ext.features.compute.features import DependencyContext
+        from nautilus_ext.features.compute.spec import FeatureValue
+        values: dict = {}
+        ctx = DependencyContext(values)
+        assert ctx.is_ready("a") is False
+        fv = FeatureValue(name="a", value=42.0, is_ready=True)
+        values["a"] = fv
+        assert ctx.is_ready("a") is True
+        assert ctx.value("a") == 42.0
+
+    def test_dependency_context_all_ready(self):
+        """DependencyContext.all_ready() is True only when every listed dep is ready."""
+        from nautilus_ext.features.compute.features import DependencyContext
+        from nautilus_ext.features.compute.spec import FeatureValue
+        r = FeatureValue(name="a", value=1.0, is_ready=True)
+        nr = FeatureValue(name="b", value=None, is_ready=False)
+        ctx = DependencyContext({"a": r, "b": nr})
+        assert ctx.all_ready(["a"]) is True
+        assert ctx.all_ready(["a", "b"]) is False

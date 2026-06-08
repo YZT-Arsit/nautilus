@@ -17,7 +17,9 @@ PythonBackend
     Pure-Python implementation. Type dispatch via params["type"] first, then
     by name prefix (longest-match first). Implements: rolling_mean, rolling_std,
     rolling_min, rolling_max, rolling_sum, rolling_volume_sum, vwap,
-    simple_return, log_return, ewma, spread, mid_price, book_imbalance.
+    simple_return, log_return, ewma, spread, mid_price, book_imbalance,
+    realized_volatility; and derived (feature-to-feature) types: ratio,
+    difference, sum, product.
 
     Dispatch priority:
     1. params["type"] — explicit, always wins.
@@ -34,9 +36,12 @@ from typing import Protocol, runtime_checkable
 from nautilus_ext.features.compute.feature_base import FeatureBase
 from nautilus_ext.features.compute.features import (
     BookImbalanceFeature,
+    DifferenceDerivedFeature,
     EWMAFeature,
     LogReturnFeature,
     MidPriceFeature,
+    ProductDerivedFeature,
+    RatioDerivedFeature,
     RealizedVolatilityFeature,
     RollingMaxFeature,
     RollingMeanFeature,
@@ -46,6 +51,7 @@ from nautilus_ext.features.compute.features import (
     RollingVolumeSumFeature,
     SimpleReturnFeature,
     SpreadFeature,
+    SumDerivedFeature,
     VWAPFeature,
 )
 from nautilus_ext.features.compute.spec import FeatureSpec
@@ -83,6 +89,11 @@ _FEATURE_CLASSES: dict[str, type] = {
     "spread": SpreadFeature,
     "mid_price": MidPriceFeature,
     "book_imbalance": BookImbalanceFeature,
+    # Derived (feature-to-feature) types — require depends_on in FeatureSpec
+    "ratio": RatioDerivedFeature,
+    "difference": DifferenceDerivedFeature,
+    "sum": SumDerivedFeature,
+    "product": ProductDerivedFeature,
 }
 
 # Sorted longest-first to avoid prefix ambiguity (e.g. "rolling_std" vs "rolling_std_dev")
