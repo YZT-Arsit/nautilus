@@ -906,3 +906,280 @@ the three counter dicts remain empty — zero memory overhead and zero hot-path 
 events are not counted in `update_count` or `skip_count`.  Only features that explicitly
 set `update_status` (currently `RollingSumFeature` and subclasses) contribute to these
 counters.  Warmup events are excluded — counters only reflect `on_event()` calls.
+
+As of Session 5, `profile_summary()` also includes `last_status` per feature — a string
+reflecting the `update_status` of the most recent `on_event()` call (or `"late_dropped"`
+when the event was dropped by lateness policy).  `last_status` is `None` before the first
+`on_event()`.
+
+---
+
+## 22. Event Adapter Layer
+
+Strategy code works with `FeatureSnapshot` and `SpecFeatureEngine`.  The engine accepts
+any duck-typed event object that carries the right attributes.  The adapter layer converts
+existing event classes (which may use `datetime` timestamps and lack `event_type`) into
+adapter objects the engine can consume directly, without modifying the source classes.
+
+### Module: `nautilus_ext/features/compute/adapters.py`
+
+```
+adapt_bar_event(bar)        → BarMarketEvent      (frozen dataclass, event_type="bar")
+adapt_quote_tick_event(q)   → QuoteMarketEvent    (frozen dataclass, event_type="quote")
+```
+
+`BarMarketEvent` and `QuoteMarketEvent` are frozen dataclasses with:
+
+| Field | Type | Notes |
+|---|---|---|
+| `instrument_id` | `str` | Preserved from source |
+| `event_type` | `str` | Always canonical ("bar" / "quote") |
+| `event_time_ns` | `int` | Nanoseconds POSIX |
+| `receive_time_ns` | `int \| None` | From `ts_init` if available |
+| `source` | `str \| None` | Preserved |
+| OHLCV / bid/ask | `float` | Type-specific fields |
+
+### Timestamp resolution
+
+```
+event_time_ns  = bar.event_time_ns  or  _datetime_to_ns(bar.ts_event)
+receive_time_ns = bar.receive_time_ns or _datetime_to_ns(bar.ts_init) or event_time_ns
+```
+
+`_datetime_to_ns(dt)` handles `datetime` objects (`.timestamp() × 1e9`), integers, and
+floats.  Returns 0 for `None`.
+
+### When adapters are not needed
+
+If your event class already has `event_type`, `event_time_ns`, and `receive_time_ns`
+with correct nanosecond semantics, pass it directly — no adapter required.
+
+---
+
+## 23. Warmup Provider Interface
+
+The warmup path accepts any iterable.  For larger-scale warmup from a catalog or
+database, implement the `HistoricalEventProvider` protocol:
+
+```python
+@runtime_checkable
+class HistoricalEventProvider(Protocol):
+    def iter_events(
+        self,
+        instrument_id: str | None = None,
+        input_type: str | None = None,
+        start_ns: int = 0,
+        end_ns: int | None = None,
+    ) -> Iterable: ...
+```
+
+**Ordering contract**: events MUST be yielded in ascending `event_time_ns` order.
+`engine.warmup()` does not sort — it feeds events to features in iteration order and
+advances watermarks accordingly.
+
+### InMemoryEventProvider
+
+Bundled list-backed implementation for tests and prototyping:
+
+```python
+from nautilus_ext.features.compute.adapters import InMemoryEventProvider, adapt_bar_event
+
+adapted = [adapt_bar_event(b) for b in raw_bars]
+provider = InMemoryEventProvider(adapted)
+
+engine.warmup(provider.iter_events(instrument_id="BTC/USDT", input_type="bar"))
+engine.warmup(provider.iter_events(start_ns=t0_ns, end_ns=t1_ns))
+```
+
+Filtering is O(n) over the list.  Production providers should use indexed stores.
+
+### Warmup equivalence
+
+`engine.warmup(events)` is identical to calling `feature.update(event)` for each event
+in order with no late-event check.  State produced by warmup is indistinguishable from
+state produced by the same events fed via `on_event()`.
+
+---
+
+## 24. Realized Volatility Feature
+
+`RealizedVolatilityFeature` computes the rolling sample standard deviation of
+log close-to-close returns.
+
+**Formula**: `std(log(close_t / close_{t-1}))` over a count-based window of N returns.
+
+| Property | Value |
+|---|---|
+| Type key | `"realized_volatility"` |
+| Input type | `"bar"` |
+| Default field | `"close"` (override via `input_field`) |
+| Window unit | bars |
+| Warmup required | `window + 1` bars (to produce `window` returns) |
+| Update status | `"updated"` / `"not_ready"` / `"skipped_missing_field"` |
+| State | O(1) via `RollingWindowState(track_squares=True)` |
+
+```python
+spec = FeatureSpec(
+    name="rvol20",
+    input_type="bar",
+    input_field="close",  # optional; defaults to "close"
+    window=20,
+    params={"type": "realized_volatility"},
+)
+```
+
+`warmup_required().n_events == window + 1` — feeding `window` bars produces `window - 1`
+returns, which is one short of a full window.
+
+---
+
+## 25. Strategy Integration Example
+
+Strategy code depends only on `FeatureSpec`, `SpecFeatureEngine`, and `FeatureSnapshot`.
+No backend, feature-class, or state imports are needed.
+
+### Recommended pattern
+
+```python
+from nautilus_ext.features.compute import FeatureSpec, TriggerPolicy, SpecFeatureEngine
+from nautilus_ext.features.compute.adapters import adapt_bar_event, InMemoryEventProvider
+
+# 1. Define specs (stable strategy-facing configuration)
+specs = [
+    FeatureSpec(name="mean20",  input_type="bar", input_field="close",
+                window=20, params={"type": "rolling_mean"}),
+    FeatureSpec(name="rvol20",  input_type="bar", input_field="close",
+                window=20, params={"type": "realized_volatility"}),
+    FeatureSpec(name="spread",  input_type="quote", params={"type": "spread"}),
+]
+
+# 2. Build engine
+engine = SpecFeatureEngine(specs, stamp_process_time=False)
+
+# 3. Warm up from historical data
+provider = InMemoryEventProvider([adapt_bar_event(b) for b in historical_bars])
+engine.warmup(provider.iter_events(instrument_id="BTC/USDT"))
+
+# 4. Live loop
+def on_bar(bar):
+    snap = engine.on_event(adapt_bar_event(bar))
+    mean = snap.value("mean20")        # float or None
+    vol  = snap.value("rvol20")
+    if mean is not None and vol is not None:
+        _generate_signal(mean, vol)
+
+def on_quote(quote):
+    snap = engine.on_event(adapt_quote_tick_event(quote))
+    spread = snap.value("spread")
+    ...
+```
+
+### Abstraction guarantee
+
+If `FeatureSpec` and `FeatureSnapshot` are unchanged, swapping the backend
+(e.g. Python → Rust) requires only one line: `FeatureSpec(..., backend="rust")`.
+Strategy code is unaffected.
+
+---
+
+## 26. Realistic Benchmark Modes
+
+`scripts/benchmark_feature_engine.py` supports three event-kind modes:
+
+```bash
+# Bar-only (default)
+python -m scripts.benchmark_feature_engine --events 100000 --features 100 --window 1000
+
+# Quote-only  (SpreadFeature + MidPriceFeature)
+python -m scripts.benchmark_feature_engine --event-kind quote --events 100000 --features 20
+
+# Mixed (bar + quote, features split by type, events interleaved by timestamp)
+python -m scripts.benchmark_feature_engine --event-kind mixed --events 100000 --features 20 --window 1000
+```
+
+### Report fields
+
+| Field | Description |
+|---|---|
+| `total elapsed` | Wall-clock time for all `on_event()` calls |
+| `actual events` | Actual number of events processed (may differ in mixed mode) |
+| `avg on_event` | Mean latency per call (µs) |
+| `p50/p95/p99` | Percentile latencies (µs) |
+| `events/sec` | Throughput |
+| `feature·ev/sec` | Throughput × n_features |
+
+With `--profile`, the report also shows a per-feature table including `last_status`.
+
+### Mixed-mode behaviour
+
+In mixed mode, each event advances only the features subscribed to that event type.
+Bar events update bar features; quote events update quote features.  Per-event
+complexity is O(n_subscribed_features_for_this_type), not O(n_total_features).
+
+---
+
+## 27. Profiling Hook — Extended (`last_status`)
+
+As of Session 5, `profile_summary()` includes `last_status` per feature:
+
+```python
+engine = SpecFeatureEngine(specs, profile=True)
+# ... feed events ...
+summary = engine.profile_summary()
+# {
+#     "profile": True,
+#     "features": {
+#         "feat_name": {
+#             "update_count":    int,
+#             "skip_count":      int,
+#             "late_drop_count": int,
+#             "last_status":     str | None,  # NEW in Session 5
+#         },
+#         ...
+#     }
+# }
+```
+
+`last_status` reflects the `update_status` of the most recent `on_event()` call:
+
+| Value | Meaning |
+|---|---|
+| `"updated"` | Feature computed a new value on the most recent event |
+| `"not_ready"` | Feature has not processed enough history |
+| `"skipped_missing_field"` | Required input field absent on the most recent event |
+| `"late_dropped"` | Most recent event was late and dropped by lateness policy |
+| `None` | No `on_event()` has been called yet (initial state) |
+
+---
+
+## 28. Recommended Production Data Flow
+
+```
+                  DataFeed / MarketData
+                         │
+                         ▼
+               adapt_bar_event()          adapt_quote_tick_event()
+               adapt_quote_tick_event()   (or custom adapter for trade/book events)
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │   SpecFeatureEngine  │   ← specs define all features declaratively
+              │   engine.warmup()    │   ← historical provider fills state
+              │   engine.on_event()  │   ← O(n_features) per event, no pandas
+              └──────────────────────┘
+                         │
+                         ▼
+                  FeatureSnapshot
+                  (ts_event, instrument_id, values{})
+                         │
+                         ▼
+               Strategy / Signal Layer
+               snap.value("mean20")
+               snap.is_ready("rvol20")
+               snap.all_ready()
+```
+
+The engine, adapters, and snapshot form a stable abstraction boundary.  All three
+layers can evolve independently: the data feed can change connectors, the engine can
+swap backends, and the strategy can be rewritten — as long as `FeatureSpec` and
+`FeatureSnapshot` remain stable, nothing else in the chain needs to change.

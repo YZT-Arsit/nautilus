@@ -801,3 +801,91 @@ class BookImbalanceFeature(_AbstractFeature):
 
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
+
+
+# ---------------------------------------------------------------------------
+# Realized volatility
+# ---------------------------------------------------------------------------
+
+class RealizedVolatilityFeature(_AbstractFeature):
+    """Realized volatility: rolling sample std of log close-to-close returns.
+
+    Computes std(log(close_t / close_{t-1})) over a count-based rolling window
+    of N returns, which requires N+1 consecutive bar events.
+
+    State: O(1) update via RollingWindowState (running sum + sum-of-squares).
+    Sets update_status="updated"/"not_ready"/"skipped_missing_field" on every call.
+
+    Parameters (from FeatureSpec)
+    -----------------------------
+    input_field : str   — bar field to use as price series (default "close").
+    window : int        — number of log returns in the rolling window.
+                          warmup_required().n_events == window + 1.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 20, track_squares=True)
+        self._prev: float | None = None
+        self._field_name: str = spec.input_field or "close"
+
+    def warmup_required(self) -> WarmupRequirement:
+        n = (self._spec.window or 20) + 1  # window returns need window+1 bars
+        return WarmupRequirement(n_events=n, unit=self._spec.window_unit or "bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._prev = None
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        cur = _field(event, self._field_name)
+        if cur is None:
+            return self._missing_field(self._field_name)
+
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+
+        if self._prev is None or self._prev <= 0.0 or cur <= 0.0:
+            self._prev = cur
+            return self._emit(
+                None, False, triggered,
+                source_event_time_ns=ts_ns,
+                update_status="not_ready",
+            )
+
+        log_ret = math.log(cur / self._prev)
+        self._prev = cur
+        self._state.push(log_ret)
+
+        ready = self._state.is_full
+        return self._emit(
+            self._state.std if ready else None,
+            ready,
+            triggered,
+            source_event_time_ns=ts_ns,
+            update_status="updated" if ready else "not_ready",
+        )
+
+    def state_dict(self) -> dict:
+        return {
+            **self._base_state(),
+            "rolling": self._state.state_dict(),
+            "prev": self._prev,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+        self._prev = state.get("prev")
+        if self._state.is_full:
+            self._cached = FeatureValue(
+                name=self._spec.name, value=self._state.std, is_ready=True,
+            )

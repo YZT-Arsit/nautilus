@@ -285,11 +285,13 @@ class SpecFeatureEngine:
         self._profile_update_count: dict[str, int] = {}
         self._profile_skip_count: dict[str, int] = {}
         self._profile_late_drop_count: dict[str, int] = {}
+        self._profile_last_status: dict[str, str | None] = {}
         self._build()
         if profile:
             self._profile_update_count = {n: 0 for n in self._features}
             self._profile_skip_count = {n: 0 for n in self._features}
             self._profile_late_drop_count = {n: 0 for n in self._features}
+            self._profile_last_status = {n: None for n in self._features}
 
     def _build(self) -> None:
         _validate_spec_list(self._specs, self._registry)
@@ -385,6 +387,7 @@ class SpecFeatureEngine:
                     policy = feature.spec.trigger.late_event_policy
                     if policy in ("drop", "log_only", "recompute_for_backtest_only"):
                         self._profile_late_drop_count[name] += 1
+                    self._profile_last_status[name] = "late_dropped"
             else:
                 update = feature.update(event)
                 values[name] = update.value
@@ -394,6 +397,7 @@ class SpecFeatureEngine:
                         self._profile_update_count[name] += 1
                     elif status in ("not_ready", "skipped_missing_field"):
                         self._profile_skip_count[name] += 1
+                    self._profile_last_status[name] = status
 
         return FeatureSnapshot(
             ts_event=ts.event_time_ns,
@@ -532,6 +536,7 @@ class SpecFeatureEngine:
                     "update_count": self._profile_update_count.get(name, 0),
                     "skip_count": self._profile_skip_count.get(name, 0),
                     "late_drop_count": self._profile_late_drop_count.get(name, 0),
+                    "last_status": self._profile_last_status.get(name),
                 }
                 for name in self._features
             },

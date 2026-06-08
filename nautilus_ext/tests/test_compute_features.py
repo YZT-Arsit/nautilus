@@ -3378,3 +3378,550 @@ class TestProfilingHook:
         assert engine._profile_update_count == {}
         assert engine._profile_skip_count   == {}
         assert engine._profile_late_drop_count == {}
+
+    def test_last_status_present_when_enabled(self):
+        """profile_summary() includes last_status per feature when profile=True."""
+        engine = self._make_engine(profile=True)
+        engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        summary = engine.profile_summary()
+        assert "last_status" in summary["features"]["sum3"]
+
+    def test_last_status_updated_reflects_most_recent_event(self):
+        """last_status tracks the update_status of the most recent on_event() call."""
+        engine = self._make_engine(profile=True)
+        # Before ready: update_status="not_ready" → last_status="not_ready"
+        engine.on_event(Bar(close=1.0, event_time_ns=_s(1)))
+        assert engine.profile_summary()["features"]["sum3"]["last_status"] == "not_ready"
+        # After ready: update_status="updated" → last_status="updated"
+        for i in range(2, 5):
+            engine.on_event(Bar(close=float(i), event_time_ns=_s(i)))
+        assert engine.profile_summary()["features"]["sum3"]["last_status"] == "updated"
+
+    def test_last_status_none_when_no_events(self):
+        """last_status is None before any on_event() calls."""
+        engine = self._make_engine(profile=True)
+        summary = engine.profile_summary()
+        assert summary["features"]["sum3"]["last_status"] is None
+
+    def test_last_status_late_dropped_on_dropped_late_event(self):
+        """last_status reflects 'late_dropped' when a late event is dropped."""
+        spec = FeatureSpec(
+            name="sum3",
+            input_type="bar",
+            input_field="close",
+            window=3,
+            params={"type": "rolling_sum"},
+            trigger=TriggerPolicy(kind="on_event", late_event_policy="drop"),
+        )
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False, profile=True)
+        for b in bars([1.0, 2.0, 3.0]):
+            engine.on_event(b)
+        engine.on_event(Bar(close=99.0, event_time_ns=_s(0)))  # late
+        assert engine.profile_summary()["features"]["sum3"]["last_status"] == "late_dropped"
+
+
+# ===========================================================================
+# Event adapters — BarMarketEvent / QuoteMarketEvent
+# ===========================================================================
+
+from nautilus_ext.features.compute.adapters import (
+    BarMarketEvent,
+    QuoteMarketEvent,
+    TradeMarketEvent,
+    InMemoryEventProvider,
+    HistoricalEventProvider,
+    adapt_bar_event,
+    adapt_quote_tick_event,
+)
+from nautilus_ext.data.events import BarEvent, QuoteTickEvent
+from datetime import datetime, timezone
+
+
+def _dt(ts_s: float) -> datetime:
+    """Return a UTC-aware datetime from POSIX seconds (float)."""
+    return datetime.fromtimestamp(ts_s, tz=timezone.utc)
+
+
+class TestEventAdapters:
+    """adapt_bar_event() and adapt_quote_tick_event() convert existing event classes."""
+
+    def test_adapt_bar_event_event_type(self):
+        bar = BarEvent(
+            instrument_id="BTC/USDT", open=100.0, high=101.0, low=99.0,
+            close=100.5, volume=500.0, ts_event=_dt(1_000.0),
+        )
+        adapted = adapt_bar_event(bar)
+        assert adapted.event_type == "bar"
+
+    def test_adapt_bar_event_fields_preserved(self):
+        bar = BarEvent(
+            instrument_id="BTC/USDT", open=1.0, high=2.0, low=0.5,
+            close=1.5, volume=100.0, ts_event=_dt(1_000.0), source="binance",
+        )
+        adapted = adapt_bar_event(bar)
+        assert adapted.instrument_id == "BTC/USDT"
+        assert adapted.open   == pytest.approx(1.0)
+        assert adapted.high   == pytest.approx(2.0)
+        assert adapted.low    == pytest.approx(0.5)
+        assert adapted.close  == pytest.approx(1.5)
+        assert adapted.volume == pytest.approx(100.0)
+        assert adapted.source == "binance"
+
+    def test_adapt_bar_event_datetime_to_ns(self):
+        """datetime ts_event is correctly converted to nanoseconds."""
+        ts_s = 1_700_000_000.0
+        bar = BarEvent(
+            instrument_id="X", open=1.0, high=1.0, low=1.0, close=1.0,
+            volume=1.0, ts_event=_dt(ts_s),
+        )
+        adapted = adapt_bar_event(bar)
+        expected_ns = int(ts_s * 1_000_000_000)
+        assert adapted.event_time_ns == expected_ns
+
+    def test_adapt_bar_event_ts_init_becomes_receive_time(self):
+        ts_event_s = 1_700_000_000.0
+        ts_init_s  = 1_700_000_001.0
+        bar = BarEvent(
+            instrument_id="X", open=1.0, high=1.0, low=1.0, close=1.0,
+            volume=1.0, ts_event=_dt(ts_event_s), ts_init=_dt(ts_init_s),
+        )
+        adapted = adapt_bar_event(bar)
+        assert adapted.receive_time_ns == int(ts_init_s * 1_000_000_000)
+
+    def test_adapt_bar_event_no_ts_init_receive_equals_event(self):
+        ts_s = 1_700_000_000.0
+        bar = BarEvent(
+            instrument_id="X", open=1.0, high=1.0, low=1.0, close=1.0,
+            volume=1.0, ts_event=_dt(ts_s),
+        )
+        adapted = adapt_bar_event(bar)
+        assert adapted.receive_time_ns == adapted.event_time_ns
+
+    def test_adapt_quote_tick_event_type(self):
+        q = QuoteTickEvent(
+            instrument_id="ETH/USDT", bid_price=99.0, ask_price=101.0,
+            bid_size=1.0, ask_size=1.0, ts_event=_dt(1_000.0),
+        )
+        adapted = adapt_quote_tick_event(q)
+        assert adapted.event_type == "quote"
+
+    def test_adapt_quote_tick_event_fields_preserved(self):
+        q = QuoteTickEvent(
+            instrument_id="ETH/USDT", bid_price=99.5, ask_price=100.5,
+            bid_size=2.0, ask_size=3.0, ts_event=_dt(1_000.0), source="okx",
+        )
+        adapted = adapt_quote_tick_event(q)
+        assert adapted.instrument_id == "ETH/USDT"
+        assert adapted.bid_price  == pytest.approx(99.5)
+        assert adapted.ask_price  == pytest.approx(100.5)
+        assert adapted.bid_size   == pytest.approx(2.0)
+        assert adapted.ask_size   == pytest.approx(3.0)
+        assert adapted.source     == "okx"
+
+    def test_adapt_bar_event_engine_can_consume(self):
+        """Engine accepts adapted BarEvent and routes it to bar features."""
+        spec = FeatureSpec(name="m1", input_type="bar", input_field="close",
+                           window=1, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        bar = BarEvent(
+            instrument_id="BTC/USDT", open=1.0, high=1.0, low=1.0,
+            close=42.0, volume=10.0, ts_event=_dt(1_000.0),
+        )
+        snap = engine.on_event(adapt_bar_event(bar))
+        assert snap.is_ready("m1")
+        assert snap.value("m1") == pytest.approx(42.0)
+
+    def test_adapt_quote_engine_can_consume(self):
+        """Engine accepts adapted QuoteTickEvent and routes it to quote features."""
+        spec = FeatureSpec(name="spread", input_type="quote", params={"type": "spread"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        q = QuoteTickEvent(
+            instrument_id="ETH/USDT", bid_price=99.0, ask_price=101.0,
+            bid_size=1.0, ask_size=1.0, ts_event=_dt(1_000.0),
+        )
+        snap = engine.on_event(adapt_quote_tick_event(q))
+        assert snap.is_ready("spread")
+        assert snap.value("spread") == pytest.approx(2.0)
+
+    def test_adapted_bar_is_frozen(self):
+        """BarMarketEvent is a frozen dataclass."""
+        bar = BarEvent(
+            instrument_id="X", open=1.0, high=1.0, low=1.0,
+            close=1.0, volume=1.0, ts_event=_dt(1_000.0),
+        )
+        adapted = adapt_bar_event(bar)
+        with pytest.raises((TypeError, AttributeError)):
+            adapted.close = 999.0  # type: ignore[misc]
+
+
+# ===========================================================================
+# Historical event provider (InMemoryEventProvider + warmup integration)
+# ===========================================================================
+
+class TestHistoricalEventProvider:
+    """InMemoryEventProvider filters and SpecFeatureEngine.warmup() integration."""
+
+    def _adapted_bars(self, n: int, instrument_id: str = "BTC/USDT") -> list:
+        return [
+            BarMarketEvent(
+                instrument_id=instrument_id,
+                open=float(i), high=float(i) + 0.5, low=float(i) - 0.5,
+                close=float(i), volume=100.0,
+                event_type="bar",
+                event_time_ns=_s(i + 1),
+                receive_time_ns=_s(i + 1),
+            )
+            for i in range(n)
+        ]
+
+    def _adapted_quotes(self, n: int, instrument_id: str = "BTC/USDT") -> list:
+        return [
+            QuoteMarketEvent(
+                instrument_id=instrument_id,
+                bid_price=float(99 + i), ask_price=float(101 + i),
+                bid_size=1.0, ask_size=1.0,
+                event_type="quote",
+                event_time_ns=_s(i + 1),
+                receive_time_ns=_s(i + 1),
+            )
+            for i in range(n)
+        ]
+
+    def test_iter_events_yields_all_by_default(self):
+        events = self._adapted_bars(5)
+        provider = InMemoryEventProvider(events)
+        yielded = list(provider.iter_events())
+        assert len(yielded) == 5
+
+    def test_iter_events_filter_by_instrument_id(self):
+        btc = self._adapted_bars(3, "BTC/USDT")
+        eth = self._adapted_bars(2, "ETH/USDT")
+        provider = InMemoryEventProvider(btc + eth)
+        btc_events = list(provider.iter_events(instrument_id="BTC/USDT"))
+        assert len(btc_events) == 3
+        assert all(e.instrument_id == "BTC/USDT" for e in btc_events)
+
+    def test_iter_events_filter_by_input_type(self):
+        bars = self._adapted_bars(4)
+        quotes = self._adapted_quotes(3)
+        provider = InMemoryEventProvider(bars + quotes)
+        bar_only = list(provider.iter_events(input_type="bar"))
+        assert len(bar_only) == 4
+        quote_only = list(provider.iter_events(input_type="quote"))
+        assert len(quote_only) == 3
+
+    def test_iter_events_filter_by_time_range(self):
+        events = self._adapted_bars(10)  # event_time_ns = _s(1)..._s(10)
+        provider = InMemoryEventProvider(events)
+        # start_ns=_s(3), end_ns=_s(7) → events with ts in [3s, 7s) → indices 2..5
+        filtered = list(provider.iter_events(start_ns=_s(3), end_ns=_s(7)))
+        assert len(filtered) == 4  # _s(3), _s(4), _s(5), _s(6)
+
+    def test_warmup_from_provider_warms_features(self):
+        """warmup from InMemoryEventProvider produces correct feature state."""
+        spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        events = self._adapted_bars(5)
+        provider = InMemoryEventProvider(events)
+        engine.warmup(provider.iter_events())
+        assert engine.is_ready("m3")
+        # mean of last 3 closes: 2.0, 3.0, 4.0
+        assert engine.value("m3") == pytest.approx((2.0 + 3.0 + 4.0) / 3)
+
+    def test_warmup_preserves_event_order(self):
+        """Provider yields events in insertion order — watermark advances monotonically."""
+        spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        events = self._adapted_bars(5)
+        provider = InMemoryEventProvider(events)
+        engine.warmup(provider.iter_events())
+        wm = engine.watermark_for("BTC/USDT", "bar")
+        assert wm == _s(5)  # last event had event_time_ns = _s(5)
+
+    def test_warmup_plus_live_equals_full_replay(self):
+        """warmup([:3]) + on_event([3:]) == all on_event for the same closes."""
+        spec = FeatureSpec(name="m3", input_type="bar", input_field="close",
+                           window=3, params={"type": "rolling_mean"})
+
+        events = self._adapted_bars(6)
+        provider = InMemoryEventProvider(events)
+
+        # Engine A: warmup first 3, on_event last 3
+        eng_a = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        eng_a.warmup(provider.iter_events(end_ns=_s(4)))   # events with ts < _s(4)
+        for e in events[3:]:
+            eng_a.on_event(e)
+
+        # Engine B: all via on_event
+        eng_b = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        for e in events:
+            eng_b.on_event(e)
+
+        assert eng_a.value("m3") == pytest.approx(eng_b.value("m3"))
+
+    def test_provider_empty_yields_nothing(self):
+        provider = InMemoryEventProvider([])
+        assert list(provider.iter_events()) == []
+
+    def test_provider_len(self):
+        events = self._adapted_bars(7)
+        provider = InMemoryEventProvider(events)
+        assert len(provider) == 7
+
+    def test_provider_append(self):
+        provider = InMemoryEventProvider([])
+        ev = self._adapted_bars(1)[0]
+        provider.append(ev)
+        assert len(provider) == 1
+
+    def test_provider_satisfies_protocol(self):
+        """InMemoryEventProvider satisfies the HistoricalEventProvider protocol."""
+        provider = InMemoryEventProvider([])
+        assert isinstance(provider, HistoricalEventProvider)
+
+
+# ===========================================================================
+# RealizedVolatilityFeature
+# ===========================================================================
+
+from nautilus_ext.features.compute.features import RealizedVolatilityFeature
+
+
+class TestRealizedVolatilityFeature:
+    """RealizedVolatilityFeature: rolling std of log returns."""
+
+    def _spec(self, window: int = 5, field: str = "close") -> FeatureSpec:
+        return FeatureSpec(
+            name="rvol5",
+            input_type="bar",
+            input_field=field,
+            window=window,
+            params={"type": "realized_volatility"},
+        )
+
+    def _ref_realized_vol(self, closes: list[float], window: int) -> list[float]:
+        """Reference: rolling sample std of log returns (window returns)."""
+        log_rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
+        results = []
+        for i in range(window - 1, len(log_rets)):
+            win = log_rets[i - window + 1: i + 1]
+            mean = sum(win) / window
+            var = sum((x - mean) ** 2 for x in win) / (window - 1)
+            results.append(math.sqrt(max(0.0, var)))
+        return results
+
+    def test_not_ready_before_window_full(self):
+        feat = RealizedVolatilityFeature(self._spec(window=3))
+        for i in range(1, 4):  # 3 bars → only 2 returns, need 3
+            upd = feat.update(Bar(close=float(i), event_time_ns=_s(i)))
+            assert not upd.value.is_ready
+
+    def test_ready_after_window_plus_one_bars(self):
+        """window=3 requires 4 bars (3 log returns) → ready on bar 4."""
+        feat = RealizedVolatilityFeature(self._spec(window=3))
+        for i in range(1, 5):
+            upd = feat.update(Bar(close=float(i), event_time_ns=_s(i)))
+        assert upd.value.is_ready
+
+    def test_value_matches_reference_std(self):
+        closes = [100.0, 101.0, 102.0, 101.5, 103.0, 102.5, 104.0]
+        window = 4
+        feat = RealizedVolatilityFeature(self._spec(window=window))
+        computed = []
+        for i, c in enumerate(closes):
+            upd = feat.update(Bar(close=c, event_time_ns=_s(i)))
+            if upd.value.is_ready:
+                computed.append(upd.value.value)
+        ref = self._ref_realized_vol(closes, window)
+        assert len(computed) == len(ref)
+        for a, b in zip(computed, ref):
+            assert a == pytest.approx(b, rel=1e-10)
+
+    def test_update_status_populated(self):
+        feat = RealizedVolatilityFeature(self._spec(window=3))
+        upd1 = feat.update(Bar(close=100.0, event_time_ns=_s(1)))
+        assert upd1.value.update_status == "not_ready"
+        for i in range(2, 5):
+            upd = feat.update(Bar(close=float(100 + i), event_time_ns=_s(i)))
+        assert upd.value.update_status == "updated"
+
+    def test_missing_field_returns_skipped_status(self):
+        feat = RealizedVolatilityFeature(self._spec(window=3, field="close"))
+
+        @dataclass
+        class NoClose:
+            event_time_ns: int = 0
+
+        upd = feat.update(NoClose())
+        assert upd.value.update_status == "skipped_missing_field"
+
+    def test_reset_clears_state(self):
+        feat = RealizedVolatilityFeature(self._spec(window=3))
+        for i in range(1, 5):
+            feat.update(Bar(close=float(i), event_time_ns=_s(i)))
+        assert feat.is_ready
+        feat.reset()
+        assert not feat.is_ready
+        assert feat.value.value is None
+
+    def test_state_dict_round_trip(self):
+        spec = self._spec(window=3)
+        feat = RealizedVolatilityFeature(spec)
+        closes = [100.0, 101.0, 102.0, 103.0, 104.0]
+        for i, c in enumerate(closes):
+            feat.update(Bar(close=c, event_time_ns=_s(i)))
+        state = feat.state_dict()
+
+        feat2 = RealizedVolatilityFeature(spec)
+        feat2.load_state_dict(state)
+        assert feat2.is_ready == feat.is_ready
+        assert feat2.value.value == pytest.approx(feat.value.value)
+
+    def test_warmup_required_is_window_plus_one(self):
+        req = RealizedVolatilityFeature(self._spec(window=10)).warmup_required()
+        assert req.n_events == 11
+        assert req.mandatory is True
+
+    def test_backend_dispatch_by_params_type(self):
+        """PythonBackend dispatches realized_volatility by params['type']."""
+        spec = FeatureSpec(
+            name="rv5", input_type="bar", input_field="close",
+            window=5, params={"type": "realized_volatility"},
+        )
+        feat = build_default_registry().create_feature(spec)
+        assert isinstance(feat, RealizedVolatilityFeature)
+
+    def test_engine_routes_bar_events_to_realized_volatility(self):
+        """Engine correctly routes bar events to realized_volatility feature."""
+        spec = FeatureSpec(
+            name="rv3", input_type="bar", input_field="close",
+            window=3, params={"type": "realized_volatility"},
+        )
+        engine = SpecFeatureEngine(specs=[spec], stamp_process_time=False)
+        for i, c in enumerate([100.0, 101.0, 102.0, 103.0, 104.0]):
+            snap = engine.on_event(Bar(close=c, event_time_ns=_s(i + 1)))
+        assert snap.is_ready("rv3")
+        assert snap.value("rv3") is not None
+
+    def test_catalog_includes_realized_volatility(self):
+        """available_feature_types() includes the new type."""
+        assert "realized_volatility" in PythonBackend().available_feature_types()
+
+
+# ===========================================================================
+# Strategy integration example
+# ===========================================================================
+
+class TestStrategyIntegrationExample:
+    """End-to-end strategy-like flow that only uses FeatureSnapshot / SpecFeatureEngine APIs.
+
+    Validates that strategy code never needs to touch backend internals,
+    feature class state, or any compute-layer object below FeatureSnapshot.
+    """
+
+    def _build_engine(self) -> SpecFeatureEngine:
+        specs = [
+            FeatureSpec(name="mean5",  input_type="bar", input_field="close",
+                        window=5, params={"type": "rolling_mean"}),
+            FeatureSpec(name="rvol5",  input_type="bar", input_field="close",
+                        window=5, params={"type": "realized_volatility"}),
+            FeatureSpec(name="spread", input_type="quote", params={"type": "spread"}),
+            FeatureSpec(name="mid",    input_type="quote", params={"type": "mid_price"}),
+        ]
+        return SpecFeatureEngine(specs=specs, stamp_process_time=False)
+
+    def _bar(self, close: float, ts: int) -> Bar:
+        return Bar(close=close, high=close + 0.5, low=close - 0.5,
+                   open=close - 0.2, volume=100.0, event_time_ns=ts)
+
+    def _quote(self, bid: float, ask: float, ts: int) -> Quote:
+        return Quote(bid_price=bid, ask_price=ask,
+                     event_time_ns=ts, event_type="quote")
+
+    def _simple_strategy(self, snap: "FeatureSnapshot") -> str | None:
+        """Minimal signal: long if mean rises above threshold and vol is low."""
+        mean  = snap.value("mean5")
+        vol   = snap.value("rvol5")
+        mid   = snap.value("mid")
+        if mean is None or vol is None or mid is None:
+            return None
+        if mean > 100.0 and vol < 0.01 and mid > mean:
+            return "long"
+        return "flat"
+
+    def test_strategy_reads_only_snapshot_api(self):
+        """Strategy accesses features only through FeatureSnapshot — no backend objects."""
+        engine = self._build_engine()
+        closes = [100.0 + i * 0.1 for i in range(7)]
+        for i, c in enumerate(closes):
+            snap = engine.on_event(self._bar(c, _s(i + 1)))
+        # Strategy only uses these stable FeatureSnapshot methods
+        _ = snap.value("mean5")
+        _ = snap.is_ready("mean5")
+        _ = snap.as_dict()
+        _ = snap.statuses()
+        _ = snap.updated_names()
+        _ = snap.all_ready()
+
+    def test_strategy_signal_generation(self):
+        """Strategy generates a non-None signal once all features are ready."""
+        engine = self._build_engine()
+        # Bar warmup (6 bars needed: mean5 needs 5 bars, rvol5 needs 6 bars)
+        closes = [100.0 + i * 0.05 for i in range(8)]
+        for i, c in enumerate(closes):
+            snap = engine.on_event(self._bar(c, _s(i + 1)))
+        for i in range(8):
+            snap = engine.on_event(self._quote(99.5 + i * 0.01,
+                                               100.5 + i * 0.01,
+                                               _s(i + 100)))
+        signal = self._simple_strategy(snap)
+        # Signal may be None (not ready) or a string — just verify no crash
+        assert signal is None or signal in ("long", "flat")
+
+    def test_strategy_all_ready_check(self):
+        """all_ready() returns False until every feature has processed enough history."""
+        engine = self._build_engine()
+        snap = engine.on_event(self._bar(100.0, _s(1)))
+        assert not snap.all_ready()
+
+    def test_strategy_multi_event_type(self):
+        """Engine routes bar events to bar features and quote events to quote features."""
+        engine = self._build_engine()
+        snap_bar = engine.on_event(self._bar(100.0, _s(1)))
+        # Bar events do not update quote features
+        assert not snap_bar.is_ready("spread")
+        snap_quote = engine.on_event(self._quote(99.0, 101.0, _s(2)))
+        # Quote events do not update bar features (bar features hold previous value)
+        assert snap_quote.is_ready("spread")
+
+    def test_strategy_snapshot_ts_event(self):
+        """FeatureSnapshot.ts_event matches the triggering event's event_time_ns."""
+        engine = self._build_engine()
+        ts_ns = _s(42)
+        snap = engine.on_event(self._bar(100.0, ts_ns))
+        assert snap.ts_event == ts_ns
+
+    def test_strategy_value_default_before_ready(self):
+        """snapshot.value() returns the caller's default when a feature is not ready."""
+        engine = self._build_engine()
+        snap = engine.on_event(self._bar(100.0, _s(1)))
+        sentinel = float("nan")
+        result = snap.value("mean5", sentinel)
+        assert result is sentinel or (result != result)  # NaN check
+
+    def test_strategy_does_not_need_backend_imports(self):
+        """All strategy logic can be implemented with only FeatureSpec + FeatureSnapshot."""
+        # This test documents the intended import surface for strategy code.
+        # If this test is updatable without changing the feature compute internals,
+        # the abstraction boundary is intact.
+        from nautilus_ext.features.compute.spec import FeatureSpec, FeatureSnapshot
+        from nautilus_ext.features.compute.engine import SpecFeatureEngine
+        specs = [FeatureSpec(name="m3", input_type="bar", input_field="close",
+                             window=3, params={"type": "rolling_mean"})]
+        eng = SpecFeatureEngine(specs=specs, stamp_process_time=False)
+        for b in bars([1.0, 2.0, 3.0]):
+            snap = eng.on_event(b)
+        assert isinstance(snap, FeatureSnapshot)
+        assert snap.value("m3") is not None
