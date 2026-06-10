@@ -27,6 +27,7 @@ from typing import Any
 import yaml
 
 from feature_strategies import output
+from feature_strategies.backtest import SignalRecorder
 from feature_strategies.data_loaders import load_events
 from feature_strategies.registry import get_entry
 from nautilus_ext.features.runner import FeatureStrategyRunner
@@ -68,12 +69,20 @@ def main(argv: list[str] | None = None) -> None:
     runner.warmup(iter(warmup_events))
     output.print_warmup_summary(name, len(warmup_events), runner, spec_names)
 
-    print_table = cfg.get("output", {}).get("print_table", True)
+    output_cfg = cfg.get("output", {})
+    print_table = output_cfg.get("print_table", True)
+    recorder = SignalRecorder(spec_names) if output_cfg.get("record_signals", False) else None
+
     if print_table:
         output.print_event_table_header(spec_names)
     for event, snapshot, signal in runner.run(live_events):
         if print_table:
             output.print_event_row(event, snapshot, signal, spec_names)
+        if recorder is not None:
+            recorder.record(event, snapshot, signal)
+
+    if recorder is not None:
+        output.print_signal_summary(recorder.signal_counts())
 
 
 if __name__ == "__main__":

@@ -39,3 +39,15 @@ def print_event_table_header(spec_names: list[str]) -> None:
 def print_event_row(event: Any, snapshot: Any, signal: Any, spec_names: list[str]) -> None:
     values = "  ".join(_fmt_value(snapshot.value(n)) for n in spec_names)
     print(f"{_fmt_time(event)}  {_fmt_close(event)}  {values}  {signal}")
+
+
+# Common trading signals shown first; any other signals follow, sorted.
+_PRIMARY_SIGNALS = ("BUY", "SELL", "HOLD")
+
+
+def print_signal_summary(signal_counts: dict[str, int]) -> None:
+    """Print ``signal counts: BUY=X SELL=Y HOLD=Z`` plus any extra signals."""
+    ordered = [s for s in _PRIMARY_SIGNALS if s in signal_counts]
+    ordered += sorted(s for s in signal_counts if s not in _PRIMARY_SIGNALS)
+    body = " ".join(f"{s}={signal_counts[s]}" for s in ordered) or "(none)"
+    print(f"\nsignal counts: {body}")

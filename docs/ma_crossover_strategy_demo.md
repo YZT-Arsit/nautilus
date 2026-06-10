@@ -17,8 +17,11 @@ Strategy authors work there and never read or edit the compute layer.
 | `feature_strategies/registry.py` | Explicit name → strategy mapping | yes — one line per strategy |
 | `feature_strategies/configs/ma_crossover.yaml` | Strategy parameters + data + output | strategy authors |
 | `feature_strategies/run_strategy.py` | **Shared** executor — coordination only | no — shared |
-| `feature_strategies/data_loaders.py` | Event-source selection (synthetic, …) | only to add a data source |
-| `feature_strategies/output.py` | Table formatting / printing | only to change display |
+| `feature_strategies/data_loaders.py` | Event-source selection (`synthetic` / `csv_bars` / `live_synthetic`) | only to add a data source |
+| `feature_strategies/live_sources.py` | `LiveEventSource` protocol for real feeds (skeleton) | only to add a real live feed |
+| `feature_strategies/output.py` | Table formatting / printing / signal summary | only to change display |
+| `feature_strategies/backtest.py` | `SignalRecorder` — signal traceability (no PnL) | only to extend metrics |
+| `feature_strategies/sample_data/ma_crossover_bars.csv` | Tiny CSV for the backtest config | demo / test authors |
 | `nautilus_ext/features/api.py` | **Stable public API** facade (`FeatureSpec`, `FeatureSnapshot`, `rolling_mean_spec`, …) | no — import from it |
 | `nautilus_ext/features/runner.py` | `FeatureStrategyRunner` — builds the engine + runs the loop | no |
 | `nautilus_ext/features/examples/synthetic_bars.py` | `BarEvent` + `make_bars()` demo data | demo / test authors |
@@ -228,9 +231,18 @@ seeds the previous values and therefore returns HOLD.
 
 ## 6. Usage
 
+The same shared runner supports **three execution modes**, chosen by the
+config's `data.mode`:
+
 ```bash
-# Run by config file (chooses the strategy + its parameters)
+# 1. Synthetic demo (generated price path)
 python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover.yaml
+
+# 2. Historical / backtest-style replay from a local CSV (stdlib csv, no pandas)
+python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_backtest.yaml
+
+# 3. Live/paper-style streaming skeleton (live events are a generator; no real feed)
+python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_live_synthetic.yaml
 
 # Run by registered name (config defaults + synthetic data)
 python -m feature_strategies.run_strategy --strategy ma_crossover
@@ -239,9 +251,11 @@ python -m feature_strategies.run_strategy --strategy ma_crossover
 python -m scripts.run_ma_crossover_demo
 ```
 
-Parameters (windows, warmup/live bar counts, instrument) live in
-`feature_strategies/configs/ma_crossover.yaml`, not in CLI flags — every
-strategy is driven the same way.
+Parameters (windows, warmup/live bar counts, instrument, data source) live in
+the YAML config, not in CLI flags — every strategy is driven the same way. With
+`output.record_signals: true`, the run also prints a `signal counts: …` summary
+via the dependency-free `feature_strategies/backtest.py` recorder (traceability
+only — no PnL).
 
 Example output (default parameters):
 

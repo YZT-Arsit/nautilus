@@ -1,0 +1,22 @@
+# MA5 / MA20 crossover — live/paper-style streaming skeleton (no real feed).
+#
+#   python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_live_synthetic.yaml
+
+strategy: ma_crossover
+
+params:
+  fast_window: 5
+  slow_window: 20
+  input_type: bar
+  input_field: close
+
+data:
+  mode: live_synthetic
+  instrument_id: BTC/USDT
+  warmup_bars: 20
+  live_bars: 20
+  delay_seconds: 0.0
+
+output:
+  print_table: true
+  record_signals: true

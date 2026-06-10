@@ -1,0 +1,28 @@
+# MA5 / MA20 crossover — historical backtest-style replay from CSV.
+#
+#   python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_backtest.yaml
+
+strategy: ma_crossover
+
+params:
+  fast_window: 5
+  slow_window: 20
+  input_type: bar
+  input_field: close
+
+data:
+  mode: csv_bars
+  path: feature_strategies/sample_data/ma_crossover_bars.csv
+  instrument_id: BTC/USDT
+  warmup_bars: 20
+  timestamp_column: event_time_ns
+  timestamp_unit: ns
+  close_column: close
+  open_column: open
+  high_column: high
+  low_column: low
+  volume_column: volume
+
+output:
+  print_table: true
+  record_signals: true
