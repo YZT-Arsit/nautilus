@@ -1,0 +1,24 @@
+# MA5 / MA20 crossover — strategy run configuration.
+#
+# Run with:
+#   python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover.yaml
+#
+# `strategy` selects the entry in feature_strategies/registry.py.
+# `params` are passed to that strategy's config dataclass.
+
+strategy: ma_crossover
+
+params:
+  fast_window: 5
+  slow_window: 20
+  input_type: bar
+  input_field: close
+
+data:
+  mode: synthetic
+  instrument_id: BTC/USDT
+  warmup_bars: 20
+  live_bars: 20
+
+output:
+  print_table: true

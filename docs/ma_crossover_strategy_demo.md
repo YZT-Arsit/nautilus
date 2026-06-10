@@ -5,6 +5,70 @@
 
 ---
 
+## 0. File Layout
+
+The code is split into layers so each file has one job, and the **user-facing
+strategy layer lives at the top of the repository** in `feature_strategies/`.
+Strategy authors work there and never read or edit the compute layer.
+
+| File | Responsibility | Who edits it |
+|------|----------------|--------------|
+| `feature_strategies/strategies/ma_crossover.py` | Strategy logic: config, `build_specs`, BUY/SELL/HOLD rules | **Strategy authors** |
+| `feature_strategies/registry.py` | Explicit name → strategy mapping | yes — one line per strategy |
+| `feature_strategies/configs/ma_crossover.yaml` | Strategy parameters + data + output | strategy authors |
+| `feature_strategies/run_strategy.py` | **Shared** runner for *all* strategies | no — shared |
+| `nautilus_ext/features/api.py` | **Stable public API** facade (`FeatureSpec`, `FeatureSnapshot`, …) | no — import from it |
+| `nautilus_ext/features/runner.py` | `FeatureStrategyRunner` — builds the engine + runs the loop | no |
+| `nautilus_ext/features/examples/synthetic_bars.py` | `BarEvent` + `make_bars()` demo data | demo / test authors |
+| `nautilus_ext/features/compute/features.py` | Low-level feature **operator library** (rolling-mean, etc.) | **compute owners only** |
+| `scripts/run_ma_crossover_demo.py` | Legacy wrapper → `feature_strategies.run_strategy.main` | no |
+
+There is **one shared run script** for every strategy — you do not add a
+`run_xxx.py` per strategy. The layers:
+
+1. **Strategy layer** (`feature_strategies/strategies/`) — *what* to trade. One
+   module per strategy (config + `build_specs` + signal logic). User-facing.
+2. **Registry** (`feature_strategies/registry.py`) — maps a strategy name to its
+   `(config_cls, strategy_cls, build_specs)`. Explicit, no auto-discovery.
+3. **Shared runner** (`feature_strategies/run_strategy.py`) — selects a strategy
+   from the registry via `--config`/`--strategy`, builds specs, prepares
+   synthetic data, runs warmup + the live loop, prints the table. Strategy-agnostic.
+4. **Public API** (`nautilus_ext/features/api.py`) — the stable import surface.
+   Strategies do `from nautilus_ext.features.api import FeatureSpec, FeatureSnapshot`,
+   never the deep `compute.*` paths.
+5. **Execution helper** (`nautilus_ext/features/runner.py`) —
+   `FeatureStrategyRunner(specs, strategy)` builds a `SpecFeatureEngine` and runs
+   the warmup / per-event loop, yielding `(event, snapshot, signal)`:
+
+   ```python
+   runner = FeatureStrategyRunner(build_specs(config), MovingAverageCrossoverStrategy(config))
+   runner.warmup(warmup_bars)
+   for event, snapshot, signal in runner.run(live_bars):
+       ...
+   ```
+
+6. **Compute layer** (`nautilus_ext/features/compute/`) — *how* features are
+   computed. This is a **library**. `features.py` holds the incremental maths
+   (rolling mean, etc.). Adding a **new strategy never requires editing it** —
+   you compose existing operators by name through `FeatureSpec`. You touch
+   `compute/features.py` (and `compute/backend.py`) only to add a genuinely new
+   low-level *operator*.
+
+**Adding a strategy** = three small edits, no new run script: a module in
+`strategies/`, one line in `registry.py`, and a `configs/<name>.yaml`. See
+`feature_strategies/README.md`.
+
+Key boundary: the strategy reads features **by name** through the public
+`FeatureSnapshot` API (`snapshot.value("ma5_close")`). It does **not** import
+`features.py`, `state.py`, or any engine/backend internals — a test
+(`test_strategy_imports_only_public_api`) enforces this. The compute layer can
+change how `rolling_mean` is implemented without the strategy noticing.
+
+To change the strategy (different windows, new signal rule, an extra feature),
+edit **`feature_strategies/strategies/ma_crossover.py`** only.
+
+---
+
 ## 1. What Is MA5 / MA20?
 
 A **moving average** (MA) smooths price by averaging the last `N` closing prices.
@@ -32,24 +96,28 @@ HOLD otherwise
 
 ## 2. How MA5 Maps to `rolling_mean`
 
-Both MAs are configured as `FeatureSpec` entries with type `rolling_mean`:
+Both MAs are configured as `FeatureSpec` entries with type `rolling_mean`,
+built by `build_specs()` in the strategy module:
 
 ```python
-FeatureSpec(
-    "ma5_close",
-    input_type="bar",
-    input_field="close",
-    window=5,
-    params={"type": "rolling_mean"},
-)
-
-FeatureSpec(
-    "ma20_close",
-    input_type="bar",
-    input_field="close",
-    window=20,
-    params={"type": "rolling_mean"},
-)
+# feature_strategies/strategies/ma_crossover.py
+def build_specs(config: MovingAverageCrossoverConfig) -> list[FeatureSpec]:
+    return [
+        FeatureSpec(
+            config.fast_name,        # "ma5_close"
+            input_type="bar",
+            input_field="close",
+            window=config.fast_window,   # 5
+            params={"type": "rolling_mean"},
+        ),
+        FeatureSpec(
+            config.slow_name,        # "ma20_close"
+            input_type="bar",
+            input_field="close",
+            window=config.slow_window,   # 20
+            params={"type": "rolling_mean"},
+        ),
+    ]
 ```
 
 `rolling_mean` maps to `RollingMeanFeature`, which maintains a `RollingWindowState` — a fixed-size ring buffer with a running sum. Each `on_event()` call:
@@ -142,43 +210,59 @@ FeatureSnapshot
   └── ma20_close → FeatureValue(value=..., is_ready=True/False)
        │
        ▼
-Strategy (uses only public API)
-  ├── snap.value("ma5_close")    → float | None
-  ├── snap.value("ma20_close")   → float | None
-  ├── snap.is_ready("ma5_close") → bool
-  └── _crossover_signal(ma5, ma20, prev_ma5, prev_ma20) → "BUY" / "SELL" / "HOLD"
+MovingAverageCrossoverStrategy.on_snapshot(snapshot)   (uses only public API)
+  ├── snapshot.value("ma5_close")    → float | None
+  ├── snapshot.value("ma20_close")   → float | None
+  ├── keeps prev fast/slow internally
+  └── returns "BUY" / "SELL" / "HOLD"
 ```
+
+The strategy holds the previous fast/slow values internally, so a crossover is
+detected from two consecutive **ready** snapshots. The first ready snapshot
+seeds the previous values and therefore returns HOLD.
 
 ---
 
 ## 6. Usage
 
 ```bash
-# Default: 20-bar warmup, 20 live bars
-python -m scripts.run_ma_crossover_demo
+# Run by config file (chooses the strategy + its parameters)
+python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover.yaml
 
-# Custom windows and event counts
-python -m scripts.run_ma_crossover_demo --warmup 40 --live 30 --ma5-window 5 --ma20-window 20
+# Run by registered name (config defaults + synthetic data)
+python -m feature_strategies.run_strategy --strategy ma_crossover
+
+# Legacy entry point (thin wrapper, still works)
+python -m scripts.run_ma_crossover_demo
 ```
+
+Parameters (windows, warmup/live bar counts, instrument) live in
+`feature_strategies/configs/ma_crossover.yaml`, not in CLI flags — every
+strategy is driven the same way.
 
 Example output (default parameters):
 
 ```
-Warmed up on 20 bars.
-  ma5_close  ready: True
-  ma20_close ready: True
+[ma_crossover] warmed up on 20 bars; ready: {ma5_close=True, ma20_close=True}
 
- time(s)     close          ma5         ma20  signal
-------------------------------------------------------------
-      20    110.00    102.0000    100.5000  BUY
-      21    110.00    104.0000    101.0000  HOLD
-      22    110.00    106.0000    101.5000  HOLD
-      23    100.00    106.0000    101.5000  HOLD
-      24    100.00    104.0000    101.5000  HOLD
-      25    100.00    102.0000    101.0000  HOLD
-      26     90.00    100.0000    101.0000  SELL
+  t(s)     close   ma5_close  ma20_close  signal
+------------------------------------------------
+    20    100.00    100.0000    100.0000  HOLD
+    21    110.00    102.0000    100.5000  BUY
+    22    110.00    104.0000    101.0000  HOLD
+    23    110.00    106.0000    101.5000  HOLD
+    24    100.00    106.0000    101.5000  HOLD
+    25    100.00    106.0000    101.5000  HOLD
+    26    100.00    104.0000    101.5000  HOLD
+    27     90.00    100.0000    101.0000  SELL
       ...
 ```
+
+The table columns are derived from the strategy's spec names, so the shared
+runner prints the right header for any strategy.
+
+The first live bar (t=20) is a flat lead-in that seeds the strategy's previous
+values, so the BUY fires on the next bar (t=21) when the rise begins.
 
 ---
 
@@ -204,6 +288,35 @@ File: `nautilus_ext/tests/test_ma_crossover.py`
 | `test_strategy_uses_only_public_api` | All values accessed via `snap.value()`, `snap.is_ready()`, `engine.value()`, `engine.is_ready()` |
 | `test_engine_value_returns_none_before_ready` | `engine.value()` returns None before the window is filled |
 
+### Refactored strategy-layer tests
+
+| Test | What it proves |
+|------|---------------|
+| `test_build_specs_returns_exactly_two_rolling_mean_specs` | `build_ma_crossover_specs()` returns exactly two `rolling_mean` specs |
+| `test_build_specs_honours_custom_config` | Custom fast/slow windows flow through to the specs |
+| `test_strategy_emits_buy_on_upward_crossover` | `MovingAverageCrossoverStrategy` returns BUY on an upward crossover |
+| `test_strategy_emits_sell_on_downward_crossover` | Returns SELL on a downward crossover |
+| `test_strategy_emits_hold_when_not_ready` | Returns HOLD while features are not ready |
+| `test_strategy_first_ready_snapshot_is_hold` | First ready snapshot seeds prev values → HOLD |
+| `test_strategy_uses_only_snapshot_public_api` | Strategy works against an object exposing only `value()` — no internals |
+| `test_make_bars_shapes_and_spacing` | `make_bars()` produces correctly spaced `BarEvent`s |
+| `test_make_bars_feed_engine` | Synthetic bars drive the engine to a ready MA |
+| `test_on_event_returns_snapshot_and_signal` | `FeatureStrategyRunner.on_event()` returns `(snapshot, signal)` |
+| `test_run_yields_event_snapshot_signal_in_order` | `runner.run()` yields `(event, snapshot, signal)` in order |
+| `test_runner_matches_direct_calls` | Runner output equals driving engine + strategy by hand |
+| `test_health_summary_delegates_to_engine` | `runner.health_summary()` returns the engine's diagnostic dict |
+| `test_registry_contains_ma_crossover` | `STRATEGY_REGISTRY` has the `ma_crossover` entry |
+| `test_entry_wires_config_strategy_and_build_specs` | The registry entry wires config/strategy/build_specs correctly |
+| `test_unknown_strategy_raises_helpful_error` | `get_entry()` raises a listing error for unknown names |
+| `test_strategy_imports_cleanly_from_top_level` | `feature_strategies.strategies.ma_crossover` imports without error |
+| `test_strategy_imports_only_public_api` | Strategy source imports `features.api`, never `features.compute.*` |
+| `test_build_specs_returns_two_rolling_mean_specs` | `build_specs()` returns two `rolling_mean` `FeatureSpec`s |
+| `test_value_and_is_ready_delegate_to_engine` | `runner.value()` / `runner.is_ready()` reflect engine state |
+| `test_run_strategy_with_config` | `run_strategy.main(--config …)` runs ma_crossover and prints BUY + SELL |
+| `test_run_strategy_with_strategy_flag_only` | `run_strategy.main(--strategy ma_crossover)` runs from defaults |
+| `test_run_strategy_requires_a_strategy` | `run_strategy.main([])` exits without a strategy |
+| `test_legacy_wrapper_still_works` | `scripts/run_ma_crossover_demo.py` forwards to the shared runner |
+
 ---
 
 ## 8. Constraints Preserved
@@ -213,9 +326,9 @@ File: `nautilus_ext/tests/test_ma_crossover.py`
 | No pandas in hot path | ✓ `RollingWindowState` (deque + running sum) |
 | No full-history recomputation | ✓ O(1) push; ring buffer never exceeds `window` entries |
 | No sorting in `on_event()` | ✓ Topo order pre-computed at construction; this demo has no derived features |
-| No backend internals access | ✓ Strategy only imports `SpecFeatureEngine`, `FeatureSpec`; no `features.py` or `state.py` |
+| No backend internals access | ✓ `feature_strategies/strategies/ma_crossover.py` imports only from `nautilus_ext.features.api`; no `features.py`, `state.py`, or engine internals. `test_strategy_imports_only_public_api` + `test_strategy_uses_only_snapshot_public_api` enforce it. |
 | No expression parser | ✓ Feature type resolved by `params["type"]` dict lookup |
 
 ---
 
-*Strategy demo for `nautilus_ext.features.compute`. Module path: `scripts/run_ma_crossover_demo.py`.*
+*Strategy: `feature_strategies/strategies/ma_crossover.py` · registry: `feature_strategies/registry.py` · shared runner: `feature_strategies/run_strategy.py` · public API: `nautilus_ext/features/api.py` · execution helper: `nautilus_ext/features/runner.py` · demo data: `nautilus_ext/features/examples/synthetic_bars.py`. See also `feature_strategies/README.md`.*

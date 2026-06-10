@@ -12,12 +12,30 @@ Coverage
 """
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 
 import pytest
 
-from nautilus_ext.features.compute.engine import SpecFeatureEngine
-from nautilus_ext.features.compute.spec import FeatureSpec
+# Strategy-facing imports go through the stable public facade, never the deep
+# compute.* paths and never compute/features.py.
+from nautilus_ext.features.api import FeatureSpec, SpecFeatureEngine
+from nautilus_ext.features.examples.synthetic_bars import (
+    ONE_SECOND_NS,
+    BarEvent,
+    make_bars,
+)
+from nautilus_ext.features.runner import FeatureStrategyRunner
+
+# The strategy lives in the top-level, user-facing package; the shared runner
+# and explicit registry drive every strategy.
+from feature_strategies.registry import STRATEGY_REGISTRY, get_entry
+from feature_strategies.strategies.ma_crossover import (
+    MovingAverageCrossoverConfig,
+    MovingAverageCrossoverStrategy,
+    build_ma_crossover_specs,
+    build_specs,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -293,3 +311,273 @@ class TestMACrossover:
             engine.on_event(b)
         assert engine.value("ma5_close") is None
         assert engine.is_ready("ma5_close") is False
+
+
+# ===========================================================================
+# Refactored strategy layer: nautilus_ext.features.strategies.ma_crossover
+# ===========================================================================
+
+def _strategy_engine(config: MovingAverageCrossoverConfig) -> SpecFeatureEngine:
+    return SpecFeatureEngine(specs=build_ma_crossover_specs(config), stamp_process_time=False)
+
+
+class _OnlyValueSnapshot:
+    """Snapshot stand-in exposing *only* the public ``value`` accessor.
+
+    If MovingAverageCrossoverStrategy reached into snapshot internals (the
+    ``.values`` dict, FeatureValue objects, etc.) it would fail against this
+    object — so passing it proves the strategy stays on the public API.
+    """
+
+    def __init__(self, mapping: dict[str, float | None]) -> None:
+        self._mapping = mapping
+
+    def value(self, name: str, default=None):  # noqa: ANN001 - mirror public signature
+        return self._mapping.get(name, default)
+
+
+class TestMACrossoverStrategy:
+
+    def test_build_specs_returns_exactly_two_rolling_mean_specs(self):
+        specs = build_ma_crossover_specs(MovingAverageCrossoverConfig())
+        assert len(specs) == 2
+        assert all(s.params["type"] == "rolling_mean" for s in specs)
+        assert {s.name for s in specs} == {"ma5_close", "ma20_close"}
+        assert {s.window for s in specs} == {5, 20}
+
+    def test_build_specs_honours_custom_config(self):
+        config = MovingAverageCrossoverConfig(fast_window=3, slow_window=8)
+        windows = {s.name: s.window for s in build_ma_crossover_specs(config)}
+        assert windows == {"ma5_close": 3, "ma20_close": 8}
+
+    def test_strategy_emits_buy_on_upward_crossover(self):
+        config = MovingAverageCrossoverConfig()
+        engine = _strategy_engine(config)
+        strategy = MovingAverageCrossoverStrategy(config)
+        engine.warmup(iter(bars([100.0] * 20)))
+
+        # First ready snapshot seeds prev (MA5 == MA20 == 100) -> HOLD.
+        seed = strategy.on_snapshot(engine.on_event(Bar(close=100.0, event_time_ns=_s(20))))
+        spike = strategy.on_snapshot(engine.on_event(Bar(close=200.0, event_time_ns=_s(21))))
+
+        assert seed == "HOLD"
+        assert spike == "BUY"
+
+    def test_strategy_emits_sell_on_downward_crossover(self):
+        config = MovingAverageCrossoverConfig()
+        engine = _strategy_engine(config)
+        strategy = MovingAverageCrossoverStrategy(config)
+        engine.warmup(iter(bars([100.0] * 20)))
+
+        seed = strategy.on_snapshot(engine.on_event(Bar(close=100.0, event_time_ns=_s(20))))
+        drop = strategy.on_snapshot(engine.on_event(Bar(close=0.0, event_time_ns=_s(21))))
+
+        assert seed == "HOLD"
+        assert drop == "SELL"
+
+    def test_strategy_emits_hold_when_not_ready(self):
+        config = MovingAverageCrossoverConfig()
+        engine = _strategy_engine(config)
+        strategy = MovingAverageCrossoverStrategy(config)
+        # Only 3 bars: neither MA window is filled yet.
+        signals = [strategy.on_snapshot(engine.on_event(b)) for b in bars([100.0] * 3)]
+        assert signals == ["HOLD", "HOLD", "HOLD"]
+
+    def test_strategy_first_ready_snapshot_is_hold(self):
+        """A crossover needs two consecutive ready snapshots; the first is HOLD."""
+        config = MovingAverageCrossoverConfig()
+        engine = _strategy_engine(config)
+        strategy = MovingAverageCrossoverStrategy(config)
+        signals = [strategy.on_snapshot(engine.on_event(b)) for b in bars([float(i) for i in range(25)])]
+        # The first 4 snapshots are not-ready (HOLD); the 5th is the first ready
+        # one and must also be HOLD because there is no prior ready value.
+        assert signals[4] == "HOLD"
+
+    def test_strategy_uses_only_snapshot_public_api(self):
+        """Strategy works against an object exposing only ``value()``."""
+        strategy = MovingAverageCrossoverStrategy(MovingAverageCrossoverConfig())
+        assert strategy.on_snapshot(_OnlyValueSnapshot({"ma5_close": 100.0, "ma20_close": 100.0})) == "HOLD"
+        assert strategy.on_snapshot(_OnlyValueSnapshot({"ma5_close": 120.0, "ma20_close": 105.0})) == "BUY"
+        assert strategy.on_snapshot(_OnlyValueSnapshot({"ma5_close": 90.0, "ma20_close": 105.0})) == "SELL"
+
+
+class TestSyntheticBars:
+
+    def test_make_bars_shapes_and_spacing(self):
+        events = make_bars([100.0, 101.0, 102.0], instrument_id="ETH/USDT")
+        assert len(events) == 3
+        assert all(isinstance(e, BarEvent) for e in events)
+        assert [e.close for e in events] == [100.0, 101.0, 102.0]
+        assert all(e.event_type == "bar" for e in events)
+        assert all(e.instrument_id == "ETH/USDT" for e in events)
+        assert [e.event_time_ns for e in events] == [0, ONE_SECOND_NS, 2 * ONE_SECOND_NS]
+
+    def test_make_bars_feed_engine(self):
+        config = MovingAverageCrossoverConfig()
+        engine = _strategy_engine(config)
+        snap = None
+        for bar in make_bars([100.0] * 5):
+            snap = engine.on_event(bar)
+        assert snap.is_ready("ma5_close")
+        assert snap.value("ma5_close") == pytest.approx(100.0)
+
+
+class TestFeatureStrategyRunner:
+
+    def _runner(self, config: MovingAverageCrossoverConfig) -> FeatureStrategyRunner:
+        # The runner builds its own engine from specs (spec-based facade API).
+        return FeatureStrategyRunner(
+            build_specs(config),
+            MovingAverageCrossoverStrategy(config),
+        )
+
+    def test_value_and_is_ready_delegate_to_engine(self):
+        config = MovingAverageCrossoverConfig()
+        runner = self._runner(config)
+        assert runner.is_ready(config.fast_name) is False
+        runner.warmup(iter(bars([100.0] * 20)))
+        assert runner.is_ready(config.fast_name) is True
+        assert runner.value(config.fast_name) == pytest.approx(100.0)
+
+    def test_health_summary_delegates_to_engine(self):
+        config = MovingAverageCrossoverConfig()
+        runner = self._runner(config)
+        runner.warmup(iter(bars([100.0] * 20)))
+        health = runner.health_summary()
+        assert isinstance(health, dict)
+        assert health["n_features"] == 2
+
+    def test_on_event_returns_snapshot_and_signal(self):
+        config = MovingAverageCrossoverConfig()
+        runner = self._runner(config)
+        runner.warmup(iter(bars([100.0] * 20)))
+
+        snap0, sig0 = runner.on_event(Bar(close=100.0, event_time_ns=_s(20)))
+        snap1, sig1 = runner.on_event(Bar(close=200.0, event_time_ns=_s(21)))
+
+        assert sig0 == "HOLD"
+        assert sig1 == "BUY"
+        assert snap1.value(config.fast_name) > snap1.value(config.slow_name)
+
+    def test_run_yields_event_snapshot_signal_in_order(self):
+        config = MovingAverageCrossoverConfig()
+        runner = self._runner(config)
+        runner.warmup(iter(bars([100.0] * 20)))
+
+        live = make_bars([100.0, 110.0, 110.0], start_ns=_s(20))
+        rows = list(runner.run(live))
+
+        assert [event for event, _, _ in rows] == live
+        signals = [signal for _, _, signal in rows]
+        assert signals[0] == "HOLD"      # seed
+        assert "BUY" in signals
+        # snapshot/signal agree with strategy semantics
+        for _, snap, _ in rows:
+            assert snap is not None
+
+    def test_runner_matches_direct_calls(self):
+        """Runner output equals driving engine + strategy by hand."""
+        config = MovingAverageCrossoverConfig()
+        live_closes = [100.0] + [110.0] * 3 + [90.0] * 3
+
+        # via runner
+        runner = self._runner(config)
+        runner.warmup(iter(bars([100.0] * 20)))
+        runner_signals = [s for _, _, s in runner.run(make_bars(live_closes, start_ns=_s(20)))]
+
+        # by hand
+        engine = _strategy_engine(config)
+        strategy = MovingAverageCrossoverStrategy(config)
+        engine.warmup(iter(bars([100.0] * 20)))
+        manual_signals = [
+            strategy.on_snapshot(engine.on_event(b))
+            for b in make_bars(live_closes, start_ns=_s(20))
+        ]
+
+        assert runner_signals == manual_signals
+
+
+def _config_path() -> "Path":
+    from pathlib import Path
+
+    return Path(__file__).resolve().parents[2] / "feature_strategies" / "configs" / "ma_crossover.yaml"
+
+
+class TestRegistry:
+    """The explicit strategy registry."""
+
+    def test_registry_contains_ma_crossover(self):
+        assert "ma_crossover" in STRATEGY_REGISTRY
+
+    def test_entry_wires_config_strategy_and_build_specs(self):
+        entry = get_entry("ma_crossover")
+        assert entry.config_cls is MovingAverageCrossoverConfig
+        assert entry.strategy_cls is MovingAverageCrossoverStrategy
+        assert entry.build_specs is build_specs
+
+    def test_unknown_strategy_raises_helpful_error(self):
+        with pytest.raises(KeyError, match="Unknown strategy"):
+            get_entry("does_not_exist")
+
+
+class TestTopLevelLayer:
+    """The user-facing layer: top-level package, facades, shared runner."""
+
+    def test_strategy_imports_cleanly_from_top_level(self):
+        import feature_strategies.strategies.ma_crossover as strat
+
+        assert hasattr(strat, "MovingAverageCrossoverConfig")
+        assert hasattr(strat, "MovingAverageCrossoverStrategy")
+        assert hasattr(strat, "build_specs")
+        # build_specs is the canonical name; the old name remains as an alias.
+        assert strat.build_ma_crossover_specs is strat.build_specs
+
+    def test_strategy_imports_only_public_api(self):
+        """The strategy module must not reach into compute internals."""
+        import feature_strategies.strategies.ma_crossover as strat
+
+        src = inspect.getsource(strat)
+        assert "features.compute" not in src
+        assert "import features" not in src
+        assert "nautilus_ext.features.api" in src
+
+    def test_build_specs_returns_two_rolling_mean_specs(self):
+        specs = build_specs(MovingAverageCrossoverConfig())
+        assert len(specs) == 2
+        assert all(isinstance(s, FeatureSpec) for s in specs)
+        assert all(s.params["type"] == "rolling_mean" for s in specs)
+
+    def test_run_strategy_with_config(self, capsys):
+        from feature_strategies.run_strategy import main
+
+        main(["--config", str(_config_path())])
+        out = capsys.readouterr().out
+        assert "[ma_crossover] warmed up" in out
+        assert "BUY" in out
+        assert "SELL" in out
+
+    def test_run_strategy_with_strategy_flag_only(self, capsys):
+        from feature_strategies.run_strategy import main
+
+        main(["--strategy", "ma_crossover"])
+        out = capsys.readouterr().out
+        assert "[ma_crossover] warmed up" in out
+        assert "BUY" in out
+
+    def test_run_strategy_requires_a_strategy(self):
+        from feature_strategies.run_strategy import main
+
+        with pytest.raises(SystemExit):
+            main([])  # no --config and no --strategy
+
+    def test_legacy_wrapper_still_works(self, capsys):
+        import scripts.run_ma_crossover_demo as legacy
+        from feature_strategies.run_strategy import main as shared_main
+
+        # The wrapper forwards to the shared runner.
+        assert legacy.main is shared_main
+        legacy.main(["--config", str(_config_path())])
+        out = capsys.readouterr().out
+        assert "[ma_crossover] warmed up" in out
+        assert "BUY" in out
+        assert "SELL" in out
