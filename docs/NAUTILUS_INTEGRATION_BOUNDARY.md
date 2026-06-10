@@ -17,7 +17,7 @@ forked from.
 
 | Layer | Package | Owns |
 |-------|---------|------|
-| Data processing | `data_engine/` | `BarEvent` & lightweight market events, synthetic/csv_bars/live_synthetic sources, CSV parsing, timestamp conversion, warmup/live split, adapters, stream abstraction |
+| Data processing | `data_engine/` | `BarEvent` & lightweight market events, data sources (`synthetic`, `csv_bars`, `parquet_bars`/`hive_parquet_bars`, `live_synthetic`), CSV & Hive-Parquet parsing, timestamp conversion, warmup/live split, adapters, stream abstraction |
 | Feature processing | `nautilus_ext/features/` (esp. `features/compute/`) | `FeatureSpec`, `FeatureEngine`, rolling states, update DAG/order, warmup, incremental update, `FeatureSnapshot` |
 | Orchestration | `strategy_framework/` | `StrategyPlugin`, registry, output, signal recording, execution **backend abstraction** (`backends/`) |
 | User strategies | `strategies/` | strategy definitions + YAML configs |
@@ -31,7 +31,7 @@ its build/package metadata and tests.
 
 ## What we use today
 
-- `data_engine` for all data loading (synthetic / CSV / live skeleton).
+- `data_engine` for all data loading (synthetic / CSV / Hive-Parquet / live skeleton).
 - `nautilus_ext/features` for all feature computation.
 - `strategy_framework` to orchestrate, plus the dependency-free backends
   (`signal_recorder`, `paper`).

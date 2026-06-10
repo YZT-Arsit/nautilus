@@ -1,0 +1,211 @@
+"""Tests for the Hive-partitioned Parquet bar source (data_engine)."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+pa = pytest.importorskip("pyarrow")
+ds = pytest.importorskip("pyarrow.dataset")
+
+from data_engine import load_events
+from data_engine.sources.parquet_bars import ParquetBarSource, load_parquet_bars
+from data_engine.time import ONE_SECOND_NS
+
+
+def _write_dataset(root: Path, columns: dict, partitioning: list[str]) -> Path:
+    """Write a Hive-partitioned Parquet dataset and return its root."""
+    table = pa.table(columns)
+    ds.write_dataset(
+        table,
+        str(root),
+        format="parquet",
+        partitioning=partitioning,
+        partitioning_flavor="hive",
+        existing_data_behavior="overwrite_or_ignore",
+    )
+    return root
+
+
+def _ohlcv_dataset(root: Path) -> Path:
+    """Two trading dates x two instruments, 4 bars each, full OHLCV."""
+    n_dates, instruments = ("2024-01-01", "2024-01-02"), ("BTC-USDT", "ETH-USDT")
+    cols = {k: [] for k in
+            ("event_time_ns", "open", "high", "low", "close", "volume",
+             "trading_date", "instrument_id")}
+    for date in n_dates:
+        for inst in instruments:
+            for i in range(4):
+                cols["event_time_ns"].append(i * ONE_SECOND_NS)
+                cols["open"].append(100.0 + i)
+                cols["high"].append(101.0 + i)
+                cols["low"].append(99.0 + i)
+                cols["close"].append(100.5 + i)
+                cols["volume"].append(10.0 + i)
+                cols["trading_date"].append(date)
+                cols["instrument_id"].append(inst)
+    return _write_dataset(root, cols, ["trading_date", "instrument_id"])
+
+
+# A. Basic load / split ------------------------------------------------------
+
+class TestBasicLoad:
+
+    def test_warmup_live_split_and_sorted(self, tmp_path):
+        root = _ohlcv_dataset(tmp_path / "bars")
+        # Filter to a single partition (4 bars), warmup 2 -> live 2.
+        src = ParquetBarSource(
+            root=str(root), instrument_id="BTC-USDT", warmup_bars=2,
+            filters={"trading_date": "2024-01-01", "instrument_id": "BTC-USDT"},
+        )
+        warmup, live = src.warmup(), src.stream()
+        assert len(warmup) == 2 and len(live) == 2
+        times = [b.event_time_ns for b in warmup + live]
+        assert times == sorted(times)  # sorted once after load
+        assert warmup[0].close == 100.5
+
+    def test_full_ohlcv_fields(self, tmp_path):
+        root = _ohlcv_dataset(tmp_path / "bars")
+        src = ParquetBarSource(
+            root=str(root), instrument_id="BTC-USDT", warmup_bars=0,
+            filters={"trading_date": "2024-01-01", "instrument_id": "BTC-USDT"},
+        )
+        bar = src.stream()[0]
+        assert (bar.open, bar.high, bar.low, bar.close, bar.volume) == (100.0, 101.0, 99.0, 100.5, 10.0)
+
+
+# B. Filters / partition pruning ---------------------------------------------
+
+class TestFilters:
+
+    def test_filter_selects_one_partition(self, tmp_path):
+        root = _ohlcv_dataset(tmp_path / "bars")
+        # 2 dates x 2 instruments x 4 = 16 rows total; one (date, inst) = 4 rows.
+        all_bars = ParquetBarSource(root=str(root), instrument_id="X").stream()
+        assert len(all_bars) == 16
+        one = ParquetBarSource(
+            root=str(root), instrument_id="ETH-USDT",
+            filters={"trading_date": "2024-01-02", "instrument_id": "ETH-USDT"},
+        ).stream()
+        assert len(one) == 4
+
+
+# C. Defaults / timestamps ---------------------------------------------------
+
+class TestDefaultsAndTimestamps:
+
+    def test_missing_optional_fields_default_to_close(self, tmp_path):
+        root = _write_dataset(
+            tmp_path / "minimal",
+            {"event_time_ns": [0, ONE_SECOND_NS], "close": [100.0, 101.0],
+             "trading_date": ["2024-01-01", "2024-01-01"]},
+            ["trading_date"],
+        )
+        bar = ParquetBarSource(root=str(root), instrument_id="X", warmup_bars=0).stream()[0]
+        assert bar.open == bar.high == bar.low == 100.0
+        assert bar.volume == 0.0
+
+    def test_timestamp_unit_conversion(self, tmp_path):
+        root = _write_dataset(
+            tmp_path / "ms",
+            {"ts": [5, 6], "close": [100.0, 101.0], "trading_date": ["d", "d"]},
+            ["trading_date"],
+        )
+        bars = ParquetBarSource(
+            root=str(root), instrument_id="X", warmup_bars=0,
+            timestamp_column="ts", timestamp_unit="ms",
+        ).stream()
+        assert [b.event_time_ns for b in bars] == [5 * 1_000_000, 6 * 1_000_000]
+
+    def test_missing_timestamp_column_generates_monotonic(self, tmp_path):
+        root = _write_dataset(
+            tmp_path / "nots",
+            {"close": [100.0, 101.0, 102.0], "trading_date": ["d", "d", "d"]},
+            ["trading_date"],
+        )
+        bars = ParquetBarSource(
+            root=str(root), instrument_id="X", warmup_bars=0,
+            timestamp_column="event_time_ns",  # absent -> monotonic fallback
+        ).stream()
+        assert [b.event_time_ns for b in bars] == [0, ONE_SECOND_NS, 2 * ONE_SECOND_NS]
+
+
+# D. Error handling ----------------------------------------------------------
+
+class TestErrors:
+
+    def test_missing_close_column_raises(self, tmp_path):
+        root = _write_dataset(
+            tmp_path / "noclose",
+            {"event_time_ns": [0, 1], "price": [100.0, 101.0], "trading_date": ["d", "d"]},
+            ["trading_date"],
+        )
+        with pytest.raises(ValueError, match="close column"):
+            ParquetBarSource(root=str(root), instrument_id="X").stream()
+
+    def test_null_close_raises(self, tmp_path):
+        root = _write_dataset(
+            tmp_path / "nullclose",
+            {"event_time_ns": [0, 1], "close": [100.0, None], "trading_date": ["d", "d"]},
+            ["trading_date"],
+        )
+        with pytest.raises(ValueError, match="close"):
+            ParquetBarSource(root=str(root), instrument_id="X").stream()
+
+    def test_unsupported_unit_raises_in_init(self):
+        with pytest.raises(ValueError, match="unsupported timestamp_unit"):
+            ParquetBarSource(root="x", instrument_id="X", timestamp_unit="weeks")
+
+    def test_missing_root_raises(self):
+        with pytest.raises(ValueError, match="requires a 'root'"):
+            load_parquet_bars({"mode": "parquet_bars"})
+
+
+# E. Loader integration / aliases --------------------------------------------
+
+class TestLoaderAliases:
+
+    @pytest.mark.parametrize("mode", ["parquet_bars", "hive_parquet_bars"])
+    def test_both_aliases_work(self, tmp_path, mode):
+        root = _ohlcv_dataset(tmp_path / "bars")
+        warmup, live = load_events({
+            "mode": mode,
+            "root": str(root),
+            "instrument_id": "BTC-USDT",
+            "warmup_bars": 2,
+            "filters": {"trading_date": "2024-01-01", "instrument_id": "BTC-USDT"},
+        })
+        assert len(warmup) == 2 and len(list(live)) == 2
+
+
+# F. End-to-end via run_strategy ---------------------------------------------
+
+class TestRunStrategyParquet:
+
+    def test_run_strategy_with_parquet_config(self, tmp_path, monkeypatch, capsys):
+        import run_strategy
+
+        # 25 monotonically rising-then-falling bars in one partition.
+        closes = [100.0] * 21 + [110.0, 110.0, 90.0, 90.0]
+        root = _write_dataset(
+            tmp_path / "bars",
+            {"event_time_ns": [i * ONE_SECOND_NS for i in range(len(closes))],
+             "close": closes,
+             "trading_date": ["2024-01-01"] * len(closes)},
+            ["trading_date"],
+        )
+        cfg = tmp_path / "parquet.yaml"
+        cfg.write_text(
+            "strategy: ma_crossover\n"
+            "params: {fast_window: 5, slow_window: 20}\n"
+            f"data:\n"
+            f"  mode: parquet_bars\n"
+            f"  root: {root}\n"
+            f"  instrument_id: BTC-USDT\n"
+            f"  warmup_bars: 20\n"
+            f"  filters: {{trading_date: '2024-01-01'}}\n"
+            "output: {print_table: false}\n"
+        )
+        monkeypatch.chdir(tmp_path)  # prove path independence
+        run_strategy.main(["--config", str(cfg)])
+        assert "[ma_crossover] warmed up" in capsys.readouterr().out

@@ -22,6 +22,7 @@ from data_engine import BarEvent, load_events, make_bar_event, make_bars
 | `streams/base.py` | `EventSource` protocol (`warmup()` / `stream()`) |
 | `sources/synthetic.py` | `SyntheticBarSource` + `load_synthetic_bars` |
 | `sources/csv_bars.py` | `CsvBarSource` + `load_csv_bars` (stdlib `csv`) |
+| `sources/parquet_bars.py` | `ParquetBarSource` + `load_parquet_bars` (Hive Parquet via `pyarrow`) |
 | `sources/live_synthetic.py` | `LiveSyntheticBarSource` + `load_live_synthetic` (generator) |
 | `loader.py` | `load_events(data_config)` — canonical entry, dispatches by `data.mode` |
 
@@ -30,13 +31,38 @@ from data_engine import BarEvent, load_events, make_bar_event, make_bars
 | Mode | Source | Live events |
 |------|--------|-------------|
 | `synthetic` | generated flat→rise→fall demo path | list |
-| `csv_bars` | historical replay from a local CSV | list |
+| `csv_bars` | historical replay from a local CSV (small demos/tests) | list |
+| `parquet_bars` / `hive_parquet_bars` | historical replay from a Hive-partitioned Parquet dataset (production-style) | list |
 | `live_synthetic` | streaming skeleton (no real feed) | generator |
 
-`csv_bars` reads one series, sorts by event time **once** in the loader, then
-splits the first `warmup_bars` rows as warmup. Missing O/H/L default to `close`,
-missing volume to `0.0`, and a missing timestamp column yields monotonic
-1-second timestamps.
+All historical sources sort by event time **once** after loading, then split the
+first `warmup_bars` rows as warmup. Missing O/H/L default to `close`, missing
+volume to `0.0`, and a missing timestamp column yields monotonic 1-second
+timestamps.
+
+- **`csv_bars`** — for small demo/test files (stdlib `csv`, no extra deps).
+- **`parquet_bars` / `hive_parquet_bars`** — preferred for larger historical
+  backtests. Reads a Hive-partitioned dataset with `pyarrow.dataset` using
+  **partition pruning** (simple equality `filters`) and **column pushdown**
+  (only needed bar columns are read). Example config:
+
+  ```yaml
+  data:
+    mode: parquet_bars        # or: hive_parquet_bars
+    root: data/bars
+    instrument_id: BTC/USDT
+    warmup_bars: 20
+    partition_cols: [trading_date, instrument_id]
+    filters:
+      trading_date: "2024-01-01"
+      instrument_id: BTC/USDT
+    timestamp_column: event_time_ns
+    timestamp_unit: ns
+  ```
+
+  `pyarrow` is the only added dependency; **no pandas**. The source returns plain
+  `BarEvent` objects and shares the design (not the code) of the older
+  `quant_feature_engine` Parquet store.
 
 ## Adding a real live source later
 

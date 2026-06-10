@@ -10,12 +10,15 @@ from typing import Any, Iterable
 
 from data_engine.sources.csv_bars import load_csv_bars
 from data_engine.sources.live_synthetic import load_live_synthetic
+from data_engine.sources.parquet_bars import load_parquet_bars
 from data_engine.sources.synthetic import load_synthetic_bars
 
 # mode -> loader. Register new sources here.
 _LOADERS = {
     "synthetic": load_synthetic_bars,
     "csv_bars": load_csv_bars,
+    "parquet_bars": load_parquet_bars,
+    "hive_parquet_bars": load_parquet_bars,  # alias of parquet_bars
     "live_synthetic": load_live_synthetic,
 }
 

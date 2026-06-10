@@ -84,10 +84,11 @@ def main(argv: list[str] | None = None) -> None:
     runner = FeatureStrategyRunner(specs, plugin.strategy_cls(config_obj))
 
     data_cfg = dict(cfg.get("data", {}))
-    if "path" in data_cfg:
-        # Resolve a relative data path against the repo root so the runner
-        # works regardless of the caller's CWD.
-        data_cfg["path"] = str(_resolve(data_cfg["path"]))
+    for location_key in ("path", "root"):
+        # Resolve a relative data location (CSV path / Parquet root) against the
+        # repo root so the runner works regardless of the caller's CWD.
+        if location_key in data_cfg:
+            data_cfg[location_key] = str(_resolve(data_cfg[location_key]))
     warmup_events, live_events = load_events(data_cfg)
     runner.warmup(iter(warmup_events))
     output.print_warmup_summary(name, len(warmup_events), runner, spec_names)

@@ -2,7 +2,8 @@
 
 Our own design; it does **not** depend on Nautilus Trader's native data system.
 Owns event dataclasses, timestamp/validation helpers, bar adapters, and data
-sources (synthetic, CSV historical, live synthetic skeleton).
+sources (synthetic, CSV historical, Hive-partitioned Parquet historical, live
+synthetic skeleton).
 
 Public API::
 
