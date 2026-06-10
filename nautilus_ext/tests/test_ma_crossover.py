@@ -19,7 +19,7 @@ import pytest
 
 # Strategy-facing imports go through the stable public facade, never the deep
 # compute.* paths and never compute/features.py.
-from nautilus_ext.features.api import FeatureSpec, SpecFeatureEngine
+from nautilus_ext.features.api import FeatureSpec, SpecFeatureEngine, rolling_mean_spec
 from nautilus_ext.features.examples.synthetic_bars import (
     ONE_SECOND_NS,
     BarEvent,
@@ -29,6 +29,8 @@ from nautilus_ext.features.runner import FeatureStrategyRunner
 
 # The strategy lives in the top-level, user-facing package; the shared runner
 # and explicit registry drive every strategy.
+from feature_strategies import output
+from feature_strategies.data_loaders import load_events, load_synthetic_bars
 from feature_strategies.registry import STRATEGY_REGISTRY, get_entry
 from feature_strategies.strategies.ma_crossover import (
     MovingAverageCrossoverConfig,
@@ -541,6 +543,101 @@ class TestConfigAndPureSignal:
     def test_crossover_signal_hold_when_no_cross(self):
         # fast stays above slow on both sides — no crossover
         assert crossover_signal(120.0, 100.0, 130.0, 105.0) == "HOLD"
+
+
+class TestSpecBuilder:
+    """The public rolling_mean_spec builder and its use in the strategy."""
+
+    def test_rolling_mean_spec_sets_params_type(self):
+        spec = rolling_mean_spec("ma10_close", input_type="bar", input_field="close", window=10)
+        assert isinstance(spec, FeatureSpec)
+        assert spec.name == "ma10_close"
+        assert spec.window == 10
+        assert spec.input_type == "bar"
+        assert spec.input_field == "close"
+        assert spec.params == {"type": "rolling_mean"}
+
+    def test_strategy_uses_rolling_mean_spec_not_raw_params(self):
+        """The strategy declares features via the builder, not raw params={...}."""
+        import feature_strategies.strategies.ma_crossover as strat
+
+        src = inspect.getsource(strat)
+        assert "rolling_mean_spec" in src
+        assert 'params={"type"' not in src  # no hand-written params plumbing
+
+    def test_build_specs_still_two_rolling_mean_specs(self):
+        specs = build_specs(MovingAverageCrossoverConfig())
+        assert len(specs) == 2
+        assert all(s.params["type"] == "rolling_mean" for s in specs)
+
+
+class TestDataLoaders:
+    """Data source selection lives outside run_strategy.py."""
+
+    def test_load_synthetic_bars_returns_warmup_and_live(self):
+        warmup, live = load_synthetic_bars({"warmup_bars": 20, "live_bars": 12})
+        assert len(warmup) == 20
+        assert len(live) == 12
+        assert all(isinstance(b, BarEvent) for b in warmup + live)
+        # Live bars continue in time after warmup.
+        assert live[0].event_time_ns == len(warmup) * ONE_SECOND_NS
+
+    def test_load_events_synthetic_mode(self):
+        warmup, live = load_events({"mode": "synthetic", "warmup_bars": 5, "live_bars": 5})
+        assert len(warmup) == 5 and len(live) == 5
+
+    def test_load_events_defaults_to_synthetic(self):
+        warmup, live = load_events({})
+        assert warmup and live
+
+    def test_load_events_honours_instrument_id(self):
+        warmup, _ = load_synthetic_bars({"instrument_id": "ETH/USDT", "warmup_bars": 3, "live_bars": 3})
+        assert all(b.instrument_id == "ETH/USDT" for b in warmup)
+
+    def test_load_events_unsupported_mode_raises(self):
+        with pytest.raises(ValueError, match="unsupported data mode"):
+            load_events({"mode": "live_feed"})
+
+
+class _BareEvent:
+    """An event lacking close / event_time_ns — output must not crash."""
+
+
+class TestOutput:
+    """Display formatting is defensive about event shape."""
+
+    def _snapshot_stub(self, values):
+        class _Snap:
+            def value(self, name, default=None):
+                return values.get(name, default)
+
+        return _Snap()
+
+    def test_row_with_close_and_time(self, capsys):
+        bar = make_bars([100.0], start_ns=5 * ONE_SECOND_NS)[0]
+        snap = self._snapshot_stub({"ma5_close": 100.0})
+        output.print_event_row(bar, snap, "BUY", ["ma5_close"])
+        out = capsys.readouterr().out
+        assert "BUY" in out
+        assert "100.00" in out          # close rendered
+        assert "5" in out               # t(s) rendered
+
+    def test_row_without_close_or_time(self, capsys):
+        snap = self._snapshot_stub({"ma5_close": None})
+        output.print_event_row(_BareEvent(), snap, "HOLD", ["ma5_close"])
+        out = capsys.readouterr().out
+        assert "HOLD" in out
+        assert "-" in out               # missing close/time rendered as "-"
+
+    def test_warmup_summary_and_header(self, capsys):
+        config = MovingAverageCrossoverConfig()
+        runner = FeatureStrategyRunner(build_specs(config), MovingAverageCrossoverStrategy(config))
+        runner.warmup(iter(bars([100.0] * 20)))
+        output.print_warmup_summary("ma_crossover", 20, runner, [config.fast_name, config.slow_name])
+        output.print_event_table_header([config.fast_name, config.slow_name])
+        out = capsys.readouterr().out
+        assert "[ma_crossover] warmed up on 20 bars" in out
+        assert "signal" in out
 
 
 class TestRegistry:

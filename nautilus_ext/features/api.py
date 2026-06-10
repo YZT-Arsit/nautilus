@@ -22,7 +22,10 @@ SpecFeatureEngine
     Spec-driven engine that turns events into snapshots. Most strategy code
     should prefer :class:`nautilus_ext.features.runner.FeatureStrategyRunner`,
     which wraps engine construction and the live loop.
+rolling_mean_spec
+    Convenience builder for a rolling-mean ``FeatureSpec`` (hides ``params``).
 """
+from nautilus_ext.features.builders import rolling_mean_spec
 from nautilus_ext.features.compute import (
     FeatureSnapshot,
     FeatureSpec,
@@ -35,4 +38,5 @@ __all__ = [
     "FeatureValue",
     "FeatureSnapshot",
     "SpecFeatureEngine",
+    "rolling_mean_spec",
 ]

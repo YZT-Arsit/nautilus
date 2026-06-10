@@ -16,8 +16,10 @@ Strategy authors work there and never read or edit the compute layer.
 | `feature_strategies/strategies/ma_crossover.py` | Strategy logic: config, `build_specs`, BUY/SELL/HOLD rules | **Strategy authors** |
 | `feature_strategies/registry.py` | Explicit name → strategy mapping | yes — one line per strategy |
 | `feature_strategies/configs/ma_crossover.yaml` | Strategy parameters + data + output | strategy authors |
-| `feature_strategies/run_strategy.py` | **Shared** runner for *all* strategies | no — shared |
-| `nautilus_ext/features/api.py` | **Stable public API** facade (`FeatureSpec`, `FeatureSnapshot`, …) | no — import from it |
+| `feature_strategies/run_strategy.py` | **Shared** executor — coordination only | no — shared |
+| `feature_strategies/data_loaders.py` | Event-source selection (synthetic, …) | only to add a data source |
+| `feature_strategies/output.py` | Table formatting / printing | only to change display |
+| `nautilus_ext/features/api.py` | **Stable public API** facade (`FeatureSpec`, `FeatureSnapshot`, `rolling_mean_spec`, …) | no — import from it |
 | `nautilus_ext/features/runner.py` | `FeatureStrategyRunner` — builds the engine + runs the loop | no |
 | `nautilus_ext/features/examples/synthetic_bars.py` | `BarEvent` + `make_bars()` demo data | demo / test authors |
 | `nautilus_ext/features/compute/features.py` | Low-level feature **operator library** (rolling-mean, etc.) | **compute owners only** |
@@ -30,13 +32,21 @@ There is **one shared run script** for every strategy — you do not add a
    module per strategy (config + `build_specs` + signal logic). User-facing.
 2. **Registry** (`feature_strategies/registry.py`) — maps a strategy name to its
    `(config_cls, strategy_cls, build_specs)`. Explicit, no auto-discovery.
-3. **Shared runner** (`feature_strategies/run_strategy.py`) — selects a strategy
-   from the registry via `--config`/`--strategy`, builds specs, prepares
-   synthetic data, runs warmup + the live loop, prints the table. Strategy-agnostic.
-4. **Public API** (`nautilus_ext/features/api.py`) — the stable import surface.
-   Strategies do `from nautilus_ext.features.api import FeatureSpec, FeatureSnapshot`,
+3. **Shared executor** (`feature_strategies/run_strategy.py`) — *coordination
+   only*: select a strategy from the registry via `--config`/`--strategy`, build
+   specs + runner, get events from `data_loaders`, run warmup + the live loop,
+   and hand each row to `output`. No data construction, no formatting, no
+   event-shape assumptions.
+4. **Data loaders** (`feature_strategies/data_loaders.py`) — `load_events(data)`
+   returns `(warmup_events, live_events)` for the configured `data.mode`
+   (`synthetic` for now). New sources plug in here.
+5. **Output** (`feature_strategies/output.py`) — warmup summary, table header,
+   and per-row printing. Event access is defensive (missing `close` /
+   `event_time_ns` render as `-`).
+6. **Public API** (`nautilus_ext/features/api.py`) — the stable import surface.
+   Strategies do `from nautilus_ext.features.api import FeatureSpec, FeatureSnapshot, rolling_mean_spec`,
    never the deep `compute.*` paths.
-5. **Execution helper** (`nautilus_ext/features/runner.py`) —
+7. **Execution helper** (`nautilus_ext/features/runner.py`) —
    `FeatureStrategyRunner(specs, strategy)` builds a `SpecFeatureEngine` and runs
    the warmup / per-event loop, yielding `(event, snapshot, signal)`:
 
@@ -47,7 +57,7 @@ There is **one shared run script** for every strategy — you do not add a
        ...
    ```
 
-6. **Compute layer** (`nautilus_ext/features/compute/`) — *how* features are
+8. **Compute layer** (`nautilus_ext/features/compute/`) — *how* features are
    computed. This is a **library**. `features.py` holds the incremental maths
    (rolling mean, etc.). Adding a **new strategy never requires editing it** —
    you compose existing operators by name through `FeatureSpec`. You touch
@@ -96,27 +106,20 @@ HOLD otherwise
 
 ## 2. How MA5 Maps to `rolling_mean`
 
-Both MAs are configured as `FeatureSpec` entries with type `rolling_mean`,
-built by `build_specs()` in the strategy module:
+Both MAs are configured as `rolling_mean` features, built by `build_specs()` in
+the strategy module via the `rolling_mean_spec` helper (which hides the
+`params={"type": ...}` backend plumbing). Feature names are derived from the
+config — `f"ma{window}_{input_field}"` — so they stay in sync with the windows:
 
 ```python
 # feature_strategies/strategies/ma_crossover.py
+from nautilus_ext.features.api import rolling_mean_spec
+
 def build_specs(config: MovingAverageCrossoverConfig) -> list[FeatureSpec]:
+    kw = {"input_type": config.input_type, "input_field": config.input_field}
     return [
-        FeatureSpec(
-            config.fast_name,        # "ma5_close"
-            input_type="bar",
-            input_field="close",
-            window=config.fast_window,   # 5
-            params={"type": "rolling_mean"},
-        ),
-        FeatureSpec(
-            config.slow_name,        # "ma20_close"
-            input_type="bar",
-            input_field="close",
-            window=config.slow_window,   # 20
-            params={"type": "rolling_mean"},
-        ),
+        rolling_mean_spec(config.fast_name, window=config.fast_window, **kw),  # "ma5_close",  window 5
+        rolling_mean_spec(config.slow_name, window=config.slow_window, **kw),  # "ma20_close", window 20
     ]
 ```
 
@@ -316,6 +319,14 @@ File: `nautilus_ext/tests/test_ma_crossover.py`
 | `test_run_strategy_with_strategy_flag_only` | `run_strategy.main(--strategy ma_crossover)` runs from defaults |
 | `test_run_strategy_requires_a_strategy` | `run_strategy.main([])` exits without a strategy |
 | `test_legacy_wrapper_still_works` | `scripts/run_ma_crossover_demo.py` forwards to the shared runner |
+| `test_rolling_mean_spec_sets_params_type` | `rolling_mean_spec()` builds a `rolling_mean` spec with the right fields |
+| `test_strategy_uses_rolling_mean_spec_not_raw_params` | Strategy uses the builder, not hand-written `params={...}` |
+| `test_load_synthetic_bars_returns_warmup_and_live` | `load_synthetic_bars()` returns correctly sized warmup/live bars |
+| `test_load_events_synthetic_mode` / `_defaults_to_synthetic` | `load_events()` dispatches the synthetic source |
+| `test_load_events_unsupported_mode_raises` | Unknown `data.mode` raises a clear error |
+| `test_row_with_close_and_time` | `output.print_event_row` renders close + time for bar events |
+| `test_row_without_close_or_time` | `output.print_event_row` renders `-` for events lacking those fields |
+| `test_warmup_summary_and_header` | `output` prints the warmup summary and table header |
 
 ---
 
@@ -331,4 +342,4 @@ File: `nautilus_ext/tests/test_ma_crossover.py`
 
 ---
 
-*Strategy: `feature_strategies/strategies/ma_crossover.py` · registry: `feature_strategies/registry.py` · shared runner: `feature_strategies/run_strategy.py` · public API: `nautilus_ext/features/api.py` · execution helper: `nautilus_ext/features/runner.py` · demo data: `nautilus_ext/features/examples/synthetic_bars.py`. See also `feature_strategies/README.md`.*
+*Strategy: `feature_strategies/strategies/ma_crossover.py` · registry: `feature_strategies/registry.py` · shared executor: `feature_strategies/run_strategy.py` · data loaders: `feature_strategies/data_loaders.py` · output: `feature_strategies/output.py` · public API: `nautilus_ext/features/api.py` · execution helper: `nautilus_ext/features/runner.py` · demo data: `nautilus_ext/features/examples/synthetic_bars.py`. See also `feature_strategies/README.md`.*

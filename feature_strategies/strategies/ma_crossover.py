@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nautilus_ext.features.api import FeatureSnapshot, FeatureSpec
+from nautilus_ext.features.api import FeatureSnapshot, FeatureSpec, rolling_mean_spec
 
 Signal = str  # "BUY" | "SELL" | "HOLD"
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -30,20 +30,11 @@ class MovingAverageCrossoverConfig:
         return f"ma{self.slow_window}_{self.input_field}"
 
 
-def _rolling_mean_spec(name: str, window: int, config: MovingAverageCrossoverConfig) -> FeatureSpec:
-    return FeatureSpec(
-        name,
-        input_type=config.input_type,
-        input_field=config.input_field,
-        window=window,
-        params={"type": "rolling_mean"},
-    )
-
-
 def build_specs(config: MovingAverageCrossoverConfig) -> list[FeatureSpec]:
+    kw = {"input_type": config.input_type, "input_field": config.input_field}
     return [
-        _rolling_mean_spec(config.fast_name, config.fast_window, config),
-        _rolling_mean_spec(config.slow_name, config.slow_window, config),
+        rolling_mean_spec(config.fast_name, window=config.fast_window, **kw),
+        rolling_mean_spec(config.slow_name, window=config.slow_window, **kw),
     ]
 
 

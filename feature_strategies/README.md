@@ -10,7 +10,9 @@ normally never touch it.
 ```
 feature_strategies/
 ├── README.md                  ← this file
-├── run_strategy.py            ← the ONE shared runner for every strategy
+├── run_strategy.py            ← the ONE shared executor (coordination only)
+├── data_loaders.py            ← chooses the event source (synthetic, …)
+├── output.py                  ← table formatting / printing
 ├── registry.py                ← explicit name → strategy mapping
 ├── configs/
 │   └── ma_crossover.yaml       ← per-strategy parameters
@@ -26,11 +28,17 @@ feature_strategies/
 | **Strategy** | `feature_strategies/strategies/<name>.py` | **Yes** — your code |
 | **Registry** | `feature_strategies/registry.py` | yes — one line per strategy |
 | **Config** | `feature_strategies/configs/<name>.yaml` | yes — choose parameters |
-| **Shared runner** | `feature_strategies/run_strategy.py` | no — shared by all strategies |
+| **Shared executor** | `feature_strategies/run_strategy.py` | no — coordination only |
+| **Data loaders** | `feature_strategies/data_loaders.py` | only to add a data source |
+| **Output** | `feature_strategies/output.py` | only to change display |
 | **Public API** | `nautilus_ext/features/api.py` | no — stable import surface |
 | **Execution helper** | `nautilus_ext/features/runner.py` | no — `FeatureStrategyRunner` |
 | **Demo data** | `nautilus_ext/features/examples/synthetic_bars.py` | for demos/tests |
 | **Compute engine** | `nautilus_ext/features/compute/` | **only to add a new operator** |
+
+`run_strategy.py` only *coordinates*: load config → registry lookup → build
+strategy + runner → `load_events()` → run → hand each row to `output`. Data
+construction lives in `data_loaders.py`; all printing lives in `output.py`.
 
 ## Running
 
@@ -52,7 +60,7 @@ the MA crossover config.
 
 ```python
 from dataclasses import dataclass
-from nautilus_ext.features.api import FeatureSnapshot, FeatureSpec
+from nautilus_ext.features.api import FeatureSnapshot, FeatureSpec, rolling_mean_spec
 
 @dataclass(frozen=True)
 class MyStratConfig:
@@ -60,8 +68,9 @@ class MyStratConfig:
     name: str = "ma_close"
 
 def build_specs(config: MyStratConfig) -> list[FeatureSpec]:
-    return [FeatureSpec(config.name, input_type="bar", input_field="close",
-                        window=config.window, params={"type": "rolling_mean"})]
+    # rolling_mean_spec hides the params={"type": ...} backend plumbing.
+    return [rolling_mean_spec(config.name, input_type="bar",
+                              input_field="close", window=config.window)]
 
 class MyStrat:
     def __init__(self, config: MyStratConfig) -> None:
