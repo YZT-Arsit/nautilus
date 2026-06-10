@@ -157,3 +157,49 @@ tests/test_data/**/backtest/**
 !tests/test_data/nautilus/*/**.parquet
 !tests/integration_tests/adapters/betfair/responses/*.log
 !/nautilus_core/adapters/src/databento/test_data/*
+
+# ---------------------------------------------------------------------------
+# Preventive hardening (added during repo cleanup).
+# Guards against accidentally committing ML/experiment artefacts, extra
+# caches and scratch dirs. Deliberately NOT ignoring *.csv / *.tsv because
+# the repo tracks many legitimate upstream test-data CSVs, nor a bare
+# models/ since that could shadow a source package.
+# ---------------------------------------------------------------------------
+
+# Python packaging / extra caches
+*.py[cod]
+*.egg-info/
+pip-wheel-metadata/
+.env.*
+# keep the committed env template
+!.env.example
+
+# Model / ML weights and serialized artefacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.joblib
+*.feather
+*.arrow
+*.pkl
+# keep legitimate upstream IB test fixtures
+!tests/integration_tests/adapters/interactive_brokers/resources/streaming/*.pkl
+model_cache/
+huggingface/
+
+# Experiment tracking / generated reports
+artifacts/
+checkpoints/
+runs/
+wandb/
+mlruns/
+tensorboard/
+reports/generated/
+local_outputs/
+scratch/
+
+# Editor / temp leftovers
+*.swp
+*.tmp
