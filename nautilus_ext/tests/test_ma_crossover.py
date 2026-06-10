@@ -35,6 +35,7 @@ from feature_strategies.strategies.ma_crossover import (
     MovingAverageCrossoverStrategy,
     build_ma_crossover_specs,
     build_specs,
+    crossover_signal,
 )
 
 
@@ -346,9 +347,10 @@ class TestMACrossoverStrategy:
         assert {s.window for s in specs} == {5, 20}
 
     def test_build_specs_honours_custom_config(self):
+        # Names are now derived from windows + input_field.
         config = MovingAverageCrossoverConfig(fast_window=3, slow_window=8)
         windows = {s.name: s.window for s in build_ma_crossover_specs(config)}
-        assert windows == {"ma5_close": 3, "ma20_close": 8}
+        assert windows == {"ma3_close": 3, "ma8_close": 8}
 
     def test_strategy_emits_buy_on_upward_crossover(self):
         config = MovingAverageCrossoverConfig()
@@ -501,6 +503,44 @@ def _config_path() -> "Path":
     from pathlib import Path
 
     return Path(__file__).resolve().parents[2] / "feature_strategies" / "configs" / "ma_crossover.yaml"
+
+
+class TestConfigAndPureSignal:
+    """Compact strategy file: property-derived names + pure crossover function."""
+
+    def test_default_config_generates_names(self):
+        config = MovingAverageCrossoverConfig()
+        assert config.fast_name == "ma5_close"
+        assert config.slow_name == "ma20_close"
+
+    def test_custom_config_generates_names(self):
+        config = MovingAverageCrossoverConfig(fast_window=3, slow_window=8, input_field="open")
+        assert config.fast_name == "ma3_open"
+        assert config.slow_name == "ma8_open"
+
+    def test_build_specs_names_and_windows(self):
+        config = MovingAverageCrossoverConfig(fast_window=3, slow_window=8)
+        specs = build_specs(config)
+        assert [s.name for s in specs] == ["ma3_close", "ma8_close"]
+        assert [s.window for s in specs] == [3, 8]
+        assert all(s.params["type"] == "rolling_mean" for s in specs)
+
+    def test_crossover_signal_hold_when_any_none(self):
+        assert crossover_signal(None, None, None, None) == "HOLD"
+        assert crossover_signal(100.0, 100.0, 102.0, None) == "HOLD"
+        assert crossover_signal(None, 100.0, 102.0, 100.0) == "HOLD"
+
+    def test_crossover_signal_buy(self):
+        # prev fast <= slow, now fast > slow
+        assert crossover_signal(100.0, 100.0, 120.0, 105.0) == "BUY"
+
+    def test_crossover_signal_sell(self):
+        # prev fast >= slow, now fast < slow
+        assert crossover_signal(100.0, 100.0, 80.0, 95.0) == "SELL"
+
+    def test_crossover_signal_hold_when_no_cross(self):
+        # fast stays above slow on both sides — no crossover
+        assert crossover_signal(120.0, 100.0, 130.0, 105.0) == "HOLD"
 
 
 class TestRegistry:
