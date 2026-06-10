@@ -718,3 +718,120 @@ class TestTopLevelLayer:
         assert "[ma_crossover] warmed up" in out
         assert "BUY" in out
         assert "SELL" in out
+
+
+def _module_source(module) -> str:
+    return inspect.getsource(module)
+
+
+class TestBoundaries:
+    """Explicitly protect the intended layering between the user-facing code
+    and the low-level compute engine."""
+
+    # -- A. strategy module must only use the public facade --------------------
+
+    FORBIDDEN_COMPUTE_IMPORTS = (
+        "nautilus_ext.features.compute.features",
+        "nautilus_ext.features.compute.backend",
+        "nautilus_ext.features.compute.state",
+        "nautilus_ext.features.compute.engine",
+    )
+
+    def test_strategy_module_has_no_compute_internal_imports(self):
+        import feature_strategies.strategies.ma_crossover as strat
+
+        src = _module_source(strat)
+        for forbidden in self.FORBIDDEN_COMPUTE_IMPORTS:
+            assert forbidden not in src, f"strategy must not import {forbidden}"
+        # ...and it must reach the engine only through the public facade.
+        assert "from nautilus_ext.features.api import" in src
+
+    # -- B. run_strategy.py is coordination only ------------------------------
+
+    def test_run_strategy_delegates_data_and_output(self):
+        import feature_strategies.run_strategy as run_strategy
+
+        src = _module_source(run_strategy)
+        assert "from feature_strategies.data_loaders import load_events" in src
+        assert "load_events(" in src
+        # output is delegated to the output module
+        assert "from feature_strategies import output" in src
+        assert "output." in src
+
+    def test_run_strategy_has_no_inline_data_or_format_logic(self):
+        import feature_strategies.run_strategy as run_strategy
+
+        src = _module_source(run_strategy)
+        assert "make_bars" not in src              # no direct data construction
+        assert "live_closes" not in src            # no hard-coded price path
+        assert "110.0" not in src                  # no inline synthetic series
+        assert "event.close" not in src            # no event-shape assumptions
+
+    # -- C. builders.py --------------------------------------------------------
+
+    def test_rolling_mean_spec_fields(self):
+        spec = rolling_mean_spec("ma7_close", input_type="bar", input_field="close", window=7)
+        assert spec.name == "ma7_close"
+        assert spec.input_type == "bar"
+        assert spec.input_field == "close"
+        assert spec.window == 7
+        assert spec.params["type"] == "rolling_mean"
+
+    # -- D. api.py facade exposes the supported surface ------------------------
+
+    def test_api_facade_exports(self):
+        import nautilus_ext.features.api as api
+
+        for name in ("FeatureSpec", "FeatureValue", "FeatureSnapshot", "SpecFeatureEngine", "rolling_mean_spec"):
+            assert hasattr(api, name), f"api facade must export {name}"
+            assert name in api.__all__
+
+    # -- E. data_loaders.py ----------------------------------------------------
+
+    def test_load_events_synthetic_returns_warmup_and_live(self):
+        warmup, live = load_events({"mode": "synthetic", "warmup_bars": 6, "live_bars": 4})
+        assert len(warmup) == 6 and len(live) == 4
+
+    def test_load_events_unsupported_mode_lists_supported(self):
+        with pytest.raises(ValueError) as exc:
+            load_events({"mode": "kafka"})
+        msg = str(exc.value)
+        assert "kafka" in msg
+        assert "synthetic" in msg  # error lists supported modes
+
+    # -- F. output.py is defensive about event shape --------------------------
+
+    def test_print_event_row_with_full_event(self, capsys):
+        bar = make_bars([101.0], start_ns=3 * ONE_SECOND_NS)[0]
+
+        class _Snap:
+            def value(self, name, default=None):
+                return 101.0
+
+        output.print_event_row(bar, _Snap(), "BUY", ["ma5_close"])
+        assert "BUY" in capsys.readouterr().out
+
+    def test_print_event_row_with_bare_event(self, capsys):
+        class _Bare:
+            pass
+
+        class _Snap:
+            def value(self, name, default=None):
+                return None
+
+        output.print_event_row(_Bare(), _Snap(), "HOLD", ["ma5_close"])  # must not raise
+        assert "HOLD" in capsys.readouterr().out
+
+    # -- G. shared runner + legacy wrapper ------------------------------------
+
+    def test_shared_runner_executes_ma_config(self, capsys):
+        from feature_strategies.run_strategy import main
+
+        main(["--config", str(_config_path())])
+        assert "[ma_crossover] warmed up" in capsys.readouterr().out
+
+    def test_wrapper_forwards_to_shared_main(self):
+        import scripts.run_ma_crossover_demo as legacy
+        from feature_strategies.run_strategy import main as shared_main
+
+        assert legacy.main is shared_main

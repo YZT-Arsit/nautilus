@@ -7,10 +7,11 @@ handled by the Feature Engine; see ``docs/ma_crossover_strategy_demo.md``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from nautilus_ext.features.api import FeatureSnapshot, FeatureSpec, rolling_mean_spec
 
-Signal = str  # "BUY" | "SELL" | "HOLD"
+Signal = Literal["BUY", "SELL", "HOLD"]
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
 
 
@@ -38,7 +39,7 @@ def build_specs(config: MovingAverageCrossoverConfig) -> list[FeatureSpec]:
     ]
 
 
-# TODO: remove once all callers import build_specs.
+# Backward-compatible alias; prefer build_specs in new code.
 build_ma_crossover_specs = build_specs
 
 

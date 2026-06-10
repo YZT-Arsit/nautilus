@@ -56,6 +56,25 @@ the MA crossover config.
 
 ## Adding a new strategy (3 steps, no new run script)
 
+**Checklist** — an ordinary strategy author only touches three files:
+
+1. Create `feature_strategies/strategies/<name>.py`, defining:
+   - `<Name>Config`
+   - `build_specs(config)`
+   - `<Name>Strategy.on_snapshot(snapshot)`
+2. Add `feature_strategies/configs/<name>.yaml`.
+3. Register it in `feature_strategies/registry.py`.
+4. Run it through the shared script:
+   ```bash
+   python -m feature_strategies.run_strategy --config feature_strategies/configs/<name>.yaml
+   ```
+
+Do **not** create a new run script unless the strategy needs a special
+nonstandard harness. You never edit `run_strategy.py`, `data_loaders.py`,
+`output.py`, or anything under `nautilus_ext/features/`.
+
+Worked example:
+
 **1. Write the strategy** — `feature_strategies/strategies/my_strat.py`:
 
 ```python
