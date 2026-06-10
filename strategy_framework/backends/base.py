@@ -46,11 +46,11 @@ def build_backend(execution_config: dict[str, Any] | None, spec_names: list[str]
     if name == "paper":
         from strategy_framework.backends.paper import PaperBackend
 
-        return PaperBackend(spec_names)
+        return PaperBackend(spec_names, execution_config)
     if name == "nautilus_backtest":
         from strategy_framework.backends.nautilus_backtest import NautilusBacktestBackend
 
-        return NautilusBacktestBackend(spec_names)
+        return NautilusBacktestBackend(spec_names, execution_config)
     if name == "nautilus_live":
         from strategy_framework.backends.nautilus_live import NautilusLiveBackend
 

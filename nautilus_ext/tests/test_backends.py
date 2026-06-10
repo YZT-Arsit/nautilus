@@ -47,12 +47,15 @@ class TestFunctionalBackends:
         assert "simple_backtest" in capsys.readouterr().out
 
     def test_paper_logs_actionable_intents_only(self, capsys):
+        # default sell_means="flat" -> BUY=OrderIntent, SELL=PositionIntent(FLAT)
         backend = PaperBackend(["ma5_close"])
         assert isinstance(backend, ExecutionBackend)
         backend.on_signal(_FakeEvent(), _FakeSnapshot(), "BUY")
         backend.on_signal(_FakeEvent(), _FakeSnapshot(), "HOLD")  # ignored
         backend.on_signal(_FakeEvent(), _FakeSnapshot(), "SELL")
-        assert [i["side"] for i in backend.intents()] == ["BUY", "SELL"]
+        intents = backend.intents()
+        actions = [getattr(i, "side", None) or getattr(i, "target", None) for i in intents]
+        assert actions == ["BUY", "FLAT"]
         backend.close()
         out = capsys.readouterr().out
         assert "[paper] intent: BUY" in out
@@ -85,33 +88,37 @@ class TestBuildBackend:
 
 class TestNautilusPlaceholders:
 
-    def test_modules_import_without_nautilus(self):
+    def test_modules_import_and_construct_without_nautilus(self):
         nb = importlib.import_module("strategy_framework.backends.nautilus_backtest")
         nl = importlib.import_module("strategy_framework.backends.nautilus_live")
-        # Construct cheaply (no engine, no connection)...
         for mod, attr in ((nb, "NautilusBacktestBackend"), (nl, "NautilusLiveBackend")):
             backend = getattr(mod, attr)(["x"])
             assert isinstance(backend, ExecutionBackend)
-            # ...but driving them is not implemented yet.
-            with pytest.raises(NotImplementedError):
-                backend.on_signal(_FakeEvent(), _FakeSnapshot(), "BUY")
+
+    def test_live_backend_still_raises(self):
+        # nautilus_live remains a placeholder until live integration lands.
+        from strategy_framework.backends.nautilus_live import NautilusLiveBackend
+
+        with pytest.raises(NotImplementedError):
+            NautilusLiveBackend(["x"]).on_signal(_FakeEvent(), _FakeSnapshot(), "BUY")
 
     def test_build_backend_constructs_nautilus_placeholders(self):
         for name in ("nautilus_backtest", "nautilus_live"):
             backend = build_backend({"backend": name}, ["x"])
             assert isinstance(backend, ExecutionBackend)
 
-    def test_placeholder_source_has_no_top_level_nautilus_import(self):
+    def test_nautilus_imports_are_lazy_not_top_level(self):
         import inspect
 
         import strategy_framework.backends.nautilus_backtest as nb
         import strategy_framework.backends.nautilus_live as nl
 
         for mod in (nb, nl):
-            src = inspect.getsource(mod)
-            # No eager Nautilus import at module scope (only mentioned in docs/TODOs).
-            assert "import nautilus_trader" not in src
-            assert "from nautilus_trader" not in src
+            for line in inspect.getsource(mod).splitlines():
+                # A lazy import is indented (inside a function); a top-level one
+                # starts at column 0. Forbid only the latter.
+                if line.startswith(("import nautilus_trader", "from nautilus_trader")):
+                    raise AssertionError(f"top-level Nautilus import in {mod.__name__}: {line!r}")
 
 
 # D. data_engine independence ------------------------------------------------

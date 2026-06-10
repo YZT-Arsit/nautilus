@@ -39,9 +39,24 @@ its build/package metadata and tests.
 ## What we do NOT use today
 
 - Nautilus Trader's native **data** system (we use our own `data_engine`).
-- Nautilus Trader's backtest/live **execution** engine (the `nautilus_backtest`
-  and `nautilus_live` backends are placeholders only).
+- Nautilus Trader's backtest/live **execution** engine. The `nautilus_backtest`
+  backend is an **MVP that only collects order intents and prints a summary — no
+  fills or PnL yet**; `nautilus_live` is still a placeholder. No `BacktestEngine`
+  is instantiated.
 - No pandas, no network/exchange dependencies in the custom framework.
+
+## Execution-intent layer
+
+Between signals and any backend sits `strategy_framework/execution/`:
+
+- `intents.py` — `OrderIntent` / `PositionIntent` (frozen, dependency-free).
+- `signal_policy.py` — `SignalToOrderPolicy` maps `BUY`/`SELL`/`HOLD` to an intent
+  (`sell_means="flat"` → `PositionIntent(FLAT)`; `"short"` → `SELL` order).
+
+Strategies never create orders; the mapping lives here. This layer imports **no**
+Nautilus Trader. Backends translate intents — the (future) Nautilus translation
+is isolated in `backends/nautilus_backtest.py:try_translate_to_nautilus_order`,
+which imports `nautilus_trader` lazily and returns `None` when it is unavailable.
 
 ## Why we keep Nautilus Trader core
 
@@ -57,8 +72,10 @@ data_engine
     -> feature_engine
     -> strategy_framework
     -> strategies
-    -> strategy_framework/backends
-        -> simple_backtest / paper / future Nautilus backend
+    -> strategy_framework/execution   (signal -> OrderIntent/PositionIntent)
+    -> strategy_framework/backends    (intent -> backend)
+        -> signal_recorder / simple_backtest / paper
+        -> nautilus_backtest (MVP: intent collection) / nautilus_live (placeholder)
 ```
 
 - `data_engine` is **canonical** for our data processing.

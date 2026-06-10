@@ -14,6 +14,8 @@ Ordinary strategy authors rarely edit anything here; they work in
 | `output.py` | Warmup summary, event table, signal summary; defensive about missing `close`/`event_time_ns` |
 | `backtest.py` | `SignalRecorder` — captures `(event, snapshot, signal)` rows; counts + plain dicts (no PnL) |
 | `live_sources.py` | `LiveEventSource` protocol + `SyntheticLiveEventSource` (extension point for real feeds) |
+| `execution/` | Signal→intent layer: `OrderIntent`/`PositionIntent` + `SignalToOrderPolicy` (dependency-free, no Nautilus) |
+| `backends/` | Execution backends: `signal_recorder`, `simple_backtest`, `paper`, `nautilus_backtest` (MVP), `nautilus_live` (placeholder) |
 
 ## Where things live
 
@@ -35,6 +37,35 @@ feature_engine/compute/  # low-level feature engine (do not edit for a new strat
   in `registry.py`.
 - **New low-level feature operator** → `feature_engine/compute/features.py`
   + `compute/backend.py` + `builders.py` + `api.py` (+ compute tests).
+- **New execution backend** → implement `ExecutionBackend` in `backends/`, reuse
+  `execution.SignalToOrderPolicy` for the signal→intent mapping, and register the
+  name in `backends/base.py:build_backend`.
+
+## Execution flow
+
+```
+data_engine -> feature_engine -> strategy_framework -> strategies -> execution backend
+```
+
+- `data_engine` owns data loading; `feature_engine` owns feature computation;
+  `strategies` own signal logic (BUY/SELL/HOLD).
+- `strategy_framework.execution` maps signals to **order intents**
+  (`SignalToOrderPolicy`); strategies never create orders directly.
+- Backends consume intents. `run_strategy.py` just calls `build_backend(...)`,
+  then `backend.on_signal(...)` per event and `backend.close()` at the end.
+- Configure via an `execution:` block:
+
+  ```yaml
+  execution:
+    backend: nautilus_backtest   # or: signal_recorder | simple_backtest | paper
+    quantity: 1.0
+    sell_means: flat             # "flat" -> PositionIntent(FLAT); "short" -> SELL order
+  ```
+
+- **Nautilus Trader is an optional execution/backtest/live backend.** The current
+  `nautilus_backtest` backend is an **MVP: it collects order intents and prints a
+  summary — no fills or PnL yet.** Full `BacktestEngine` integration is the next
+  stage. All Nautilus imports are lazy (inside optional methods only).
 
 ## Legacy
 
