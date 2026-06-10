@@ -25,9 +25,9 @@ from typing import Any
 
 import yaml
 
+from market_data_engine.loader import load_events
 from strategy_framework import output
 from strategy_framework.backtest import SignalRecorder
-from strategy_framework.data_loaders import load_events
 from strategy_framework.registry import get_entry
 from nautilus_ext.features.runner import FeatureStrategyRunner
 

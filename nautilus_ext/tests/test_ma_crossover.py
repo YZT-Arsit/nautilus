@@ -752,7 +752,7 @@ class TestBoundaries:
         import run_strategy
 
         src = _module_source(run_strategy)
-        assert "from strategy_framework.data_loaders import load_events" in src
+        assert "from market_data_engine.loader import load_events" in src
         assert "load_events(" in src
         # output is delegated to the output module
         assert "from strategy_framework import output" in src

@@ -2,7 +2,7 @@
 
 > **Audience**: engineering leadership, quant PMs, senior reviewers.
 > **Status**: v1 complete — production-ready for paper trading and backtesting.
-> **Test coverage**: 643 passed, 17 skipped (pure-Python unit suite, no Cython required).
+> **Test coverage**: 674 passed, 17 skipped (pure-Python unit suite, no Cython required).
 
 ---
 
@@ -311,20 +311,33 @@ python run_strategy.py --config strategies/ma_crossover/config_backtest.yaml
 python run_strategy.py --config strategies/ma_crossover/config_live_synthetic.yaml
 ```
 
-Data loading (`strategy_framework/data_loaders.py`) sorts CSV input by event time
-**once in the loader**, never in `on_event()`. A real live feed implements the
-`LiveEventSource` protocol in `strategy_framework/live_sources.py` and registers
-a new mode — no engine or runner changes required. Optional signal recording
+Data loading is owned by the standalone **`market_data_engine/`** package — our
+own design, **not** Nautilus Trader's native data system. `load_events()` sorts
+CSV input by event time **once in the loader**, never in `on_event()`. A real
+live feed implements the `EventSource` protocol in
+`market_data_engine/streams/base.py` and registers a new mode in
+`market_data_engine/loader.py` — no engine or runner changes required.
+`strategy_framework/data_loaders.py` is now only a compatibility wrapper that
+re-exports the data engine. Optional signal recording
 (`strategy_framework/backtest.py`) captures `(event, snapshot, signal)` rows for
 traceability; PnL accounting is not implemented yet.
+
+**Layered design**
+
+```
+market_data_engine/            (data)     -> BarEvent, load_events, sources
+nautilus_ext/features/compute/ (features) -> FeatureSpec, rolling state, FeatureSnapshot
+strategy_framework/            (orchestration) -> registry, output, signal recording
+strategies/<name>/             (logic)    -> strategy + config
+```
 
 **Modification boundaries**
 
 | Change | Edit only |
 |--------|-----------|
 | New strategy | `strategies/<name>/strategy.py`, `strategies/<name>/config.yaml`, `strategy_framework/registry.py` |
-| New historical data source | `strategy_framework/data_loaders.py` (+ optional helper) |
-| Real live source (later) | `strategy_framework/live_sources.py`, a `data_loaders.py` mode, a config |
+| New historical data source | `market_data_engine/sources/` + register in `market_data_engine/loader.py` |
+| Real live source (later) | `market_data_engine/streams/` + a `loader.py` mode + a config |
 | New low-level feature operator | `compute/features.py`, `compute/backend.py`, `builders.py`, `api.py`, compute tests |
 
 ---
@@ -332,7 +345,7 @@ traceability; PnL accounting is not implemented yet.
 ## 13. Current Test Status
 
 ```
-643 passed, 17 skipped
+674 passed, 17 skipped
 ```
 
 Test scope covers:

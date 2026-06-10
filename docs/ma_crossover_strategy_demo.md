@@ -20,10 +20,10 @@ sits in `strategy_framework/`; the low-level engine stays in
 | `strategies/ma_crossover/README.md` | Per-strategy notes | strategy authors |
 | `strategy_framework/registry.py` | Explicit name → `StrategyPlugin` mapping | yes — one line per strategy |
 | `strategy_framework/plugin.py` | `StrategyPlugin` descriptor | no |
-| `strategy_framework/data_loaders.py` | Event-source selection (`synthetic` / `csv_bars` / `live_synthetic`) | only to add a data source |
-| `strategy_framework/live_sources.py` | `LiveEventSource` protocol for real feeds (skeleton) | only to add a real live feed |
 | `strategy_framework/output.py` | Table formatting / printing / signal summary | only to change display |
 | `strategy_framework/backtest.py` | `SignalRecorder` — signal traceability (no PnL) | only to extend metrics |
+| `strategy_framework/data_loaders.py` | **Compatibility wrapper** → re-exports `market_data_engine` | no |
+| `market_data_engine/` | **Canonical data layer** — `BarEvent`, `load_events`, sources (`synthetic`/`csv_bars`/`live_synthetic`), adapters | only to add a data source |
 | `strategies/ma_crossover/sample_data/ma_crossover_bars.csv` | Tiny CSV for the backtest config | demo / test authors |
 | `nautilus_ext/features/api.py` | **Stable public API** facade (`FeatureSpec`, `FeatureSnapshot`, `rolling_mean_spec`, …) | no — import from it |
 | `nautilus_ext/features/runner.py` | `FeatureStrategyRunner` — builds the engine + runs the loop | no |
@@ -43,9 +43,11 @@ There is **one shared run script** for every strategy — you do not add a
    and its `config.yaml`. User-facing.
 3. **Registry** (`strategy_framework/registry.py`) — maps a strategy name to its
    `StrategyPlugin`. Explicit, no auto-discovery.
-4. **Data loaders** (`strategy_framework/data_loaders.py`) — `load_events(data)`
-   returns `(warmup_events, live_events)` for the configured `data.mode`
-   (`synthetic`, `csv_bars`, `live_synthetic`). New sources plug in here.
+4. **Data layer** (`market_data_engine/`) — `load_events(data)` returns
+   `(warmup_events, live_events)` for the configured `data.mode` (`synthetic`,
+   `csv_bars`, `live_synthetic`). This is our **own** design; it does **not** use
+   Nautilus Trader's native data system. New sources plug in here.
+   `strategy_framework/data_loaders.py` is only a thin re-export wrapper.
 5. **Output** (`strategy_framework/output.py`) — warmup summary, table, signal
    summary. Event access is defensive (missing `close` / `event_time_ns` → `-`).
 6. **Public API** (`nautilus_ext/features/api.py`) — the stable import surface.
@@ -57,6 +59,24 @@ There is **one shared run script** for every strategy — you do not add a
 8. **Compute layer** (`nautilus_ext/features/compute/`) — *how* features are
    computed. A **library**. You touch `compute/features.py` (and
    `compute/backend.py`) only to add a genuinely new low-level *operator*.
+
+Canonical flow:
+
+```
+config.yaml
+   ↓
+market_data_engine.load_events()        # data layer (our own design)
+   ↓
+warmup_events / live_events
+   ↓
+FeatureStrategyRunner                    # nautilus_ext/features/runner.py
+   ↓
+FeatureEngine / FeatureSnapshot          # nautilus_ext/features/compute/
+   ↓
+Strategy.on_snapshot()                   # strategies/<name>/strategy.py
+   ↓
+BUY / SELL / HOLD
+```
 
 **Adding a strategy** = three small edits, no new run script: a package under
 `strategies/<name>/` (strategy.py + config.yaml + README.md), one line in

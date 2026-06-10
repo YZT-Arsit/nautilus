@@ -277,7 +277,7 @@ class TestExecutionBoundaries:
 
     def test_run_strategy_delegates_to_data_loaders_and_output(self):
         src = inspect.getsource(run_strategy)
-        assert "from strategy_framework.data_loaders import load_events" in src
+        assert "from market_data_engine.loader import load_events" in src
         assert "load_events(" in src
         assert "from strategy_framework import output" in src
         assert "output." in src
