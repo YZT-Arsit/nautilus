@@ -44,13 +44,21 @@ feature_engine/compute/  # low-level feature engine (do not edit for a new strat
 ## Execution flow
 
 ```
-data_engine -> feature_engine -> strategy_framework -> strategies -> execution backend
+data_engine
+    -> feature_engine
+    -> strategies                       (signal: BUY/SELL/HOLD)
+    -> SignalToOrderPolicy              (signal -> intent)
+    -> OrderIntent / PositionIntent
+    -> NautilusBacktestBackend
+        -> simulated fills / PnL now    (IntentFillSimulator, no deps)
+        -> native Nautilus BacktestEngine later
 ```
 
 - `data_engine` owns data loading; `feature_engine` owns feature computation;
   `strategies` own signal logic (BUY/SELL/HOLD).
-- `strategy_framework.execution` maps signals to **order intents**
-  (`SignalToOrderPolicy`); strategies never create orders directly.
+- `strategy_framework.execution` maps signals to **intents** (`SignalToOrderPolicy`)
+  and models results (`FillRecord`, `PositionRecord`, `ExecutionReport`);
+  strategies never create orders directly.
 - Backends consume intents. `run_strategy.py` just calls `build_backend(...)`,
   then `backend.on_signal(...)` per event and `backend.close()` at the end.
 - Configure via an `execution:` block:
@@ -58,14 +66,30 @@ data_engine -> feature_engine -> strategy_framework -> strategies -> execution b
   ```yaml
   execution:
     backend: nautilus_backtest   # or: signal_recorder | simple_backtest | paper
+    mode: simulated              # nautilus_backtest only: "simulated" | "nautilus_native"
     quantity: 1.0
     sell_means: flat             # "flat" -> PositionIntent(FLAT); "short" -> SELL order
+    allow_short: false           # simulated mode: permit short positions
+    price_field: close           # simulated mode: event attribute used as fill price
   ```
 
-- **Nautilus Trader is an optional execution/backtest/live backend.** The current
-  `nautilus_backtest` backend is an **MVP: it collects order intents and prints a
-  summary — no fills or PnL yet.** Full `BacktestEngine` integration is the next
-  stage. All Nautilus imports are lazy (inside optional methods only).
+### Nautilus Trader is an optional execution/backtest/live backend
+
+The `nautilus_backtest` backend currently provides:
+
+- a Nautilus-backend **boundary** (intent → execution, isolated in the backend);
+- **intent collection** from signals;
+- a dependency-free **simulated fill/PnL reference path** (`mode="simulated"`,
+  the default) via `IntentFillSimulator` — average-price positions, realized &
+  unrealized PnL, an `ExecutionReport` printed by `close()`;
+- a **lazy placeholder** for native Nautilus (`mode="nautilus_native"`), which
+  raises a clear `NotImplementedError` when driven until implemented.
+
+This is **not** full exchange/live trading: no real orders are sent, and **no
+Nautilus dependency is required for the normal test suite**. Native
+`BacktestEngine` integration is the next stage. All Nautilus imports are **lazy**
+(inside the optional `try_translate_to_nautilus_order` /
+`try_build_nautilus_backtest_engine` helpers only).
 
 ## Legacy
 

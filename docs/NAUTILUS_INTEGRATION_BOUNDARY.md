@@ -39,10 +39,11 @@ its build/package metadata and tests.
 ## What we do NOT use today
 
 - Nautilus Trader's native **data** system (we use our own `data_engine`).
-- Nautilus Trader's backtest/live **execution** engine. The `nautilus_backtest`
-  backend is an **MVP that only collects order intents and prints a summary — no
-  fills or PnL yet**; `nautilus_live` is still a placeholder. No `BacktestEngine`
-  is instantiated.
+- Nautilus Trader's native backtest/live **execution** engine. The
+  `nautilus_backtest` backend's default `mode="simulated"` produces fills/PnL with
+  a **dependency-free reference simulator** — it does **not** instantiate a native
+  `BacktestEngine`. `mode="nautilus_native"` is a lazy placeholder that raises a
+  clear `NotImplementedError` when driven. `nautilus_live` is still a placeholder.
 - No pandas, no network/exchange dependencies in the custom framework.
 
 ## Execution-intent layer
@@ -52,11 +53,19 @@ Between signals and any backend sits `strategy_framework/execution/`:
 - `intents.py` — `OrderIntent` / `PositionIntent` (frozen, dependency-free).
 - `signal_policy.py` — `SignalToOrderPolicy` maps `BUY`/`SELL`/`HOLD` to an intent
   (`sell_means="flat"` → `PositionIntent(FLAT)`; `"short"` → `SELL` order).
+- `reports.py` — `FillRecord` / `PositionRecord` / `ExecutionReport` describe
+  execution *results* (still dependency-free, no Nautilus).
 
 Strategies never create orders; the mapping lives here. This layer imports **no**
-Nautilus Trader. Backends translate intents — the (future) Nautilus translation
-is isolated in `backends/nautilus_backtest.py:try_translate_to_nautilus_order`,
-which imports `nautilus_trader` lazily and returns `None` when it is unavailable.
+Nautilus Trader. Backends translate intents:
+
+- `mode="simulated"` (default) uses `backends/nautilus_simulation.py`'s
+  `IntentFillSimulator` — average-price positions, realized & unrealized PnL — and
+  emits an `ExecutionReport`. No Nautilus dependency.
+- `mode="nautilus_native"` is reserved for a real `BacktestEngine`. The Nautilus
+  hooks `try_translate_to_nautilus_order` / `try_build_nautilus_backtest_engine`
+  import `nautilus_trader` **lazily** and return `None` when unavailable; the mode
+  raises `NotImplementedError` when driven until implemented.
 
 ## Why we keep Nautilus Trader core
 
@@ -72,10 +81,13 @@ data_engine
     -> feature_engine
     -> strategy_framework
     -> strategies
-    -> strategy_framework/execution   (signal -> OrderIntent/PositionIntent)
+    -> strategy_framework/execution   (signal -> OrderIntent/PositionIntent -> report)
     -> strategy_framework/backends    (intent -> backend)
         -> signal_recorder / simple_backtest / paper
-        -> nautilus_backtest (MVP: intent collection) / nautilus_live (placeholder)
+        -> nautilus_backtest:
+               mode=simulated      -> fills / positions / PnL now (no deps)
+               mode=nautilus_native -> native BacktestEngine later (lazy placeholder)
+        -> nautilus_live (placeholder)
 ```
 
 - `data_engine` is **canonical** for our data processing.

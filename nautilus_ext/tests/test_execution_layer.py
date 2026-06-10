@@ -1,4 +1,4 @@
-"""Tests for the execution-intent layer and the Nautilus backtest MVP backend."""
+"""Tests for the execution-intent layer and the Nautilus backtest backend."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,10 +7,19 @@ import pytest
 
 from strategy_framework.backends.nautilus_backtest import (
     NautilusBacktestBackend,
+    try_build_nautilus_backtest_engine,
     try_translate_to_nautilus_order,
 )
+from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
 from strategy_framework.backends.paper import PaperBackend
-from strategy_framework.execution import OrderIntent, PositionIntent, SignalToOrderPolicy
+from strategy_framework.execution import (
+    ExecutionReport,
+    FillRecord,
+    OrderIntent,
+    PositionIntent,
+    PositionRecord,
+    SignalToOrderPolicy,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,6 +28,12 @@ class _Event:
     def __init__(self, instrument_id="BTC/USDT", close=100.0, event_time_ns=7):
         self.instrument_id = instrument_id
         self.close = close
+        self.event_time_ns = event_time_ns
+
+
+class _NoPriceEvent:
+    def __init__(self, instrument_id="BTC/USDT", event_time_ns=7):
+        self.instrument_id = instrument_id  # deliberately no 'close'
         self.event_time_ns = event_time_ns
 
 
@@ -164,9 +179,152 @@ class TestRunStrategyNautilusBacktest:
             "params: {fast_window: 5, slow_window: 20}\n"
             "data: {mode: synthetic, warmup_bars: 20, live_bars: 20}\n"
             "output: {print_table: false}\n"
-            "execution: {backend: nautilus_backtest, quantity: 1.0, sell_means: flat}\n"
+            "execution: {backend: nautilus_backtest, mode: simulated, quantity: 1.0, sell_means: flat}\n"
         )
         run_strategy.main(["--config", str(cfg)])
         out = capsys.readouterr().out
-        assert "[nautilus_backtest] intents:" in out
-        assert "BUY=1" in out and "SELL=1" in out
+        assert "[nautilus_backtest]" in out
+        assert "intents:" in out
+        assert "fills:" in out
+        assert "pnl:" in out
+
+
+# F. Report dataclasses ------------------------------------------------------
+
+class TestReportModels:
+
+    def test_fill_record_constructs(self):
+        f = FillRecord("BTC/USDT", "BUY", 1.0, 100.0, 7)
+        assert f.source == "simulated" and f.metadata == {}
+
+    def test_position_record_constructs(self):
+        p = PositionRecord("BTC/USDT", 1.0, 100.0, 110.0, 10.0)
+        assert p.realized_pnl == 0.0
+
+    def test_execution_report_constructs(self):
+        r = ExecutionReport("nautilus_backtest", 2, 2, [], [], 5.0, 1.0)
+        assert r.backend == "nautilus_backtest" and r.total_fills == 2
+
+
+# G. IntentFillSimulator -----------------------------------------------------
+
+class TestIntentFillSimulator:
+
+    def _buy(self, instrument="BTC/USDT", qty=1.0):
+        return OrderIntent(instrument, "BUY", qty, 1)
+
+    def _sell(self, instrument="BTC/USDT", qty=1.0):
+        return OrderIntent(instrument, "SELL", qty, 2)
+
+    def test_buy_creates_fill_and_long_position(self):
+        sim = IntentFillSimulator()
+        fill = sim.on_intent(self._buy(), _Event(close=100.0))
+        assert isinstance(fill, FillRecord) and fill.side == "BUY" and fill.price == 100.0
+        rep = sim.report()
+        assert rep.total_fills == 1
+        assert rep.positions[0].quantity == 1.0 and rep.positions[0].avg_price == 100.0
+
+    def test_sell_after_buy_realizes_pnl_and_closes(self):
+        sim = IntentFillSimulator()
+        sim.on_intent(self._buy(), _Event(close=100.0))
+        sim.on_intent(self._sell(), _Event(close=110.0))
+        rep = sim.report()
+        assert rep.total_fills == 2
+        assert rep.realized_pnl == pytest.approx(10.0)
+        assert rep.positions == []  # flat
+
+    def test_partial_sell_reduces_and_keeps_avg(self):
+        sim = IntentFillSimulator()
+        sim.on_intent(self._buy(qty=2.0), _Event(close=100.0))
+        sim.on_intent(self._sell(qty=1.0), _Event(close=120.0))
+        rep = sim.report()
+        assert rep.realized_pnl == pytest.approx(20.0)
+        assert rep.positions[0].quantity == 1.0 and rep.positions[0].avg_price == 100.0
+
+    def test_position_intent_flat_after_buy_sells(self):
+        sim = IntentFillSimulator()
+        sim.on_intent(self._buy(qty=3.0), _Event(close=100.0))
+        fill = sim.on_intent(PositionIntent("BTC/USDT", "FLAT", 0.0, 3), _Event(close=130.0))
+        assert fill is not None and fill.side == "SELL" and fill.quantity == 3.0
+        assert sim.report().positions == []
+
+    def test_position_intent_flat_without_position_no_fill(self):
+        sim = IntentFillSimulator()
+        fill = sim.on_intent(PositionIntent("BTC/USDT", "FLAT", 0.0, 1), _Event())
+        assert fill is None
+        assert sim.report().total_fills == 0
+
+    def test_missing_price_raises(self):
+        sim = IntentFillSimulator()
+        with pytest.raises(ValueError, match="no 'close'|no .price."):
+            sim.on_intent(self._buy(), _NoPriceEvent())
+
+    def test_missing_event_price_falls_back_to_metadata(self):
+        sim = IntentFillSimulator()
+        intent = OrderIntent("BTC/USDT", "BUY", 1.0, 1, metadata={"price": 99.0})
+        fill = sim.on_intent(intent, _NoPriceEvent())
+        assert fill.price == 99.0
+
+    def test_allow_short_false_prevents_negative_position(self):
+        sim = IntentFillSimulator(allow_short=False)
+        fill = sim.on_intent(self._sell(), _Event(close=100.0))  # sell with no inventory
+        assert fill is None
+        # buy 1 then sell 2: only 1 can be sold; never negative
+        sim.on_intent(self._buy(qty=1.0), _Event(close=100.0))
+        sim.on_intent(self._sell(qty=2.0), _Event(close=100.0))
+        for p in sim.report().positions:
+            assert p.quantity >= 0
+
+    def test_allow_short_true_opens_short(self):
+        sim = IntentFillSimulator(allow_short=True)
+        fill = sim.on_intent(self._sell(), _Event(close=100.0))
+        assert fill is not None and fill.side == "SELL"
+        assert sim.report().positions[0].quantity == -1.0
+
+
+# H. NautilusBacktestBackend simulated report + native lazy mode -------------
+
+class TestNautilusBacktestSimulated:
+
+    def test_buy_then_sell_report_counts(self):
+        backend = NautilusBacktestBackend(["x"], {"sell_means": "short"})
+        backend.on_signal(_Event(close=100.0), _Snapshot(), "BUY")
+        backend.on_signal(_Event(close=110.0), _Snapshot(), "SELL")
+        rep = backend.report()
+        assert rep.total_intents == 2 and rep.total_fills == 2
+        assert rep.realized_pnl == pytest.approx(10.0)
+
+    def test_close_prints_report(self, capsys):
+        backend = NautilusBacktestBackend(["x"])
+        backend.on_signal(_Event(), _Snapshot(), "BUY")
+        backend.close()
+        out = capsys.readouterr().out
+        assert "[nautilus_backtest]" in out and "fills:" in out and "pnl:" in out
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match="unknown nautilus_backtest mode"):
+            NautilusBacktestBackend(["x"], {"mode": "warp_drive"})
+
+
+class TestNautilusNativeModeLazy:
+
+    def test_native_construct_does_not_import_nautilus(self):
+        import sys
+
+        NautilusBacktestBackend(["x"], {"mode": "nautilus_native"})
+        assert "nautilus_trader" not in sys.modules
+
+    def test_native_on_signal_raises_clear_error(self):
+        backend = NautilusBacktestBackend(["x"], {"mode": "nautilus_native"})
+        with pytest.raises(NotImplementedError, match="nautilus_native"):
+            backend.on_signal(_Event(), _Snapshot(), "BUY")
+
+    def test_native_report_and_close_raise(self):
+        backend = NautilusBacktestBackend(["x"], {"mode": "nautilus_native"})
+        with pytest.raises(NotImplementedError):
+            backend.report()
+        with pytest.raises(NotImplementedError):
+            backend.close()
+
+    def test_build_engine_helper_returns_none_without_nautilus(self):
+        assert try_build_nautilus_backtest_engine({}) is None
