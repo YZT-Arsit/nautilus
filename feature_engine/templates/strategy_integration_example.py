@@ -12,9 +12,9 @@ Demonstrates the complete lifecycle for strategy code that uses SpecFeatureEngin
 Rules for strategy code
 -----------------------
 - Import only from:
-    nautilus_ext.features.compute.spec     (FeatureSpec, FeatureSnapshot, …)
-    nautilus_ext.features.compute.engine   (SpecFeatureEngine)
-    nautilus_ext.features.compute.adapters (adapt_*_event, InMemoryEventProvider)
+    feature_engine.compute.spec     (FeatureSpec, FeatureSnapshot, …)
+    feature_engine.compute.engine   (SpecFeatureEngine)
+    feature_engine.compute.adapters (adapt_*_event, InMemoryEventProvider)
 - Never import from features.py, backend.py, state.py, or watermark.py.
 - Never call feature.update(), feature.state_dict(), or engine._features.
 - Never access engine._raw_features, engine._dep_graph, or engine._derived_names.
@@ -30,13 +30,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from nautilus_ext.features.compute.adapters import (
+from feature_engine.compute.adapters import (
     InMemoryEventProvider,
     adapt_bar_event,
     adapt_quote_tick_event,
 )
-from nautilus_ext.features.compute.engine import SpecFeatureEngine
-from nautilus_ext.features.compute.spec import FeatureSnapshot, FeatureSpec
+from feature_engine.compute.engine import SpecFeatureEngine
+from feature_engine.compute.spec import FeatureSnapshot, FeatureSpec
 
 
 # ---------------------------------------------------------------------------

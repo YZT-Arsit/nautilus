@@ -39,5 +39,5 @@ python run_strategy.py --config strategies/ma_crossover/config_live_synthetic.ya
 ```
 
 The strategy imports only the public API
-(`nautilus_ext.features.api`) and `strategy_framework.plugin` — never the
+(`feature_engine.api`) and `strategy_framework.plugin` — never the
 low-level compute engine.

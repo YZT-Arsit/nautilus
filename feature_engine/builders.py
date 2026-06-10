@@ -4,11 +4,11 @@ These let strategy authors declare features without hand-writing the
 ``params={"type": ...}`` plumbing that the compute layer keys off. Import them
 from the public facade::
 
-    from nautilus_ext.features.api import rolling_mean_spec
+    from feature_engine.api import rolling_mean_spec
 """
 from __future__ import annotations
 
-from nautilus_ext.features.compute import FeatureSpec
+from feature_engine.compute import FeatureSpec
 
 
 def rolling_mean_spec(

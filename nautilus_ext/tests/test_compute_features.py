@@ -1,5 +1,5 @@
 """
-Tests for nautilus_ext.features.compute.
+Tests for feature_engine.compute.
 
 Coverage
 --------
@@ -69,14 +69,14 @@ from dataclasses import dataclass
 
 import pytest
 
-from nautilus_ext.features.compute.backend import (
+from feature_engine.compute.backend import (
     BackendRegistry,
     PythonBackend,
     build_default_registry,
 )
-from nautilus_ext.features.compute.engine import SpecFeatureEngine
-from nautilus_ext.features.compute.feature_base import FeatureBase
-from nautilus_ext.features.compute.features import (
+from feature_engine.compute.engine import SpecFeatureEngine
+from feature_engine.compute.feature_base import FeatureBase
+from feature_engine.compute.features import (
     BookImbalanceFeature,
     EWMAFeature,
     LogReturnFeature,
@@ -91,29 +91,29 @@ from nautilus_ext.features.compute.features import (
     SpreadFeature,
     VWAPFeature,
 )
-from nautilus_ext.features.compute.spec import (
+from feature_engine.compute.spec import (
     FeatureSnapshot,
     FeatureSpec,
     FeatureValue,
     TriggerPolicy,
     WarmupRequirement,
 )
-from nautilus_ext.features.compute.state import (
+from feature_engine.compute.state import (
     EWMAState,
     RollingWindowState,
     TimeWindowState,
     VWAPState,
 )
-from nautilus_ext.features.compute.clock import ManualClock, SystemClock
-from nautilus_ext.features.compute.engine import LateEventError
-from nautilus_ext.features.compute.timestamps import (
+from feature_engine.compute.clock import ManualClock, SystemClock
+from feature_engine.compute.engine import LateEventError
+from feature_engine.compute.timestamps import (
     EventTimestamps,
     TimestampConfig,
     convert_legacy_ts_event_to_ns,
     extract_timestamps,
     select_timestamp,
 )
-from nautilus_ext.features.compute.watermark import StreamKey, WatermarkTracker
+from feature_engine.compute.watermark import StreamKey, WatermarkTracker
 
 
 # ---------------------------------------------------------------------------
@@ -1168,7 +1168,7 @@ class TestBackend:
 
     def test_backend_swappable_same_api(self):
         """Replacing the backend doesn't change the FeatureBase interface."""
-        from nautilus_ext.features.compute.spec import FeatureUpdate
+        from feature_engine.compute.spec import FeatureUpdate
 
         class ConstantBackend:
             class _ConstantFeature:
@@ -1213,21 +1213,21 @@ class TestSpecDrivenFeatureEngine:
                             params={"type": "rolling_mean"})]
 
     def test_schema_construction(self):
-        from nautilus_ext.features.compute.engine import SpecDrivenFeatureEngine
+        from feature_engine.compute.engine import SpecDrivenFeatureEngine
         eng = SpecDrivenFeatureEngine(specs=self._specs(), feature_set_id="my_v1")
         schema = eng.schema
         assert schema.feature_set_id == "my_v1"
         assert any(f.name == "mean3" for f in schema.output_features)
 
     def test_update_returns_none_before_ready(self):
-        from nautilus_ext.features.compute.engine import SpecDrivenFeatureEngine
+        from feature_engine.compute.engine import SpecDrivenFeatureEngine
         eng = SpecDrivenFeatureEngine(specs=self._specs(), feature_set_id="test_v1")
         result = eng.update(Bar(close=1.0, event_time_ns=0))
         assert result is None
 
     def test_update_returns_feature_event_when_ready(self):
-        from nautilus_ext.features.compute.engine import SpecDrivenFeatureEngine
-        from nautilus_ext.features.feature_event import FeatureEvent
+        from feature_engine.compute.engine import SpecDrivenFeatureEngine
+        from feature_engine.feature_event import FeatureEvent
         eng = SpecDrivenFeatureEngine(specs=self._specs(), feature_set_id="test_v1")
         for b in bars([1.0, 2.0]):
             eng.update(b)
@@ -1239,7 +1239,7 @@ class TestSpecDrivenFeatureEngine:
 
     def test_ts_event_in_milliseconds(self):
         """FeatureEvent.ts_event must be in milliseconds (not nanoseconds)."""
-        from nautilus_ext.features.compute.engine import SpecDrivenFeatureEngine
+        from feature_engine.compute.engine import SpecDrivenFeatureEngine
         eng = SpecDrivenFeatureEngine(specs=self._specs(), feature_set_id="test_v1")
         for b in bars([1.0, 2.0]):
             eng.update(b)
@@ -1249,8 +1249,8 @@ class TestSpecDrivenFeatureEngine:
         assert fe.ts_event == 5000   # milliseconds
 
     def test_integration_with_feature_pipeline(self):
-        from nautilus_ext.features.compute.engine import SpecDrivenFeatureEngine
-        from nautilus_ext.features.feature_pipeline import FeaturePipeline
+        from feature_engine.compute.engine import SpecDrivenFeatureEngine
+        from feature_engine.feature_pipeline import FeaturePipeline
         eng = SpecDrivenFeatureEngine(specs=self._specs(), feature_set_id="pipe_v1")
         pipeline = FeaturePipeline(feature_engines=[eng])
         pipeline.warmup(bars([1.0, 2.0, 3.0]))
@@ -1259,8 +1259,8 @@ class TestSpecDrivenFeatureEngine:
         assert fes[0].values["mean3"] == pytest.approx(3.0)
 
     def test_warmup_events_tagged(self):
-        from nautilus_ext.features.compute.engine import SpecDrivenFeatureEngine
-        from nautilus_ext.features.feature_pipeline import FeaturePipeline
+        from feature_engine.compute.engine import SpecDrivenFeatureEngine
+        from feature_engine.feature_pipeline import FeaturePipeline
         eng = SpecDrivenFeatureEngine(specs=self._specs(), feature_set_id="warmup_v1")
         pipeline = FeaturePipeline(feature_engines=[eng])
         warmup_fes = pipeline.warmup(bars([1.0, 2.0, 3.0]))
@@ -1469,7 +1469,7 @@ class TestClockAbstraction:
         assert snap.process_time_ns is None
 
     def test_manual_clock_satisfies_clock_protocol(self):
-        from nautilus_ext.features.compute.clock import Clock
+        from feature_engine.compute.clock import Clock
         assert isinstance(ManualClock(), Clock)
         assert isinstance(SystemClock(), Clock)
 
@@ -1651,51 +1651,51 @@ class TestInputTypeDerivation:
     """input_type_for_event() must return canonical names matching FeatureSpec.input_type."""
 
     def test_bar_canonical(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(Bar(event_type="bar")) == "bar"
 
     def test_trade_canonical(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(Bar(event_type="trade")) == "trade"
 
     def test_trade_tick_alias(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(Bar(event_type="trade_tick")) == "trade"
 
     def test_quote_canonical(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(Quote(event_type="quote")) == "quote"
 
     def test_quote_tick_alias(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(Quote(event_type="quote_tick")) == "quote"
 
     def test_book_delta_canonical(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(OrderBook(event_type="book_delta")) == "book_delta"
 
     def test_orderbook_alias(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(OrderBook(event_type="orderbook")) == "book_delta"
 
     def test_order_book_alias(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(OrderBook(event_type="order_book")) == "book_delta"
 
     def test_timer_canonical(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(Bar(event_type="timer")) == "timer"
 
     def test_funding_rate_alias(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(Bar(event_type="funding_rate")) == "timer"
 
     def test_unknown_event_type_returns_none(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
         assert input_type_for_event(Bar(event_type="some_custom_type")) is None
 
     def test_no_event_type_attribute_returns_none(self):
-        from nautilus_ext.features.compute.engine import input_type_for_event
+        from feature_engine.compute.engine import input_type_for_event
 
         class NoTypeEvent:
             pass
@@ -1737,7 +1737,7 @@ class TestInputTypeDerivation:
 
     def test_exported_from_package(self):
         """input_type_for_event is importable from the top-level package."""
-        from nautilus_ext.features.compute import input_type_for_event as fn
+        from feature_engine.compute import input_type_for_event as fn
         assert fn(Bar(event_type="bar")) == "bar"
 
 
@@ -2037,7 +2037,7 @@ class TestLateEventBoundary:
 # RollingVolumeSumFeature
 # ===========================================================================
 
-from nautilus_ext.features.compute.features import RollingSumFeature, RollingVolumeSumFeature
+from feature_engine.compute.features import RollingSumFeature, RollingVolumeSumFeature
 
 
 class TestRollingVolumeSumFeature:
@@ -2610,7 +2610,7 @@ class TestBackendDispatchHardening:
 
     def test_dispatch_is_deterministic_for_all_registered_types(self):
         """Every key in _FEATURE_CLASSES resolves to the correct class."""
-        from nautilus_ext.features.compute.backend import _FEATURE_CLASSES
+        from feature_engine.compute.backend import _FEATURE_CLASSES
         # Derived types require at least one entry in depends_on — supply a minimal valid tuple.
         _DERIVED_TYPES = {"ratio", "difference", "sum", "product", "rolling_std_derived"}
         registry = build_default_registry()
@@ -2774,10 +2774,10 @@ class TestPerformanceGuard:
         """Features, state, and spec modules must not import pandas."""
         import sys
         for mod_name in [
-            "nautilus_ext.features.compute.features",
-            "nautilus_ext.features.compute.state",
-            "nautilus_ext.features.compute.spec",
-            "nautilus_ext.features.compute.engine",
+            "feature_engine.compute.features",
+            "feature_engine.compute.state",
+            "feature_engine.compute.spec",
+            "feature_engine.compute.engine",
         ]:
             mod = sys.modules.get(mod_name)
             if mod is not None:
@@ -3435,7 +3435,7 @@ class TestProfilingHook:
 # Event adapters — BarMarketEvent / QuoteMarketEvent
 # ===========================================================================
 
-from nautilus_ext.features.compute.adapters import (
+from feature_engine.compute.adapters import (
     BarMarketEvent,
     QuoteMarketEvent,
     TradeMarketEvent,
@@ -3697,7 +3697,7 @@ class TestHistoricalEventProvider:
 # RealizedVolatilityFeature
 # ===========================================================================
 
-from nautilus_ext.features.compute.features import RealizedVolatilityFeature
+from feature_engine.compute.features import RealizedVolatilityFeature
 
 
 class TestRealizedVolatilityFeature:
@@ -3927,8 +3927,8 @@ class TestStrategyIntegrationExample:
         # This test documents the intended import surface for strategy code.
         # If this test is updatable without changing the feature compute internals,
         # the abstraction boundary is intact.
-        from nautilus_ext.features.compute.spec import FeatureSpec, FeatureSnapshot
-        from nautilus_ext.features.compute.engine import SpecFeatureEngine
+        from feature_engine.compute.spec import FeatureSpec, FeatureSnapshot
+        from feature_engine.compute.engine import SpecFeatureEngine
         specs = [FeatureSpec(name="m3", input_type="bar", input_field="close",
                              window=3, params={"type": "rolling_mean"})]
         eng = SpecFeatureEngine(specs=specs, stamp_process_time=False)
@@ -3967,14 +3967,14 @@ class TestFeatureDependencies:
 
     def _bar(self, close=100.0, ts_ns=1_000_000_000, open=100.0, high=101.0,
              low=99.0, volume=1000.0):
-        from nautilus_ext.features.compute.adapters import BarMarketEvent
+        from feature_engine.compute.adapters import BarMarketEvent
         return BarMarketEvent(
             instrument_id="X", open=open, high=high, low=low,
             close=close, volume=volume, event_type="bar", event_time_ns=ts_ns,
         )
 
     def _quote(self, bid=100.0, ask=100.2, ts_ns=1_000_000_000):
-        from nautilus_ext.features.compute.adapters import QuoteMarketEvent
+        from feature_engine.compute.adapters import QuoteMarketEvent
         return QuoteMarketEvent(
             instrument_id="X", bid_price=bid, ask_price=ask,
             bid_size=10.0, ask_size=10.0, event_type="quote", event_time_ns=ts_ns,
@@ -4339,12 +4339,12 @@ class TestFeatureDependencies:
 
     def test_derived_state_dict_round_trip(self):
         """Derived feature state_dict / load_state_dict preserves readiness and value."""
-        from nautilus_ext.features.compute.features import RatioDerivedFeature
+        from feature_engine.compute.features import RatioDerivedFeature
         spec = FeatureSpec("r", input_type="derived",
                            depends_on=("a", "b"), params={"type": "ratio"})
         feat = RatioDerivedFeature(spec)
         # Manually push a cached value via _emit
-        from nautilus_ext.features.compute.spec import FeatureValue
+        from feature_engine.compute.spec import FeatureValue
         feat._cached = FeatureValue(name="r", value=1.23, is_ready=True)
         state = feat.state_dict()
         feat2 = RatioDerivedFeature(spec)
@@ -4419,8 +4419,8 @@ class TestFeatureDependencies:
 
     def test_strategy_accesses_derived_via_snapshot_only(self):
         """Strategy code uses only FeatureSpec, FeatureSnapshot, SpecFeatureEngine."""
-        from nautilus_ext.features.compute.spec import FeatureSpec, FeatureSnapshot
-        from nautilus_ext.features.compute.engine import SpecFeatureEngine
+        from feature_engine.compute.spec import FeatureSpec, FeatureSnapshot
+        from feature_engine.compute.engine import SpecFeatureEngine
 
         specs = [
             FeatureSpec("spread", input_type="quote", params={"type": "spread"}),
@@ -4428,7 +4428,7 @@ class TestFeatureDependencies:
             FeatureSpec("ratio",  input_type="derived", depends_on=("spread", "mid"),
                         params={"type": "ratio"}),
         ]
-        from nautilus_ext.features.compute.adapters import QuoteMarketEvent
+        from feature_engine.compute.adapters import QuoteMarketEvent
         engine = SpecFeatureEngine(specs, stamp_process_time=False)
         ev = QuoteMarketEvent(instrument_id="X", bid_price=100.0, ask_price=100.4,
                               bid_size=10.0, ask_size=10.0, event_type="quote",
@@ -4444,8 +4444,8 @@ class TestFeatureDependencies:
 
     def test_dependency_context_value_returns_scalar(self):
         """DependencyContext.value() returns the scalar of a ready FeatureValue."""
-        from nautilus_ext.features.compute.features import DependencyContext
-        from nautilus_ext.features.compute.spec import FeatureValue
+        from feature_engine.compute.features import DependencyContext
+        from feature_engine.compute.spec import FeatureValue
         fv = FeatureValue(name="a", value=3.14, is_ready=True)
         ctx = DependencyContext({"a": fv})
         assert ctx.value("a") == 3.14
@@ -4453,8 +4453,8 @@ class TestFeatureDependencies:
 
     def test_dependency_context_is_ready_reflects_fv_flag(self):
         """DependencyContext.is_ready() reflects the is_ready flag of the FeatureValue."""
-        from nautilus_ext.features.compute.features import DependencyContext
-        from nautilus_ext.features.compute.spec import FeatureValue
+        from feature_engine.compute.features import DependencyContext
+        from feature_engine.compute.spec import FeatureValue
         ready = FeatureValue(name="a", value=1.0, is_ready=True)
         not_ready = FeatureValue(name="b", value=None, is_ready=False)
         ctx = DependencyContext({"a": ready, "b": not_ready})
@@ -4464,8 +4464,8 @@ class TestFeatureDependencies:
 
     def test_dependency_context_live_reference_reflects_updates(self):
         """DependencyContext holds a live dict reference — mutations are visible."""
-        from nautilus_ext.features.compute.features import DependencyContext
-        from nautilus_ext.features.compute.spec import FeatureValue
+        from feature_engine.compute.features import DependencyContext
+        from feature_engine.compute.spec import FeatureValue
         values: dict = {}
         ctx = DependencyContext(values)
         assert ctx.is_ready("a") is False
@@ -4476,8 +4476,8 @@ class TestFeatureDependencies:
 
     def test_dependency_context_all_ready(self):
         """DependencyContext.all_ready() is True only when every listed dep is ready."""
-        from nautilus_ext.features.compute.features import DependencyContext
-        from nautilus_ext.features.compute.spec import FeatureValue
+        from feature_engine.compute.features import DependencyContext
+        from feature_engine.compute.spec import FeatureValue
         r = FeatureValue(name="a", value=1.0, is_ready=True)
         nr = FeatureValue(name="b", value=None, is_ready=False)
         ctx = DependencyContext({"a": r, "b": nr})
@@ -4489,8 +4489,8 @@ class TestFeatureDependencies:
 # RollingStdDerivedFeature + practical derived chains
 # ===========================================================================
 
-from nautilus_ext.features.compute.features import RollingStdDerivedFeature
-from nautilus_ext.features.compute.adapters import adapt_trade_tick_event
+from feature_engine.compute.features import RollingStdDerivedFeature
+from feature_engine.compute.adapters import adapt_trade_tick_event
 
 
 class TestRollingStdDerivedFeature:

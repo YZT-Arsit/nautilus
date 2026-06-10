@@ -36,7 +36,7 @@ SpecFeatureEngine
     process_time_ns is stamped via an injected Clock rather than calling
     time.time_ns() directly.  Inject ManualClock for deterministic tests:
 
-        from nautilus_ext.features.compute.clock import ManualClock
+        from feature_engine.compute.clock import ManualClock
         clock = ManualClock(initial_ns=1_000_000_000)
         engine = SpecFeatureEngine(specs=specs, clock=clock)
 
@@ -56,18 +56,18 @@ from __future__ import annotations
 import logging
 from typing import Any, Iterable
 
-from nautilus_ext.features.compute.backend import BackendRegistry, build_default_registry
-from nautilus_ext.features.compute.clock import Clock, SystemClock
-from nautilus_ext.features.compute.feature_base import FeatureBase
-from nautilus_ext.features.compute.features import DependencyContext
-from nautilus_ext.features.compute.spec import FeatureSnapshot, FeatureSpec, FeatureValue
-from nautilus_ext.features.compute.timestamps import (
+from feature_engine.compute.backend import BackendRegistry, build_default_registry
+from feature_engine.compute.clock import Clock, SystemClock
+from feature_engine.compute.feature_base import FeatureBase
+from feature_engine.compute.features import DependencyContext
+from feature_engine.compute.spec import FeatureSnapshot, FeatureSpec, FeatureValue
+from feature_engine.compute.timestamps import (
     EventTimestamps,
     TimestampConfig,
     extract_timestamps,
     select_timestamp,
 )
-from nautilus_ext.features.compute.watermark import StreamKey, WatermarkTracker
+from feature_engine.compute.watermark import StreamKey, WatermarkTracker
 
 log = logging.getLogger(__name__)
 
@@ -928,9 +928,9 @@ class SpecFeatureEngine:
 # ---------------------------------------------------------------------------
 
 def _make_spec_driven_engine_class():  # type: ignore[return]
-    from nautilus_ext.features.feature_engine import FeatureEngineBase
-    from nautilus_ext.features.feature_event import FeatureEvent
-    from nautilus_ext.features.feature_schema import FeatureFieldSpec, FeatureSetSpec
+    from feature_engine.feature_engine import FeatureEngineBase
+    from feature_engine.feature_event import FeatureEvent
+    from feature_engine.feature_schema import FeatureFieldSpec, FeatureSetSpec
 
     class SpecDrivenFeatureEngine(FeatureEngineBase):
         """Adapter: SpecFeatureEngine → FeatureEngineBase.

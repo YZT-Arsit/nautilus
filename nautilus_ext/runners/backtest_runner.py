@@ -153,7 +153,7 @@ class NautilusBacktestRunner:
         if features_dir is not None:
             offline = getattr(feature_pipeline, "_offline_store", None)
             if offline is None:
-                from nautilus_ext.features.feature_store import OfflineFeatureStore
+                from feature_engine.feature_store import OfflineFeatureStore
                 offline = OfflineFeatureStore(features_dir)
                 feature_pipeline._offline_store = offline
 

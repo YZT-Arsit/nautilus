@@ -25,11 +25,11 @@ Nautilus dependency note
 """
 from __future__ import annotations
 
-from nautilus_ext.features.feature_engine import FeatureEngineBase
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_registry import register_feature_engine
-from nautilus_ext.features.feature_schema import FeatureFieldSpec, FeatureSetSpec
-from nautilus_ext.features.vwm_features import VwmFeatureConfig, VwmFeatureEngine
+from feature_engine.feature_engine import FeatureEngineBase
+from feature_engine.feature_event import FeatureEvent
+from feature_engine.feature_registry import register_feature_engine
+from feature_engine.feature_schema import FeatureFieldSpec, FeatureSetSpec
+from feature_engine.vwm_features import VwmFeatureConfig, VwmFeatureEngine
 from nautilus_ext.strategies.interfaces.input_types import BarInput
 
 # ------------------------------------------------------------------

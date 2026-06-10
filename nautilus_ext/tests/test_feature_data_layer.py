@@ -75,20 +75,20 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from nautilus_ext.features.feature_cache import FeatureQueryCache
-from nautilus_ext.features.feature_checkpoint import FeatureCheckpointManager
-from nautilus_ext.features.feature_engine import FeatureEngineBase
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_joiner import FeatureJoiner
-from nautilus_ext.features.feature_pipeline import FeaturePipeline
-from nautilus_ext.features.feature_registry import (
+from feature_engine.feature_cache import FeatureQueryCache
+from feature_engine.feature_checkpoint import FeatureCheckpointManager
+from feature_engine.feature_engine import FeatureEngineBase
+from feature_engine.feature_event import FeatureEvent
+from feature_engine.feature_joiner import FeatureJoiner
+from feature_engine.feature_pipeline import FeaturePipeline
+from feature_engine.feature_registry import (
     available_feature_engines,
     build_feature_engine,
     register_feature_engine,
 )
-from nautilus_ext.features.feature_schema import FeatureFieldSpec, FeatureSetSpec
-from nautilus_ext.features.feature_store import OfflineFeatureStore, OnlineFeatureStore
-from nautilus_ext.features.interfaces import StrategyRuntimeContext
+from feature_engine.feature_schema import FeatureFieldSpec, FeatureSetSpec
+from feature_engine.feature_store import OfflineFeatureStore, OnlineFeatureStore
+from feature_engine.interfaces import StrategyRuntimeContext
 from nautilus_ext.ml.feature_dataset import FeatureDatasetSpec, load_feature_dataset
 from nautilus_ext.ml.inference_context import ModelInferenceContext
 from nautilus_ext.strategies.interfaces.input_types import BarInput
@@ -270,7 +270,7 @@ def test_feature_engine_update_returns_none_for_unknown_type():
 
 
 def test_mock_engine_implements_protocol():
-    from nautilus_ext.features.feature_engine import BaseFeatureEngine
+    from feature_engine.feature_engine import BaseFeatureEngine
     engine = MockFeatureEngine()
     assert isinstance(engine, BaseFeatureEngine)
 
@@ -724,7 +724,7 @@ def test_feature_checkpoint_save_load(tmp_path: Path):
 
 def _try_import_vwm_adapter():
     try:
-        from nautilus_ext.features.vwm_adapter import VwmBarFeatureEngine
+        from feature_engine.vwm_adapter import VwmBarFeatureEngine
         return VwmBarFeatureEngine
     except (ImportError, ModuleNotFoundError):
         return None
@@ -1029,7 +1029,7 @@ def test_online_store_latest_dict_reflects_most_recent_put():
 
 def test_feature_manifest_basic_operations(tmp_path: Path):
     """Manifest supports append, save, load, find_files round-trip."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     path = tmp_path / "manifest.json"
     m = FeatureManifest(path)
@@ -1057,7 +1057,7 @@ def test_feature_manifest_basic_operations(tmp_path: Path):
 
 def test_feature_manifest_time_range_overlap_filter(tmp_path: Path):
     """find_files returns only files whose ts range overlaps the query range."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     m = FeatureManifest(tmp_path / "manifest.json")
 
@@ -1179,7 +1179,7 @@ def test_feature_dataset_select_columns(tmp_path: Path):
 
 def test_feature_manifest_validate_files_exist(tmp_path: Path):
     """validate_files_exist reports missing Parquet files."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     m = FeatureManifest(tmp_path / "manifest.json")
     real_file = tmp_path / "real.parquet"
@@ -1244,7 +1244,7 @@ def test_pipeline_get_feature_window():
 
 def test_manifest_deduplicate_removes_exact_duplicates(tmp_path: Path):
     """deduplicate() removes records with identical (fs, ver, iid, start, end, path)."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     m = FeatureManifest(tmp_path / "manifest.json")
 
@@ -1268,7 +1268,7 @@ def test_manifest_deduplicate_removes_exact_duplicates(tmp_path: Path):
 
 def test_manifest_deduplicate_keeps_last_occurrence():
     """When file_path differs but other fields are equal, both records survive."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     m = FeatureManifest("/tmp/never_saved.json")
     for path in ("a.parquet", "b.parquet"):
@@ -1285,7 +1285,7 @@ def test_manifest_deduplicate_keeps_last_occurrence():
 
 def test_manifest_compact_keeps_one_per_time_slot(tmp_path: Path):
     """compact() keeps one record per (fs, ver, iid, start, end) group."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     m = FeatureManifest(tmp_path / "manifest.json")
     # Two records for the same time slot with different file_paths and created_at
@@ -1317,7 +1317,7 @@ def test_manifest_compact_keeps_one_per_time_slot(tmp_path: Path):
 
 def test_manifest_remove_missing_files(tmp_path: Path):
     """remove_missing_files() deletes records for files that don't exist on disk."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     real = tmp_path / "real.parquet"
     real.write_bytes(b"")
@@ -1343,7 +1343,7 @@ def test_manifest_remove_missing_files(tmp_path: Path):
 
 def test_manifest_remove_missing_does_not_delete_real_files(tmp_path: Path):
     """remove_missing_files() never deletes files from disk, only manifest records."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     real = tmp_path / "keep.parquet"
     real.write_bytes(b"")
@@ -1360,7 +1360,7 @@ def test_manifest_remove_missing_does_not_delete_real_files(tmp_path: Path):
 
 def test_manifest_summary_returns_correct_stats(tmp_path: Path):
     """summary() returns per-(feature_set_id, instrument_id) aggregated stats."""
-    from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
+    from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
 
     m = FeatureManifest(tmp_path / "manifest.json")
     iid_b = "ETHUSDT-PERP.BINANCE"
@@ -1858,7 +1858,7 @@ def test_feature_database_demo_inference_context(tmp_path):
 
 def test_feature_engine_template_importable():
     """example_feature_engine.py must be importable and register correctly."""
-    from nautilus_ext.features.templates.example_feature_engine import (
+    from feature_engine.templates.example_feature_engine import (
         ExampleObvEngine,
         FEATURE_SET_ID,
         MY_FEATURE_SCHEMA,
@@ -1877,7 +1877,7 @@ def test_feature_engine_template_importable():
 
 def test_feature_engine_template_update_emits_event():
     """ExampleObvEngine.update() returns FeatureEvent for BarInput, None otherwise."""
-    from nautilus_ext.features.templates.example_feature_engine import ExampleObvEngine
+    from feature_engine.templates.example_feature_engine import ExampleObvEngine
     engine = ExampleObvEngine(window=5)
 
     bar = _make_bar(ts=_TS0, close=100.0)

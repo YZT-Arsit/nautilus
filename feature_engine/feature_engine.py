@@ -22,8 +22,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Iterable, Protocol, runtime_checkable
 
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_schema import FeatureSetSpec
+from feature_engine.feature_event import FeatureEvent
+from feature_engine.feature_schema import FeatureSetSpec
 
 if TYPE_CHECKING:
     from nautilus_ext.strategies.interfaces.input_types import MarketEvent

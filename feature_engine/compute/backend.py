@@ -33,8 +33,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from nautilus_ext.features.compute.feature_base import FeatureBase
-from nautilus_ext.features.compute.features import (
+from feature_engine.compute.feature_base import FeatureBase
+from feature_engine.compute.features import (
     BookImbalanceFeature,
     DifferenceDerivedFeature,
     EWMAFeature,
@@ -55,7 +55,7 @@ from nautilus_ext.features.compute.features import (
     SumDerivedFeature,
     VWAPFeature,
 )
-from nautilus_ext.features.compute.spec import FeatureSpec
+from feature_engine.compute.spec import FeatureSpec
 
 
 @runtime_checkable
@@ -127,7 +127,7 @@ class PythonBackend:
 
     To register a custom feature class without subclassing PythonBackend,
     extend _FEATURE_CLASSES directly:
-        from nautilus_ext.features.compute.backend import _FEATURE_CLASSES
+        from feature_engine.compute.backend import _FEATURE_CLASSES
         _FEATURE_CLASSES["my_custom"] = MyCustomFeature
     """
 

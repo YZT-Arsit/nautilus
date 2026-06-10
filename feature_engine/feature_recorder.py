@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_store import OfflineFeatureStore
+from feature_engine.feature_event import FeatureEvent
+from feature_engine.feature_store import OfflineFeatureStore
 
 if TYPE_CHECKING:
     pass

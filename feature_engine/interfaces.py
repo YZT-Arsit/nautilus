@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from nautilus_ext.features.feature_event import FeatureEvent
+from feature_engine.feature_event import FeatureEvent
 
 
 @dataclass

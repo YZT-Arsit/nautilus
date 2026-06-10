@@ -19,13 +19,13 @@ import pytest
 
 # Strategy-facing imports go through the stable public facade, never the deep
 # compute.* paths and never compute/features.py.
-from nautilus_ext.features.api import FeatureSpec, SpecFeatureEngine, rolling_mean_spec
-from nautilus_ext.features.examples.synthetic_bars import (
+from feature_engine.api import FeatureSpec, SpecFeatureEngine, rolling_mean_spec
+from feature_engine.examples.synthetic_bars import (
     ONE_SECOND_NS,
     BarEvent,
     make_bars,
 )
-from nautilus_ext.features.runner import FeatureStrategyRunner
+from feature_engine.runner import FeatureStrategyRunner
 
 # Strategies live in the top-level ``strategies/`` package; framework glue in
 # ``strategy_framework/``; the shared entry point is the top-level run_strategy.
@@ -317,7 +317,7 @@ class TestMACrossover:
 
 
 # ===========================================================================
-# Refactored strategy layer: nautilus_ext.features.strategies.ma_crossover
+# Refactored strategy layer: feature_engine.strategies.ma_crossover
 # ===========================================================================
 
 def _strategy_engine(config: MovingAverageCrossoverConfig) -> SpecFeatureEngine:
@@ -676,7 +676,7 @@ class TestTopLevelLayer:
         src = inspect.getsource(strat)
         assert "features.compute" not in src
         assert "import features" not in src
-        assert "nautilus_ext.features.api" in src
+        assert "feature_engine.api" in src
 
     def test_build_specs_returns_two_rolling_mean_specs(self):
         specs = build_specs(MovingAverageCrossoverConfig())
@@ -731,10 +731,10 @@ class TestBoundaries:
     # -- A. strategy module must only use the public facade --------------------
 
     FORBIDDEN_COMPUTE_IMPORTS = (
-        "nautilus_ext.features.compute.features",
-        "nautilus_ext.features.compute.backend",
-        "nautilus_ext.features.compute.state",
-        "nautilus_ext.features.compute.engine",
+        "feature_engine.compute.features",
+        "feature_engine.compute.backend",
+        "feature_engine.compute.state",
+        "feature_engine.compute.engine",
     )
 
     def test_strategy_module_has_no_compute_internal_imports(self):
@@ -744,7 +744,7 @@ class TestBoundaries:
         for forbidden in self.FORBIDDEN_COMPUTE_IMPORTS:
             assert forbidden not in src, f"strategy must not import {forbidden}"
         # ...and it must reach the engine only through the public facade.
-        assert "from nautilus_ext.features.api import" in src
+        assert "from feature_engine.api import" in src
 
     # -- B. run_strategy.py is coordination only ------------------------------
 
@@ -780,7 +780,7 @@ class TestBoundaries:
     # -- D. api.py facade exposes the supported surface ------------------------
 
     def test_api_facade_exports(self):
-        import nautilus_ext.features.api as api
+        import feature_engine.api as api
 
         for name in ("FeatureSpec", "FeatureValue", "FeatureSnapshot", "SpecFeatureEngine", "rolling_mean_spec"):
             assert hasattr(api, name), f"api facade must export {name}"

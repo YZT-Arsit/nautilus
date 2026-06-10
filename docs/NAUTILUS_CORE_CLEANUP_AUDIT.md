@@ -13,7 +13,8 @@ preserved** as an optional future backtest/live backend (see
 | `strategies/` | user-facing strategy definitions + configs |
 | `strategy_framework/` | orchestration: plugin, registry, output, backtest recorder, **backends/** |
 | `data_engine/` | canonical data processing package |
-| `nautilus_ext/features/` | canonical feature processing package |
+| `feature_engine/` | canonical feature processing package |
+| `nautilus_ext/features/` | compatibility shim re-exporting `feature_engine` |
 
 ## B. Must keep — for future Nautilus backend (do NOT delete now)
 
@@ -53,7 +54,7 @@ audit does not remove them automatically.
 |------|-----|
 | `scripts/run_ma_crossover_demo.py` | forwards to `run_strategy.py`; covered by a test |
 | `strategy_framework/data_loaders.py` | thin re-export of `data_engine.loader` |
-| `nautilus_ext/features/examples/synthetic_bars.py` | re-exports `BarEvent`/`make_bars`/`ONE_SECOND_NS` |
+| `nautilus_ext/features/` (whole package) | shim re-exporting the canonical `feature_engine` |
 | `feature_strategies/*` | **N/A** — already removed; only would apply if old tests/docs still referenced it |
 
 ## E. Do NOT delete without explicit approval

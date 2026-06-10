@@ -39,8 +39,8 @@ log = logging.getLogger(__name__)
 
 # Feature pipeline integration — optional; works without Nautilus Cython.
 try:
-    from nautilus_ext.features.feature_pipeline import FeaturePipeline as _FeaturePipeline
-    from nautilus_ext.features.interfaces import StrategyRuntimeContext as _StrategyRuntimeContext
+    from feature_engine.feature_pipeline import FeaturePipeline as _FeaturePipeline
+    from feature_engine.interfaces import StrategyRuntimeContext as _StrategyRuntimeContext
     _FEATURE_LAYER_AVAILABLE = True
 except ImportError:
     _FeaturePipeline = None  # type: ignore[assignment, misc]

@@ -1,138 +1,47 @@
-"""Reusable streaming bar features and the Feature Data Layer.
+"""Compatibility shim — the canonical feature layer moved to ``feature_engine``.
 
-The same engine instance can be warmed up with historical bars and then updated
-one bar at a time from a live feed, keeping batch and incremental semantics aligned.
+This package used to be the canonical feature-processing layer. Its modules
+(``api``, ``runner``, ``compute``, the Feature Data Layer, …) now live in the
+top-level ``feature_engine`` package. This shim re-exports them so legacy imports
+keep working::
 
-Feature Data Layer (new)
-------------------------
-FeatureEvent         Immutable first-class feature snapshot (replaces SignalResult.debug).
-FeatureSetSpec       Formal schema: names, types, versions for each feature set.
-FeatureEngineBase    Abstract base / protocol for all feature engines.
-FeatureRegistry      register_feature_engine / build_feature_engine factory.
-OnlineFeatureStore   In-memory ring buffer for real-time signal engine access.
-OfflineFeatureStore  Parquet-backed persistence with batched flush.
-FeaturePipeline      Orchestrates N engines over a MarketEvent stream.
-StrategyRuntimeContext  Context bundle for Mode B (feature-externalised) strategies.
-VwmBarFeatureEngine  Adapter: VwmFeatureEngine → FeatureEvent output.
-FeatureRecorder      Session-scoped OfflineFeatureStore wrapper.
-FeatureQueryCache    LRU cache for repeated Parquet queries.
-FeatureJoiner        Join FeatureEvents with bar/tick DataFrames.
-FeatureCheckpointManager  Save/load FeaturePipeline state to JSON.
+    from nautilus_ext.features import FeatureSnapshot          # -> feature_engine
+    from nautilus_ext.features.api import FeatureSpec          # -> feature_engine.api
+    from nautilus_ext.features.runner import FeatureStrategyRunner
+
+New code should import from ``feature_engine`` directly. Architecture:
+``data_engine -> feature_engine -> strategy_framework -> strategies``.
 """
-from nautilus_ext.features.base import BarFeatureEngine
-from nautilus_ext.features.base import FeatureSnapshot
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_schema import FeatureFieldSpec, FeatureSetSpec
-from nautilus_ext.features.tradeblazer_features import RawMomentumFeature
-from nautilus_ext.features.tradeblazer_features import cross_over
-from nautilus_ext.features.tradeblazer_features import cross_under
+from __future__ import annotations
 
-__all__ = [
-    # Legacy (preserved for backward compat)
-    "AtrFeature",
-    "BarFeatureEngine",
-    "EmaFeature",
-    "FeatureSnapshot",
-    "RawMomentumFeature",
-    "VwmFeatureConfig",
-    "VwmFeatureEngine",
-    "VwmFeatureSnapshot",
-    "cross_over",
-    "cross_under",
-    # Feature Data Layer
-    "FeatureEvent",
-    "FeatureFieldSpec",
-    "FeatureSetSpec",
-    "FeatureEngineBase",
-    "BaseFeatureEngine",
-    "FeaturePipeline",
-    "OnlineFeatureStore",
-    "OfflineFeatureStore",
-    "StrategyRuntimeContext",
-    "VwmBarFeatureEngine",
-    "FeatureRecorder",
-    "FeatureQueryCache",
-    "FeatureJoiner",
-    "FeatureCheckpointManager",
-    "register_feature_engine",
-    "build_feature_engine",
-    "available_feature_engines",
-]
+import importlib
+import sys
+
+import feature_engine as _feature_engine
+
+# Mirror the public surface without eagerly resolving lazy (native-dep) names.
+__all__ = list(_feature_engine.__all__)
+
+# Alias submodules so ``import nautilus_ext.features.<x>`` resolves to
+# ``feature_engine.<x>``. Heavy/optional submodules (e.g. ``nautilus_indicators``,
+# which imports Nautilus native code) are imported lazily and simply skipped here
+# if their dependencies are unavailable; they remain reachable via attribute
+# access on ``feature_engine``.
+_ALIASED_SUBMODULES = (
+    "api", "runner", "base", "builders", "compute",
+    "feature_cache", "feature_checkpoint", "feature_engine", "feature_event",
+    "feature_joiner", "feature_manifest", "feature_pipeline", "feature_recorder",
+    "feature_registry", "feature_schema", "feature_store", "interfaces",
+    "tradeblazer_features", "vwm_adapter", "vwm_features",
+    "examples", "examples.synthetic_bars",
+)
+for _name in _ALIASED_SUBMODULES:
+    try:
+        sys.modules[f"{__name__}.{_name}"] = importlib.import_module(f"feature_engine.{_name}")
+    except Exception:  # optional/heavy dependency missing in this environment
+        pass
 
 
 def __getattr__(name: str):
-    # --- legacy Nautilus-dependent indicators ---
-    if name in {"AtrFeature", "EmaFeature"}:
-        from nautilus_ext.features.nautilus_indicators import AtrFeature
-        from nautilus_ext.features.nautilus_indicators import EmaFeature
-        return {"AtrFeature": AtrFeature, "EmaFeature": EmaFeature}[name]
-
-    if name in {"VwmFeatureConfig", "VwmFeatureEngine", "VwmFeatureSnapshot"}:
-        from nautilus_ext.features.vwm_features import VwmFeatureConfig
-        from nautilus_ext.features.vwm_features import VwmFeatureEngine
-        from nautilus_ext.features.vwm_features import VwmFeatureSnapshot
-        return {
-            "VwmFeatureConfig": VwmFeatureConfig,
-            "VwmFeatureEngine": VwmFeatureEngine,
-            "VwmFeatureSnapshot": VwmFeatureSnapshot,
-        }[name]
-
-    # --- Feature Data Layer ---
-    if name in {"FeatureEngineBase", "BaseFeatureEngine"}:
-        from nautilus_ext.features.feature_engine import (
-            BaseFeatureEngine,
-            FeatureEngineBase,
-        )
-        return {"FeatureEngineBase": FeatureEngineBase,
-                "BaseFeatureEngine": BaseFeatureEngine}[name]
-
-    if name in {"OnlineFeatureStore", "OfflineFeatureStore"}:
-        from nautilus_ext.features.feature_store import (
-            OfflineFeatureStore,
-            OnlineFeatureStore,
-        )
-        return {"OnlineFeatureStore": OnlineFeatureStore,
-                "OfflineFeatureStore": OfflineFeatureStore}[name]
-
-    if name == "FeaturePipeline":
-        from nautilus_ext.features.feature_pipeline import FeaturePipeline
-        return FeaturePipeline
-
-    if name == "StrategyRuntimeContext":
-        from nautilus_ext.features.interfaces import StrategyRuntimeContext
-        return StrategyRuntimeContext
-
-    if name == "VwmBarFeatureEngine":
-        from nautilus_ext.features.vwm_adapter import VwmBarFeatureEngine
-        return VwmBarFeatureEngine
-
-    if name == "FeatureRecorder":
-        from nautilus_ext.features.feature_recorder import FeatureRecorder
-        return FeatureRecorder
-
-    if name == "FeatureQueryCache":
-        from nautilus_ext.features.feature_cache import FeatureQueryCache
-        return FeatureQueryCache
-
-    if name == "FeatureJoiner":
-        from nautilus_ext.features.feature_joiner import FeatureJoiner
-        return FeatureJoiner
-
-    if name == "FeatureCheckpointManager":
-        from nautilus_ext.features.feature_checkpoint import FeatureCheckpointManager
-        return FeatureCheckpointManager
-
-    if name in {"register_feature_engine", "build_feature_engine",
-                "available_feature_engines"}:
-        from nautilus_ext.features.feature_registry import (
-            available_feature_engines,
-            build_feature_engine,
-            register_feature_engine,
-        )
-        return {
-            "register_feature_engine": register_feature_engine,
-            "build_feature_engine": build_feature_engine,
-            "available_feature_engines": available_feature_engines,
-        }[name]
-
-    raise AttributeError(f"module 'nautilus_ext.features' has no attribute {name!r}")
+    """Delegate attribute access (incl. lazy names) to ``feature_engine``."""
+    return getattr(_feature_engine, name)

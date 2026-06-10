@@ -30,7 +30,7 @@ from strategy_framework import output
 from strategy_framework.backends import build_backend
 from strategy_framework.backtest import SignalRecorder
 from strategy_framework.registry import get_entry
-from nautilus_ext.features.runner import FeatureStrategyRunner
+from feature_engine.runner import FeatureStrategyRunner
 
 # Repository root — relative config paths (e.g. a plugin's default_config_path)
 # resolve against this so the runner works regardless of the caller's CWD.

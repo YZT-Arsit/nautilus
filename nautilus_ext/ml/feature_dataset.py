@@ -56,7 +56,7 @@ from typing import Any
 
 import pandas as pd
 
-from nautilus_ext.features.feature_store import OfflineFeatureStore
+from feature_engine.feature_store import OfflineFeatureStore
 
 _REQUIRED_COLS = {"ts_event", "instrument_id", "feature_set_id", "feature_version", "is_warmup"}
 _JOIN_KEEP_COLS = {"ts_event", "instrument_id", "is_warmup"}  # columns kept once in joined output

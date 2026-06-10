@@ -38,19 +38,19 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from nautilus_ext.features.compute.spec import (
+from feature_engine.compute.spec import (
     FeatureSpec,
     FeatureUpdate,
     FeatureValue,
     WarmupRequirement,
 )
-from nautilus_ext.features.compute.state import (
+from feature_engine.compute.state import (
     EWMAState,
     RollingWindowState,
     TimeWindowState,
     VWAPState,
 )
-from nautilus_ext.features.compute.timestamps import extract_timestamps, select_timestamp
+from feature_engine.compute.timestamps import extract_timestamps, select_timestamp
 
 
 # ---------------------------------------------------------------------------

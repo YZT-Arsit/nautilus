@@ -24,8 +24,8 @@ from strategies.ma_crossover import (
     MovingAverageCrossoverStrategy,
     build_specs,
 )
-from nautilus_ext.features.examples.synthetic_bars import ONE_SECOND_NS, BarEvent
-from nautilus_ext.features.runner import FeatureStrategyRunner
+from feature_engine.examples.synthetic_bars import ONE_SECOND_NS, BarEvent
+from feature_engine.runner import FeatureStrategyRunner
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIGS = REPO_ROOT / "strategies" / "ma_crossover"
@@ -254,10 +254,10 @@ class TestRunStrategyModes:
 class TestExecutionBoundaries:
 
     FORBIDDEN = (
-        "nautilus_ext.features.compute.features",
-        "nautilus_ext.features.compute.backend",
-        "nautilus_ext.features.compute.state",
-        "nautilus_ext.features.compute.engine",
+        "feature_engine.compute.features",
+        "feature_engine.compute.backend",
+        "feature_engine.compute.state",
+        "feature_engine.compute.engine",
     )
 
     def test_new_modules_have_no_compute_internal_imports(self):

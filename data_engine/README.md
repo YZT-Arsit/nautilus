@@ -73,7 +73,7 @@ present today.
 
 ## Layering
 
-`data_engine` (data) → `nautilus_ext/features/compute` (features) →
+`data_engine` (data) → `feature_engine/compute` (features) →
 `strategy_framework` (orchestration) → `strategies/<name>` (logic).
 `strategy_framework/data_loaders.py` is a **compatibility wrapper** that
 re-exports this package; it is not the canonical implementation.

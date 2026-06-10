@@ -33,8 +33,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_store import OnlineFeatureStore
+from feature_engine.feature_event import FeatureEvent
+from feature_engine.feature_store import OnlineFeatureStore
 
 _VALID_POLICIES = frozenset({"fill_none", "fill_zero", "raise"})
 

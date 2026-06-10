@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
-from nautilus_ext.features.api import FeatureSnapshot, FeatureSpec, rolling_mean_spec
+from feature_engine.api import FeatureSnapshot, FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 Signal = Literal["BUY", "SELL", "HOLD"]

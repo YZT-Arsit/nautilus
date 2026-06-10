@@ -5,11 +5,11 @@ from collections import deque
 from dataclasses import asdict
 from dataclasses import dataclass
 
-from nautilus_ext.features.nautilus_indicators import AtrFeature
-from nautilus_ext.features.nautilus_indicators import EmaFeature
-from nautilus_ext.features.tradeblazer_features import RawMomentumFeature
-from nautilus_ext.features.tradeblazer_features import cross_over
-from nautilus_ext.features.tradeblazer_features import cross_under
+from feature_engine.nautilus_indicators import AtrFeature
+from feature_engine.nautilus_indicators import EmaFeature
+from feature_engine.tradeblazer_features import RawMomentumFeature
+from feature_engine.tradeblazer_features import cross_over
+from feature_engine.tradeblazer_features import cross_under
 from nautilus_ext.strategies.signal_types import BarInput
 
 

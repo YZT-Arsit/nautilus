@@ -13,7 +13,7 @@ the original classes.
 
 Quick start
 -----------
-    from nautilus_ext.features.compute.adapters import (
+    from feature_engine.compute.adapters import (
         adapt_bar_event, adapt_quote_tick_event,
         InMemoryEventProvider,
     )
@@ -341,7 +341,7 @@ class InMemoryEventProvider:
 
     Usage
     -----
-        from nautilus_ext.features.compute.adapters import (
+        from feature_engine.compute.adapters import (
             InMemoryEventProvider, adapt_bar_event,
         )
         adapted = [adapt_bar_event(b) for b in raw_bars]
@@ -379,7 +379,7 @@ class InMemoryEventProvider:
             if input_type is not None:
                 # Normalise via the engine's canonical resolver so vendor aliases
                 # ("quote_tick", "orderbook") match correctly.
-                from nautilus_ext.features.compute.engine import input_type_for_event
+                from feature_engine.compute.engine import input_type_for_event
                 canonical = input_type_for_event(event)
                 if canonical != input_type:
                     continue

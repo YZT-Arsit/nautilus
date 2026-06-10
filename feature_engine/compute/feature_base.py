@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from nautilus_ext.features.compute.spec import (
+from feature_engine.compute.spec import (
     FeatureSpec,
     FeatureUpdate,
     FeatureValue,

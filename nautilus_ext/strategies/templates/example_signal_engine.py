@@ -47,7 +47,7 @@ FeaturePipeline before the strategy receives any events.
 """
 from __future__ import annotations
 
-from nautilus_ext.features.interfaces import StrategyRuntimeContext
+from feature_engine.interfaces import StrategyRuntimeContext
 from nautilus_ext.strategies.interfaces.input_types import BarInput
 from nautilus_ext.strategies.interfaces.output_types import OrderIntent, SignalResult
 

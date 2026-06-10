@@ -38,9 +38,9 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_manifest import FeatureManifest, ManifestRecord
-from nautilus_ext.features.feature_schema import FeatureSetSpec
+from feature_engine.feature_event import FeatureEvent
+from feature_engine.feature_manifest import FeatureManifest, ManifestRecord
+from feature_engine.feature_schema import FeatureSetSpec
 
 if TYPE_CHECKING:
     pass

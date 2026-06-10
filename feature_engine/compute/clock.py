@@ -8,7 +8,7 @@ clock explicitly so that process_time_ns is reproducible.
 The engine accepts any object satisfying the Clock protocol (structural typing,
 no inheritance required). This makes mocking trivial without patching.
 
-    from nautilus_ext.features.compute.clock import ManualClock
+    from feature_engine.compute.clock import ManualClock
     clock = ManualClock(initial_ns=1_000_000_000)
     engine = SpecFeatureEngine(specs=specs, clock=clock, stamp_process_time=True)
     snap = engine.on_event(bar)

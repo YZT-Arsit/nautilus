@@ -111,10 +111,11 @@ class TestRegistryStructure:
 class TestStrategyBoundary:
 
     FORBIDDEN = (
-        "nautilus_ext.features.compute.features",
-        "nautilus_ext.features.compute.backend",
-        "nautilus_ext.features.compute.state",
-        "nautilus_ext.features.compute.engine",
+        # compute internals are private — strategies use the public api only
+        "feature_engine.compute",
+        "nautilus_ext.features.compute",
+        # legacy feature layer is a compat shim, not for new strategy code
+        "nautilus_ext.features",
     )
 
     def test_strategy_no_compute_internal_imports(self):
@@ -123,7 +124,7 @@ class TestStrategyBoundary:
         src = inspect.getsource(strat)
         for forbidden in self.FORBIDDEN:
             assert forbidden not in src
-        assert "from nautilus_ext.features.api import" in src
+        assert "from feature_engine.api import" in src
         assert "from strategy_framework.plugin import StrategyPlugin" in src
 
 
@@ -165,3 +166,39 @@ class TestCompatibilityShims:
 
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module("feature_strategies")
+
+
+# ===========================================================================
+# G. feature_engine is canonical; nautilus_ext/features is a shim
+# ===========================================================================
+
+class TestFeatureEngineCanonical:
+
+    def test_canonical_symbols_live_in_feature_engine(self):
+        from feature_engine.api import FeatureSnapshot, FeatureSpec, rolling_mean_spec  # noqa: F401
+        from feature_engine.runner import FeatureStrategyRunner  # noqa: F401
+        import feature_engine.compute.features  # noqa: F401
+
+    def test_runner_imports_from_feature_engine(self):
+        src = inspect.getsource(run_strategy)
+        assert "from feature_engine.runner import FeatureStrategyRunner" in src
+
+    def test_nautilus_ext_features_is_compat_shim(self):
+        import feature_engine
+        import nautilus_ext.features as shim
+
+        # Source advertises itself as a shim re-exporting feature_engine.
+        src = inspect.getsource(shim)
+        assert "feature_engine" in src
+        assert "import feature_engine" in src
+        # Submodule access is aliased to feature_engine, not a local copy.
+        import nautilus_ext.features.api as shim_api
+        import feature_engine.api as fe_api
+        assert shim_api is fe_api
+        # Attribute access delegates to feature_engine.
+        assert shim.FeatureSnapshot is feature_engine.FeatureSnapshot
+
+    def test_no_feather_engine_typo_anywhere(self):
+        # Guard against a 'feather_engine' typo for 'feature_engine'.
+        with pytest.raises(ModuleNotFoundError):
+            __import__("feather_engine")

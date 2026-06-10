@@ -25,8 +25,8 @@ import logging
 from dataclasses import replace
 from typing import Iterable
 
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_store import OfflineFeatureStore, OnlineFeatureStore
+from feature_engine.feature_event import FeatureEvent
+from feature_engine.feature_store import OfflineFeatureStore, OnlineFeatureStore
 
 log = logging.getLogger(__name__)
 

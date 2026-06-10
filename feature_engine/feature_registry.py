@@ -108,7 +108,7 @@ def build_feature_engine(spec_or_name, params: dict | None = None):
 def _ensure_builtin_engines_registered() -> None:
     """Trigger registration of built-in adapters (lazy import)."""
     try:
-        import nautilus_ext.features.vwm_adapter  # noqa: F401
+        import feature_engine.vwm_adapter  # noqa: F401
     except Exception:
         pass  # Optional: Nautilus indicators not compiled on this machine
 

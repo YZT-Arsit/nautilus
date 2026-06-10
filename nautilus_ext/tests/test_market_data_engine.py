@@ -231,7 +231,7 @@ class TestCompatibility:
         assert len(warmup) == 5
 
     def test_synthetic_bars_reexport(self):
-        from nautilus_ext.features.examples.synthetic_bars import (
+        from feature_engine.examples.synthetic_bars import (
             ONE_SECOND_NS as compat_ns,
             BarEvent as CompatBar,
             make_bars as compat_make_bars,

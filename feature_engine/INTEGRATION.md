@@ -16,10 +16,10 @@ existing modules call into it.
 
 | Existing module | Status | What changes |
 |---|---|---|
-| [`nautilus_ext/features/base.py`](../nautilus_ext/features/base.py) | **Keep as-is** | Defines the `BarFeatureEngine` protocol used inside Nautilus strategies. The new framework's `Feature` class is a **superset**, but the protocol is the public contract that `BaseBarStrategy` depends on. Don't touch it. |
-| [`nautilus_ext/features/vwm_features.py`](../nautilus_ext/features/vwm_features.py) | **Keep as-is** | Strategy-facing bar-by-bar engine. Conserves TradeBlazer `[1]` semantics needed by `vwm_short_signals.py`. Different concern from offline panel features. |
-| [`nautilus_ext/features/tradeblazer_features.py`](../nautilus_ext/features/tradeblazer_features.py) | **Keep as-is** | Low-level primitives (`cross_over`, `RawMomentumFeature`). Used by `vwm_features.py`. Pure logic, no IO. |
-| [`nautilus_ext/features/nautilus_indicators.py`](../nautilus_ext/features/nautilus_indicators.py) | **Keep as-is** | Adapters around Nautilus C-level indicators. |
+| [`feature_engine/base.py`](../feature_engine/base.py) | **Keep as-is** | Defines the `BarFeatureEngine` protocol used inside Nautilus strategies. The new framework's `Feature` class is a **superset**, but the protocol is the public contract that `BaseBarStrategy` depends on. Don't touch it. |
+| [`feature_engine/vwm_features.py`](../feature_engine/vwm_features.py) | **Keep as-is** | Strategy-facing bar-by-bar engine. Conserves TradeBlazer `[1]` semantics needed by `vwm_short_signals.py`. Different concern from offline panel features. |
+| [`feature_engine/tradeblazer_features.py`](../feature_engine/tradeblazer_features.py) | **Keep as-is** | Low-level primitives (`cross_over`, `RawMomentumFeature`). Used by `vwm_features.py`. Pure logic, no IO. |
+| [`feature_engine/nautilus_indicators.py`](../feature_engine/nautilus_indicators.py) | **Keep as-is** | Adapters around Nautilus C-level indicators. |
 | [`nautilus_ext/data/catalog_quote_reader.py`](../nautilus_ext/data/catalog_quote_reader.py) | **Wrap, don't replace** | Already reads the verified `nautilus_catalog`. The new framework treats it as an **upstream source**. See "Bar aggregation bridge" below. |
 | [`nautilus_ext/data/event_source.py`](../nautilus_ext/data/event_source.py) | **Keep** | Event-iterator abstraction over the catalog. The framework's `CallbackAdapter` can be driven by this. |
 | [`nautilus_ext/pipelines/batch_feature_pipeline.py`](../nautilus_ext/pipelines/batch_feature_pipeline.py) | **Bridge to new framework** | Currently runs **per-strategy** engines (`BarFeatureEngine`) over historical events. For *panel-style* features (cross-symbol, multi-day, persisted) call `quant_feature_engine.execution.batch_engine.BatchEngine`. The two coexist: strategy-level (per-bar, in-memory) vs. analytical (panel, Parquet-persisted). |
@@ -33,7 +33,7 @@ existing modules call into it.
 The existing `nautilus_ext` features and the new `quant_feature_engine` solve
 overlapping but **distinct** problems:
 
-### Layer 1 — Strategy-time bar features (`nautilus_ext/features/`)
+### Layer 1 — Strategy-time bar features (`feature_engine/`)
 
 * Live inside a single strategy instance.
 * Operate on `BarInput` objects.
@@ -170,17 +170,17 @@ Adding a feature to `quant_feature_engine/features/` requires:
    are listed.
 
 Adding a feature for **strategy-time use only** continues to go in
-`nautilus_ext/features/` as a `BarFeatureEngine`.
+`feature_engine/` as a `BarFeatureEngine`.
 
 ### 5. Reusing existing TradeBlazer primitives
 
-`quant_feature_engine` features can freely import from `nautilus_ext.features.tradeblazer_features` (cross_over, cross_under, etc.). The
+`quant_feature_engine` features can freely import from `feature_engine.tradeblazer_features` (cross_over, cross_under, etc.). The
 primitives are pure-Python, no Nautilus runtime dependency. This avoids
 duplicating the cross-detection logic between the two layers.
 
 ```python
 # In a new quant_feature_engine/features/cross.py
-from nautilus_ext.features.tradeblazer_features import cross_over
+from feature_engine.tradeblazer_features import cross_over
 # ... use cross_over in your update()
 ```
 
@@ -203,7 +203,7 @@ from nautilus_ext.features.tradeblazer_features import cross_over
 ## Sanity checklist before integration
 
 1. `quant_feature_engine/tests` all green (39/39 currently).
-2. `nautilus_ext.features` `__init__.py` lazy-loading still works (no eager
+2. `feature_engine` `__init__.py` lazy-loading still works (no eager
    polars import).
 3. The bar aggregation bridge produces partition layouts matching
    `RAW_PARTITIONS` in `quant_feature_engine/core/schema.py`.

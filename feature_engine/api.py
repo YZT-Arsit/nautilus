@@ -1,9 +1,9 @@
 """Stable public API for feature-strategy authors.
 
 Import the feature engine's user-facing types from **here**, not from the deep
-``nautilus_ext.features.compute.*`` modules::
+``feature_engine.compute.*`` modules::
 
-    from nautilus_ext.features.api import FeatureSpec, FeatureSnapshot
+    from feature_engine.api import FeatureSpec, FeatureSnapshot
 
 This module is the supported surface. The ``compute`` package underneath is the
 low-level implementation (feature operators, backends, watermarks, …) and may
@@ -20,13 +20,13 @@ FeatureSnapshot
     strategy reads via ``snapshot.value(name)`` / ``snapshot.is_ready(name)``.
 SpecFeatureEngine
     Spec-driven engine that turns events into snapshots. Most strategy code
-    should prefer :class:`nautilus_ext.features.runner.FeatureStrategyRunner`,
+    should prefer :class:`feature_engine.runner.FeatureStrategyRunner`,
     which wraps engine construction and the live loop.
 rolling_mean_spec
     Convenience builder for a rolling-mean ``FeatureSpec`` (hides ``params``).
 """
-from nautilus_ext.features.builders import rolling_mean_spec
-from nautilus_ext.features.compute import (
+from feature_engine.builders import rolling_mean_spec
+from feature_engine.compute import (
     FeatureSnapshot,
     FeatureSpec,
     FeatureValue,

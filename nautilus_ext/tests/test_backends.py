@@ -138,10 +138,10 @@ class TestComputeIndependence:
     def test_compute_modules_do_not_import_nautilus_native(self):
         import inspect
 
-        import nautilus_ext.features.compute as compute
+        import feature_engine.compute as compute
 
         pkg_dir = Path(compute.__file__).resolve().parent
-        for mod in pkgutil.walk_packages([str(pkg_dir)], prefix="nautilus_ext.features.compute."):
+        for mod in pkgutil.walk_packages([str(pkg_dir)], prefix="feature_engine.compute."):
             module = importlib.import_module(mod.name)
             src = inspect.getsource(module)
             assert "import nautilus_trader" not in src, mod.name

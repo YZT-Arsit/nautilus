@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from nautilus_ext.features.vwm_features import VwmFeatureConfig
-from nautilus_ext.features.vwm_features import VwmFeatureEngine
+from feature_engine.vwm_features import VwmFeatureConfig
+from feature_engine.vwm_features import VwmFeatureEngine
 from nautilus_ext.strategies.interfaces.strategy_schema import StrategyInputSchema
 from nautilus_ext.strategies.signal_types import BarInput
 from nautilus_ext.strategies.signal_types import SignalResult

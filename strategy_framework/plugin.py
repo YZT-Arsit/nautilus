@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from nautilus_ext.features.api import FeatureSpec
+from feature_engine.api import FeatureSpec
 
 
 @dataclass(frozen=True)

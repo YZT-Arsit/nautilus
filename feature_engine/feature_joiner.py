@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 if TYPE_CHECKING:
-    from nautilus_ext.features.feature_store import OnlineFeatureStore
+    from feature_engine.feature_store import OnlineFeatureStore
 
 
 class FeatureJoiner:

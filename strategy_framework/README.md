@@ -21,9 +21,9 @@ Ordinary strategy authors rarely edit anything here; they work in
 run_strategy.py                 # the only normal entry point (repo root)
 strategies/<name>/              # strategy definition + config + README
 strategy_framework/             # this package — shared glue
-nautilus_ext/features/api.py    # stable public API facade for strategy authors
-nautilus_ext/features/runner.py # FeatureStrategyRunner
-nautilus_ext/features/compute/  # low-level feature engine (do not edit for a new strategy)
+feature_engine/api.py    # stable public API facade for strategy authors
+feature_engine/runner.py # FeatureStrategyRunner
+feature_engine/compute/  # low-level feature engine (do not edit for a new strategy)
 ```
 
 ## Extension points
@@ -33,7 +33,7 @@ nautilus_ext/features/compute/  # low-level feature engine (do not edit for a ne
   register a `mode` in `data_loaders.py` and add a config.
 - **New strategy** → see `strategies/<name>/README.md`; register its `PLUGIN`
   in `registry.py`.
-- **New low-level feature operator** → `nautilus_ext/features/compute/features.py`
+- **New low-level feature operator** → `feature_engine/compute/features.py`
   + `compute/backend.py` + `builders.py` + `api.py` (+ compute tests).
 
 ## Legacy

@@ -30,10 +30,10 @@ from __future__ import annotations
 
 from collections import deque
 
-from nautilus_ext.features.feature_engine import FeatureEngineBase
-from nautilus_ext.features.feature_event import FeatureEvent
-from nautilus_ext.features.feature_registry import register_feature_engine
-from nautilus_ext.features.feature_schema import FeatureFieldSpec, FeatureSetSpec
+from feature_engine.feature_engine import FeatureEngineBase
+from feature_engine.feature_event import FeatureEvent
+from feature_engine.feature_registry import register_feature_engine
+from feature_engine.feature_schema import FeatureFieldSpec, FeatureSetSpec
 from nautilus_ext.strategies.interfaces.input_types import BarInput
 
 # ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ class ExampleObvEngine(FeatureEngineBase):
 
     How to build from config (after registration):
 
-        from nautilus_ext.features.feature_registry import build_feature_engine
+        from feature_engine.feature_registry import build_feature_engine
         engine = build_feature_engine("example_obv_v1")
         engine = build_feature_engine("example_obv_v1", params={"window": 14})
     """

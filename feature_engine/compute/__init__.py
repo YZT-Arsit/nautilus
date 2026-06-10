@@ -1,5 +1,5 @@
 """
-nautilus_ext.features.compute — modular, incremental feature computation.
+feature_engine.compute — modular, incremental feature computation.
 
 Public surface
 --------------
@@ -50,10 +50,10 @@ Engines:
 
 Example
 -------
-    from nautilus_ext.features.compute import (
+    from feature_engine.compute import (
         FeatureSpec, TriggerPolicy, SpecFeatureEngine, TimestampConfig
     )
-    from nautilus_ext.features.compute.clock import ManualClock
+    from feature_engine.compute.clock import ManualClock
 
     specs = [
         FeatureSpec(
@@ -78,21 +78,21 @@ Example
     snapshot = engine.on_event(live_bar)
     mean_value = snapshot.scalar("rolling_mean_close_20")
 """
-from nautilus_ext.features.compute.backend import (
+from feature_engine.compute.backend import (
     BackendRegistry,
     FeatureBackend,
     PythonBackend,
     build_default_registry,
 )
-from nautilus_ext.features.compute.clock import Clock, ManualClock, SystemClock
-from nautilus_ext.features.compute.engine import (
+from feature_engine.compute.clock import Clock, ManualClock, SystemClock
+from feature_engine.compute.engine import (
     LateEventError,
     SpecDrivenFeatureEngine,
     SpecFeatureEngine,
     input_type_for_event,
 )
-from nautilus_ext.features.compute.feature_base import FeatureBase
-from nautilus_ext.features.compute.spec import (
+from feature_engine.compute.feature_base import FeatureBase
+from feature_engine.compute.spec import (
     FeatureSnapshot,
     FeatureSpec,
     FeatureUpdate,
@@ -100,20 +100,20 @@ from nautilus_ext.features.compute.spec import (
     TriggerPolicy,
     WarmupRequirement,
 )
-from nautilus_ext.features.compute.state import (
+from feature_engine.compute.state import (
     EWMAState,
     RollingWindowState,
     TimeWindowState,
     VWAPState,
 )
-from nautilus_ext.features.compute.timestamps import (
+from feature_engine.compute.timestamps import (
     EventTimestamps,
     TimestampConfig,
     convert_legacy_ts_event_to_ns,
     extract_timestamps,
     select_timestamp,
 )
-from nautilus_ext.features.compute.watermark import StreamKey, WatermarkTracker
+from feature_engine.compute.watermark import StreamKey, WatermarkTracker
 
 __all__ = [
     # Specs / values (stable, strategy-facing)
