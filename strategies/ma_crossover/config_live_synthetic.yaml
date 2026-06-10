@@ -1,6 +1,6 @@
 # MA5 / MA20 crossover — live/paper-style streaming skeleton (no real feed).
 #
-#   python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_live_synthetic.yaml
+#   python run_strategy.py --config strategies/ma_crossover/config_live_synthetic.yaml
 
 strategy: ma_crossover
 

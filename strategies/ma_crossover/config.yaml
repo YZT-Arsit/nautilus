@@ -1,9 +1,9 @@
-# MA5 / MA20 crossover — strategy run configuration.
+# MA5 / MA20 crossover — default (synthetic) run configuration.
 #
-# Run with:
-#   python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover.yaml
+#   python run_strategy.py --strategy ma_crossover
+#   python run_strategy.py --config strategies/ma_crossover/config.yaml
 #
-# `strategy` selects the entry in feature_strategies/registry.py.
+# `strategy` selects the plugin in strategy_framework/registry.py.
 # `params` are passed to that strategy's config dataclass.
 
 strategy: ma_crossover
@@ -22,3 +22,4 @@ data:
 
 output:
   print_table: true
+  record_signals: true

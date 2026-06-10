@@ -10,7 +10,7 @@ through its public methods; the strategy only needs ``on_snapshot``.
 Example
 -------
     from nautilus_ext.features.runner import FeatureStrategyRunner
-    from feature_strategies.ma_crossover import (
+    from strategies.ma_crossover import (
         MovingAverageCrossoverConfig, MovingAverageCrossoverStrategy, build_specs,
     )
 

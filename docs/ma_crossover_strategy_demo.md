@@ -7,78 +7,70 @@
 
 ## 0. File Layout
 
-The code is split into layers so each file has one job, and the **user-facing
-strategy layer lives at the top of the repository** in `feature_strategies/`.
-Strategy authors work there and never read or edit the compute layer.
+The code is split into layers so each file has one job. The **user-facing
+entry point and strategies live at the top of the repository**; framework glue
+sits in `strategy_framework/`; the low-level engine stays in
+`nautilus_ext/features/compute/`.
 
 | File | Responsibility | Who edits it |
 |------|----------------|--------------|
-| `feature_strategies/strategies/ma_crossover.py` | Strategy logic: config, `build_specs`, BUY/SELL/HOLD rules | **Strategy authors** |
-| `feature_strategies/registry.py` | Explicit name → strategy mapping | yes — one line per strategy |
-| `feature_strategies/configs/ma_crossover.yaml` | Strategy parameters + data + output | strategy authors |
-| `feature_strategies/run_strategy.py` | **Shared** executor — coordination only | no — shared |
-| `feature_strategies/data_loaders.py` | Event-source selection (`synthetic` / `csv_bars` / `live_synthetic`) | only to add a data source |
-| `feature_strategies/live_sources.py` | `LiveEventSource` protocol for real feeds (skeleton) | only to add a real live feed |
-| `feature_strategies/output.py` | Table formatting / printing / signal summary | only to change display |
-| `feature_strategies/backtest.py` | `SignalRecorder` — signal traceability (no PnL) | only to extend metrics |
-| `feature_strategies/sample_data/ma_crossover_bars.csv` | Tiny CSV for the backtest config | demo / test authors |
+| `run_strategy.py` (repo root) | **The** shared user entry point — coordination only | no — shared |
+| `strategies/ma_crossover/strategy.py` | Strategy logic: config, `build_specs`, signal rule, `PLUGIN` | **Strategy authors** |
+| `strategies/ma_crossover/config.yaml` | Strategy parameters + data + output | strategy authors |
+| `strategies/ma_crossover/README.md` | Per-strategy notes | strategy authors |
+| `strategy_framework/registry.py` | Explicit name → `StrategyPlugin` mapping | yes — one line per strategy |
+| `strategy_framework/plugin.py` | `StrategyPlugin` descriptor | no |
+| `strategy_framework/data_loaders.py` | Event-source selection (`synthetic` / `csv_bars` / `live_synthetic`) | only to add a data source |
+| `strategy_framework/live_sources.py` | `LiveEventSource` protocol for real feeds (skeleton) | only to add a real live feed |
+| `strategy_framework/output.py` | Table formatting / printing / signal summary | only to change display |
+| `strategy_framework/backtest.py` | `SignalRecorder` — signal traceability (no PnL) | only to extend metrics |
+| `strategies/ma_crossover/sample_data/ma_crossover_bars.csv` | Tiny CSV for the backtest config | demo / test authors |
 | `nautilus_ext/features/api.py` | **Stable public API** facade (`FeatureSpec`, `FeatureSnapshot`, `rolling_mean_spec`, …) | no — import from it |
 | `nautilus_ext/features/runner.py` | `FeatureStrategyRunner` — builds the engine + runs the loop | no |
-| `nautilus_ext/features/examples/synthetic_bars.py` | `BarEvent` + `make_bars()` demo data | demo / test authors |
 | `nautilus_ext/features/compute/features.py` | Low-level feature **operator library** (rolling-mean, etc.) | **compute owners only** |
-| `scripts/run_ma_crossover_demo.py` | Legacy wrapper → `feature_strategies.run_strategy.main` | no |
+| `scripts/run_ma_crossover_demo.py` | Legacy wrapper → top-level `run_strategy.main` | no |
+| `feature_strategies/` | Deprecated compatibility shims (re-export to new paths) | no |
 
 There is **one shared run script** for every strategy — you do not add a
 `run_xxx.py` per strategy. The layers:
 
-1. **Strategy layer** (`feature_strategies/strategies/`) — *what* to trade. One
-   module per strategy (config + `build_specs` + signal logic). User-facing.
-2. **Registry** (`feature_strategies/registry.py`) — maps a strategy name to its
-   `(config_cls, strategy_cls, build_specs)`. Explicit, no auto-discovery.
-3. **Shared executor** (`feature_strategies/run_strategy.py`) — *coordination
-   only*: select a strategy from the registry via `--config`/`--strategy`, build
-   specs + runner, get events from `data_loaders`, run warmup + the live loop,
-   and hand each row to `output`. No data construction, no formatting, no
-   event-shape assumptions.
-4. **Data loaders** (`feature_strategies/data_loaders.py`) — `load_events(data)`
+1. **Entry point** (`run_strategy.py`, repo root) — *coordination only*: select a
+   strategy plugin from the registry via `--config`/`--strategy`, build specs +
+   runner, get events from `data_loaders`, run warmup + the live loop, hand each
+   row to `output`, optionally record signals. No data construction, no
+   formatting, no event-shape assumptions.
+2. **Strategy layer** (`strategies/<name>/`) — *what* to trade. Each strategy is
+   a package with `strategy.py` (config + `build_specs` + signal logic + `PLUGIN`)
+   and its `config.yaml`. User-facing.
+3. **Registry** (`strategy_framework/registry.py`) — maps a strategy name to its
+   `StrategyPlugin`. Explicit, no auto-discovery.
+4. **Data loaders** (`strategy_framework/data_loaders.py`) — `load_events(data)`
    returns `(warmup_events, live_events)` for the configured `data.mode`
-   (`synthetic` for now). New sources plug in here.
-5. **Output** (`feature_strategies/output.py`) — warmup summary, table header,
-   and per-row printing. Event access is defensive (missing `close` /
-   `event_time_ns` render as `-`).
+   (`synthetic`, `csv_bars`, `live_synthetic`). New sources plug in here.
+5. **Output** (`strategy_framework/output.py`) — warmup summary, table, signal
+   summary. Event access is defensive (missing `close` / `event_time_ns` → `-`).
 6. **Public API** (`nautilus_ext/features/api.py`) — the stable import surface.
    Strategies do `from nautilus_ext.features.api import FeatureSpec, FeatureSnapshot, rolling_mean_spec`,
    never the deep `compute.*` paths.
 7. **Execution helper** (`nautilus_ext/features/runner.py`) —
    `FeatureStrategyRunner(specs, strategy)` builds a `SpecFeatureEngine` and runs
-   the warmup / per-event loop, yielding `(event, snapshot, signal)`:
-
-   ```python
-   runner = FeatureStrategyRunner(build_specs(config), MovingAverageCrossoverStrategy(config))
-   runner.warmup(warmup_bars)
-   for event, snapshot, signal in runner.run(live_bars):
-       ...
-   ```
-
+   the warmup / per-event loop, yielding `(event, snapshot, signal)`.
 8. **Compute layer** (`nautilus_ext/features/compute/`) — *how* features are
-   computed. This is a **library**. `features.py` holds the incremental maths
-   (rolling mean, etc.). Adding a **new strategy never requires editing it** —
-   you compose existing operators by name through `FeatureSpec`. You touch
-   `compute/features.py` (and `compute/backend.py`) only to add a genuinely new
-   low-level *operator*.
+   computed. A **library**. You touch `compute/features.py` (and
+   `compute/backend.py`) only to add a genuinely new low-level *operator*.
 
-**Adding a strategy** = three small edits, no new run script: a module in
-`strategies/`, one line in `registry.py`, and a `configs/<name>.yaml`. See
-`feature_strategies/README.md`.
+**Adding a strategy** = three small edits, no new run script: a package under
+`strategies/<name>/` (strategy.py + config.yaml + README.md), one line in
+`strategy_framework/registry.py`. See `strategies/ma_crossover/README.md` and
+`strategy_framework/README.md`.
 
 Key boundary: the strategy reads features **by name** through the public
 `FeatureSnapshot` API (`snapshot.value("ma5_close")`). It does **not** import
 `features.py`, `state.py`, or any engine/backend internals — a test
-(`test_strategy_imports_only_public_api`) enforces this. The compute layer can
-change how `rolling_mean` is implemented without the strategy noticing.
+(`test_strategy_imports_only_public_api`) enforces this.
 
 To change the strategy (different windows, new signal rule, an extra feature),
-edit **`feature_strategies/strategies/ma_crossover.py`** only.
+edit **`strategies/ma_crossover/strategy.py`** only.
 
 ---
 
@@ -115,7 +107,7 @@ the strategy module via the `rolling_mean_spec` helper (which hides the
 config — `f"ma{window}_{input_field}"` — so they stay in sync with the windows:
 
 ```python
-# feature_strategies/strategies/ma_crossover.py
+# strategies/ma_crossover/strategy.py
 from nautilus_ext.features.api import rolling_mean_spec
 
 def build_specs(config: MovingAverageCrossoverConfig) -> list[FeatureSpec]:
@@ -236,25 +228,25 @@ config's `data.mode`:
 
 ```bash
 # 1. Synthetic demo (generated price path)
-python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover.yaml
+python run_strategy.py --config strategies/ma_crossover/config.yaml
 
 # 2. Historical / backtest-style replay from a local CSV (stdlib csv, no pandas)
-python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_backtest.yaml
+python run_strategy.py --config strategies/ma_crossover/config_backtest.yaml
 
 # 3. Live/paper-style streaming skeleton (live events are a generator; no real feed)
-python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_live_synthetic.yaml
+python run_strategy.py --config strategies/ma_crossover/config_live_synthetic.yaml
 
 # Run by registered name (config defaults + synthetic data)
-python -m feature_strategies.run_strategy --strategy ma_crossover
+python run_strategy.py --strategy ma_crossover
 
 # Legacy entry point (thin wrapper, still works)
-python -m scripts.run_ma_crossover_demo
+python scripts/run_ma_crossover_demo.py
 ```
 
 Parameters (windows, warmup/live bar counts, instrument, data source) live in
 the YAML config, not in CLI flags — every strategy is driven the same way. With
 `output.record_signals: true`, the run also prints a `signal counts: …` summary
-via the dependency-free `feature_strategies/backtest.py` recorder (traceability
+via the dependency-free `strategy_framework/backtest.py` recorder (traceability
 only — no PnL).
 
 Example output (default parameters):
@@ -325,7 +317,7 @@ File: `nautilus_ext/tests/test_ma_crossover.py`
 | `test_registry_contains_ma_crossover` | `STRATEGY_REGISTRY` has the `ma_crossover` entry |
 | `test_entry_wires_config_strategy_and_build_specs` | The registry entry wires config/strategy/build_specs correctly |
 | `test_unknown_strategy_raises_helpful_error` | `get_entry()` raises a listing error for unknown names |
-| `test_strategy_imports_cleanly_from_top_level` | `feature_strategies.strategies.ma_crossover` imports without error |
+| `test_strategy_imports_cleanly_from_top_level` | `strategies.ma_crossover` imports without error |
 | `test_strategy_imports_only_public_api` | Strategy source imports `features.api`, never `features.compute.*` |
 | `test_build_specs_returns_two_rolling_mean_specs` | `build_specs()` returns two `rolling_mean` `FeatureSpec`s |
 | `test_value_and_is_ready_delegate_to_engine` | `runner.value()` / `runner.is_ready()` reflect engine state |
@@ -351,9 +343,9 @@ File: `nautilus_ext/tests/test_ma_crossover.py`
 | No pandas in hot path | ✓ `RollingWindowState` (deque + running sum) |
 | No full-history recomputation | ✓ O(1) push; ring buffer never exceeds `window` entries |
 | No sorting in `on_event()` | ✓ Topo order pre-computed at construction; this demo has no derived features |
-| No backend internals access | ✓ `feature_strategies/strategies/ma_crossover.py` imports only from `nautilus_ext.features.api`; no `features.py`, `state.py`, or engine internals. `test_strategy_imports_only_public_api` + `test_strategy_uses_only_snapshot_public_api` enforce it. |
+| No backend internals access | ✓ `strategies/ma_crossover/strategy.py` imports only from `nautilus_ext.features.api`; no `features.py`, `state.py`, or engine internals. `test_strategy_imports_only_public_api` + `test_strategy_uses_only_snapshot_public_api` enforce it. |
 | No expression parser | ✓ Feature type resolved by `params["type"]` dict lookup |
 
 ---
 
-*Strategy: `feature_strategies/strategies/ma_crossover.py` · registry: `feature_strategies/registry.py` · shared executor: `feature_strategies/run_strategy.py` · data loaders: `feature_strategies/data_loaders.py` · output: `feature_strategies/output.py` · public API: `nautilus_ext/features/api.py` · execution helper: `nautilus_ext/features/runner.py` · demo data: `nautilus_ext/features/examples/synthetic_bars.py`. See also `feature_strategies/README.md`.*
+*Entry: `run_strategy.py` · strategy: `strategies/ma_crossover/strategy.py` · config: `strategies/ma_crossover/config.yaml` · registry: `strategy_framework/registry.py` · data loaders: `strategy_framework/data_loaders.py` · output: `strategy_framework/output.py` · public API: `nautilus_ext/features/api.py` · execution helper: `nautilus_ext/features/runner.py`. See also `strategies/ma_crossover/README.md` and `strategy_framework/README.md`.*

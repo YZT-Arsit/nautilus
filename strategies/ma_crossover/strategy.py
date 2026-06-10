@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from nautilus_ext.features.api import FeatureSnapshot, FeatureSpec, rolling_mean_spec
+from strategy_framework.plugin import StrategyPlugin
 
 Signal = Literal["BUY", "SELL", "HOLD"]
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -73,3 +74,12 @@ class MovingAverageCrossoverStrategy:
         signal = crossover_signal(self._prev_fast, self._prev_slow, fast, slow)
         self._prev_fast, self._prev_slow = fast, slow
         return signal
+
+
+PLUGIN = StrategyPlugin(
+    name="ma_crossover",
+    config_cls=MovingAverageCrossoverConfig,
+    strategy_cls=MovingAverageCrossoverStrategy,
+    build_specs=build_specs,
+    default_config_path="strategies/ma_crossover/config.yaml",
+)

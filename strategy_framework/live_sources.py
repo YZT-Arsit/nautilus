@@ -12,14 +12,14 @@ A real source (e.g. an exchange websocket) should implement
   feature engine before live trading begins.
 * ``stream()`` — return a (possibly unbounded) iterable of live events.
 
-Such a source can then be wired into ``feature_strategies/data_loaders.py`` as a
+Such a source can then be wired into ``strategy_framework/data_loaders.py`` as a
 new ``mode`` without changing ``run_strategy.py``.
 """
 from __future__ import annotations
 
 from typing import Any, Iterable, Iterator, Protocol, runtime_checkable
 
-from feature_strategies.data_loaders import load_live_synthetic
+from strategy_framework.data_loaders import load_live_synthetic
 
 
 @runtime_checkable
@@ -34,7 +34,7 @@ class LiveEventSource(Protocol):
 class SyntheticLiveEventSource:
     """A dependency-free :class:`LiveEventSource` over the live_synthetic path.
 
-    Wraps :func:`feature_strategies.data_loaders.load_live_synthetic` so the same
+    Wraps :func:`strategy_framework.data_loaders.load_live_synthetic` so the same
     skeleton behaviour is also available behind the source interface that real
     connectors will implement.
     """

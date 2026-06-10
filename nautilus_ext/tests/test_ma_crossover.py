@@ -27,12 +27,12 @@ from nautilus_ext.features.examples.synthetic_bars import (
 )
 from nautilus_ext.features.runner import FeatureStrategyRunner
 
-# The strategy lives in the top-level, user-facing package; the shared runner
-# and explicit registry drive every strategy.
-from feature_strategies import output
-from feature_strategies.data_loaders import load_events, load_synthetic_bars
-from feature_strategies.registry import STRATEGY_REGISTRY, get_entry
-from feature_strategies.strategies.ma_crossover import (
+# Strategies live in the top-level ``strategies/`` package; framework glue in
+# ``strategy_framework/``; the shared entry point is the top-level run_strategy.
+from strategy_framework import output
+from strategy_framework.data_loaders import load_events, load_synthetic_bars
+from strategy_framework.registry import STRATEGY_REGISTRY, get_entry
+from strategies.ma_crossover import (
     MovingAverageCrossoverConfig,
     MovingAverageCrossoverStrategy,
     build_ma_crossover_specs,
@@ -504,7 +504,7 @@ class TestFeatureStrategyRunner:
 def _config_path() -> "Path":
     from pathlib import Path
 
-    return Path(__file__).resolve().parents[2] / "feature_strategies" / "configs" / "ma_crossover.yaml"
+    return Path(__file__).resolve().parents[2] / "strategies" / "ma_crossover" / "config.yaml"
 
 
 class TestConfigAndPureSignal:
@@ -559,7 +559,7 @@ class TestSpecBuilder:
 
     def test_strategy_uses_rolling_mean_spec_not_raw_params(self):
         """The strategy declares features via the builder, not raw params={...}."""
-        import feature_strategies.strategies.ma_crossover as strat
+        import strategies.ma_crossover.strategy as strat
 
         src = inspect.getsource(strat)
         assert "rolling_mean_spec" in src
@@ -661,7 +661,7 @@ class TestTopLevelLayer:
     """The user-facing layer: top-level package, facades, shared runner."""
 
     def test_strategy_imports_cleanly_from_top_level(self):
-        import feature_strategies.strategies.ma_crossover as strat
+        import strategies.ma_crossover.strategy as strat
 
         assert hasattr(strat, "MovingAverageCrossoverConfig")
         assert hasattr(strat, "MovingAverageCrossoverStrategy")
@@ -671,7 +671,7 @@ class TestTopLevelLayer:
 
     def test_strategy_imports_only_public_api(self):
         """The strategy module must not reach into compute internals."""
-        import feature_strategies.strategies.ma_crossover as strat
+        import strategies.ma_crossover.strategy as strat
 
         src = inspect.getsource(strat)
         assert "features.compute" not in src
@@ -685,7 +685,7 @@ class TestTopLevelLayer:
         assert all(s.params["type"] == "rolling_mean" for s in specs)
 
     def test_run_strategy_with_config(self, capsys):
-        from feature_strategies.run_strategy import main
+        from run_strategy import main
 
         main(["--config", str(_config_path())])
         out = capsys.readouterr().out
@@ -694,7 +694,7 @@ class TestTopLevelLayer:
         assert "SELL" in out
 
     def test_run_strategy_with_strategy_flag_only(self, capsys):
-        from feature_strategies.run_strategy import main
+        from run_strategy import main
 
         main(["--strategy", "ma_crossover"])
         out = capsys.readouterr().out
@@ -702,14 +702,14 @@ class TestTopLevelLayer:
         assert "BUY" in out
 
     def test_run_strategy_requires_a_strategy(self):
-        from feature_strategies.run_strategy import main
+        from run_strategy import main
 
         with pytest.raises(SystemExit):
             main([])  # no --config and no --strategy
 
     def test_legacy_wrapper_still_works(self, capsys):
         import scripts.run_ma_crossover_demo as legacy
-        from feature_strategies.run_strategy import main as shared_main
+        from run_strategy import main as shared_main
 
         # The wrapper forwards to the shared runner.
         assert legacy.main is shared_main
@@ -738,7 +738,7 @@ class TestBoundaries:
     )
 
     def test_strategy_module_has_no_compute_internal_imports(self):
-        import feature_strategies.strategies.ma_crossover as strat
+        import strategies.ma_crossover.strategy as strat
 
         src = _module_source(strat)
         for forbidden in self.FORBIDDEN_COMPUTE_IMPORTS:
@@ -749,17 +749,17 @@ class TestBoundaries:
     # -- B. run_strategy.py is coordination only ------------------------------
 
     def test_run_strategy_delegates_data_and_output(self):
-        import feature_strategies.run_strategy as run_strategy
+        import run_strategy
 
         src = _module_source(run_strategy)
-        assert "from feature_strategies.data_loaders import load_events" in src
+        assert "from strategy_framework.data_loaders import load_events" in src
         assert "load_events(" in src
         # output is delegated to the output module
-        assert "from feature_strategies import output" in src
+        assert "from strategy_framework import output" in src
         assert "output." in src
 
     def test_run_strategy_has_no_inline_data_or_format_logic(self):
-        import feature_strategies.run_strategy as run_strategy
+        import run_strategy
 
         src = _module_source(run_strategy)
         assert "make_bars" not in src              # no direct data construction
@@ -825,13 +825,13 @@ class TestBoundaries:
     # -- G. shared runner + legacy wrapper ------------------------------------
 
     def test_shared_runner_executes_ma_config(self, capsys):
-        from feature_strategies.run_strategy import main
+        from run_strategy import main
 
         main(["--config", str(_config_path())])
         assert "[ma_crossover] warmed up" in capsys.readouterr().out
 
     def test_wrapper_forwards_to_shared_main(self):
         import scripts.run_ma_crossover_demo as legacy
-        from feature_strategies.run_strategy import main as shared_main
+        from run_strategy import main as shared_main
 
         assert legacy.main is shared_main

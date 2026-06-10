@@ -11,14 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from feature_strategies import data_loaders, output, run_strategy
-from feature_strategies.backtest import SignalRecord, SignalRecorder
-from feature_strategies.data_loaders import (
+import run_strategy
+from strategy_framework import data_loaders, output
+from strategy_framework.backtest import SignalRecord, SignalRecorder
+from strategy_framework.data_loaders import (
     load_csv_bars,
     load_events,
     load_live_synthetic,
 )
-from feature_strategies.strategies.ma_crossover import (
+from strategies.ma_crossover import (
     MovingAverageCrossoverConfig,
     MovingAverageCrossoverStrategy,
     build_specs,
@@ -27,7 +28,7 @@ from nautilus_ext.features.examples.synthetic_bars import ONE_SECOND_NS, BarEven
 from nautilus_ext.features.runner import FeatureStrategyRunner
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CONFIGS = REPO_ROOT / "feature_strategies" / "configs"
+CONFIGS = REPO_ROOT / "strategies" / "ma_crossover"
 
 
 def _write_csv(path: Path, header: str, rows: list[str]) -> Path:
@@ -218,31 +219,31 @@ class TestSignalRecorder:
 class TestRunStrategyModes:
 
     def test_synthetic_config(self, capsys):
-        run_strategy.main(["--config", str(CONFIGS / "ma_crossover.yaml")])
+        run_strategy.main(["--config", str(CONFIGS / "config.yaml")])
         out = capsys.readouterr().out
         assert "BUY" in out and "SELL" in out
 
     def test_csv_backtest_config(self, capsys):
-        run_strategy.main(["--config", str(CONFIGS / "ma_crossover_backtest.yaml")])
+        run_strategy.main(["--config", str(CONFIGS / "config_backtest.yaml")])
         out = capsys.readouterr().out
         assert "BUY" in out and "SELL" in out
         assert "signal counts:" in out  # record_signals: true
 
     def test_live_synthetic_config(self, capsys):
-        run_strategy.main(["--config", str(CONFIGS / "ma_crossover_live_synthetic.yaml")])
+        run_strategy.main(["--config", str(CONFIGS / "config_live_synthetic.yaml")])
         out = capsys.readouterr().out
         assert "BUY" in out and "SELL" in out
         assert "signal counts:" in out
 
     def test_record_signals_summary_counts(self, capsys):
-        run_strategy.main(["--config", str(CONFIGS / "ma_crossover_backtest.yaml")])
+        run_strategy.main(["--config", str(CONFIGS / "config_backtest.yaml")])
         out = capsys.readouterr().out
         assert "BUY=1" in out and "SELL=1" in out
 
     def test_legacy_wrapper_still_works(self, capsys):
         import scripts.run_ma_crossover_demo as legacy
 
-        legacy.main(["--config", str(CONFIGS / "ma_crossover.yaml")])
+        legacy.main(["--config", str(CONFIGS / "config.yaml")])
         assert "[ma_crossover] warmed up" in capsys.readouterr().out
 
 
@@ -260,8 +261,7 @@ class TestExecutionBoundaries:
     )
 
     def test_new_modules_have_no_compute_internal_imports(self):
-        import feature_strategies.backtest as backtest
-        import feature_strategies.live_sources as live_sources
+        from strategy_framework import backtest, live_sources
 
         for module in (data_loaders, output, run_strategy, backtest, live_sources):
             src = inspect.getsource(module)
@@ -277,9 +277,9 @@ class TestExecutionBoundaries:
 
     def test_run_strategy_delegates_to_data_loaders_and_output(self):
         src = inspect.getsource(run_strategy)
-        assert "from feature_strategies.data_loaders import load_events" in src
+        assert "from strategy_framework.data_loaders import load_events" in src
         assert "load_events(" in src
-        assert "from feature_strategies import output" in src
+        assert "from strategy_framework import output" in src
         assert "output." in src
 
     def test_compute_features_not_imported_anywhere_in_user_layer(self):

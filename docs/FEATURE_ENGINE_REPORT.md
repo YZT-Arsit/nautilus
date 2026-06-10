@@ -2,7 +2,7 @@
 
 > **Audience**: engineering leadership, quant PMs, senior reviewers.
 > **Status**: v1 complete — production-ready for paper trading and backtesting.
-> **Test coverage**: 527 passed, 17 skipped (pure-Python unit suite, no Cython required).
+> **Test coverage**: 643 passed, 17 skipped (pure-Python unit suite, no Cython required).
 
 ---
 
@@ -293,7 +293,7 @@ Uses only the public `FeatureSnapshot` API. No backend internals accessed.
 
 ## 12a. Strategy Execution Layer (synthetic / backtest / live)
 
-The user-facing strategy layer (`feature_strategies/`) sits on top of this
+The user-facing strategy layer (top-level `run_strategy.py` + `strategies/` + `strategy_framework/`) sits on top of this
 engine and reaches it only through the stable facade
 (`nautilus_ext/features/api.py`) and `FeatureStrategyRunner`
 (`nautilus_ext/features/runner.py`). One shared runner supports three execution
@@ -306,25 +306,25 @@ modes, selected by a config's `data.mode`:
 | `live_synthetic` | live/paper streaming skeleton (no real exchange) | generator |
 
 ```bash
-python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover.yaml
-python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_backtest.yaml
-python -m feature_strategies.run_strategy --config feature_strategies/configs/ma_crossover_live_synthetic.yaml
+python run_strategy.py --config strategies/ma_crossover/config.yaml
+python run_strategy.py --config strategies/ma_crossover/config_backtest.yaml
+python run_strategy.py --config strategies/ma_crossover/config_live_synthetic.yaml
 ```
 
-Data loading (`feature_strategies/data_loaders.py`) sorts CSV input by event time
+Data loading (`strategy_framework/data_loaders.py`) sorts CSV input by event time
 **once in the loader**, never in `on_event()`. A real live feed implements the
-`LiveEventSource` protocol in `feature_strategies/live_sources.py` and registers
+`LiveEventSource` protocol in `strategy_framework/live_sources.py` and registers
 a new mode — no engine or runner changes required. Optional signal recording
-(`feature_strategies/backtest.py`) captures `(event, snapshot, signal)` rows for
+(`strategy_framework/backtest.py`) captures `(event, snapshot, signal)` rows for
 traceability; PnL accounting is not implemented yet.
 
 **Modification boundaries**
 
 | Change | Edit only |
 |--------|-----------|
-| New strategy | `feature_strategies/strategies/<name>.py`, `configs/<name>.yaml`, `registry.py` |
-| New historical data source | `feature_strategies/data_loaders.py` (+ optional helper) |
-| Real live source (later) | `feature_strategies/live_sources.py`, a `data_loaders.py` mode, a config |
+| New strategy | `strategies/<name>/strategy.py`, `strategies/<name>/config.yaml`, `strategy_framework/registry.py` |
+| New historical data source | `strategy_framework/data_loaders.py` (+ optional helper) |
+| Real live source (later) | `strategy_framework/live_sources.py`, a `data_loaders.py` mode, a config |
 | New low-level feature operator | `compute/features.py`, `compute/backend.py`, `builders.py`, `api.py`, compute tests |
 
 ---
@@ -332,7 +332,7 @@ traceability; PnL accounting is not implemented yet.
 ## 13. Current Test Status
 
 ```
-625 passed, 17 skipped
+643 passed, 17 skipped
 ```
 
 Test scope covers:
