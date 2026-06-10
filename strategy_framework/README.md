@@ -36,8 +36,10 @@ nautilus_ext/features/compute/  # low-level feature engine (do not edit for a ne
 - **New low-level feature operator** → `nautilus_ext/features/compute/features.py`
   + `compute/backend.py` + `builders.py` + `api.py` (+ compute tests).
 
-## Backward compatibility
+## Legacy
 
-The old `feature_strategies/` package remains as thin deprecated shims
-(`__init__`, `registry`, `run_strategy`) that re-export/forward here for one
-transition cycle. Prefer the new paths.
+The old `feature_strategies/` package has been **removed**. Its entry point,
+registry, data loaders, output, backtest recorder, and live sources now live at
+the top level (`run_strategy.py` + `strategy_framework/`), and the strategy +
+configs live in `strategies/ma_crossover/`. The only retained legacy shim is
+`scripts/run_ma_crossover_demo.py`, which forwards to the top-level runner.

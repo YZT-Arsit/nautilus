@@ -149,27 +149,19 @@ class TestRunnerBoundary:
 
 
 # ===========================================================================
-# F. Backward-compatibility shims
+# F. Backward-compatibility wrapper + removed legacy package
 # ===========================================================================
 
 class TestCompatibilityShims:
-
-    def test_feature_strategies_run_strategy_wrapper(self):
-        import feature_strategies.run_strategy as legacy
-
-        assert legacy.main is run_strategy.main
-
-    def test_feature_strategies_registry_reexport(self):
-        from feature_strategies.registry import get_entry as legacy_get_entry
-
-        assert legacy_get_entry is get_entry
-
-    def test_feature_strategies_package_reexport(self):
-        import feature_strategies
-
-        assert feature_strategies.get_entry is get_entry
 
     def test_scripts_wrapper_forwards(self):
         import scripts.run_ma_crossover_demo as legacy
 
         assert legacy.main is run_strategy.main
+
+    def test_legacy_feature_strategies_package_removed(self):
+        # The old parallel framework was fully removed; nothing should import it.
+        import importlib
+
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("feature_strategies")

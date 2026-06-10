@@ -29,7 +29,6 @@ sits in `strategy_framework/`; the low-level engine stays in
 | `nautilus_ext/features/runner.py` | `FeatureStrategyRunner` — builds the engine + runs the loop | no |
 | `nautilus_ext/features/compute/features.py` | Low-level feature **operator library** (rolling-mean, etc.) | **compute owners only** |
 | `scripts/run_ma_crossover_demo.py` | Legacy wrapper → top-level `run_strategy.main` | no |
-| `feature_strategies/` | Deprecated compatibility shims (re-export to new paths) | no |
 
 There is **one shared run script** for every strategy — you do not add a
 `run_xxx.py` per strategy. The layers:
