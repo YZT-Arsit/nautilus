@@ -51,12 +51,12 @@ _print_env_header()
 import polars as pl  # noqa: E402
 import pyarrow as pa  # noqa: E402
 
-from quant_feature_engine.core.dag import FeatureDAG  # noqa: E402
-from quant_feature_engine.execution.batch_engine import BatchEngine  # noqa: E402
-from quant_feature_engine.features import load_all  # noqa: E402
-from quant_feature_engine.storage.metadata import Manifest  # noqa: E402
-from quant_feature_engine.storage.parquet_store import ParquetStore  # noqa: E402
-from quant_feature_engine.streaming.engine import (  # noqa: E402
+from feature_engine.core.dag import FeatureDAG  # noqa: E402
+from feature_engine.execution.batch_engine import BatchEngine  # noqa: E402
+from feature_engine.features import load_all  # noqa: E402
+from feature_engine.storage.metadata import Manifest  # noqa: E402
+from feature_engine.storage.parquet_store import ParquetStore  # noqa: E402
+from feature_engine.streaming.engine import (  # noqa: E402
     StreamingEngine,
     StreamingEngineConfig,
 )

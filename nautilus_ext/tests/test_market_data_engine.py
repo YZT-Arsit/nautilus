@@ -1,4 +1,4 @@
-"""Tests for the standalone market_data_engine data layer."""
+"""Tests for the standalone data_engine data layer."""
 from __future__ import annotations
 
 from collections.abc import Iterator
@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from market_data_engine import BarEvent, load_events, make_bar_event, make_bars
-from market_data_engine.adapters.bar_adapter import make_bar_event as adapter_make_bar_event
-from market_data_engine.sources.csv_bars import CsvBarSource, load_csv_bars
-from market_data_engine.sources.live_synthetic import LiveSyntheticBarSource
-from market_data_engine.sources.synthetic import SyntheticBarSource
-from market_data_engine.time import ONE_SECOND_NS, to_event_time_ns
-from market_data_engine.validation import optional_numeric, require_numeric
+from data_engine import BarEvent, load_events, make_bar_event, make_bars
+from data_engine.adapters.bar_adapter import make_bar_event as adapter_make_bar_event
+from data_engine.sources.csv_bars import CsvBarSource, load_csv_bars
+from data_engine.sources.live_synthetic import LiveSyntheticBarSource
+from data_engine.sources.synthetic import SyntheticBarSource
+from data_engine.time import ONE_SECOND_NS, to_event_time_ns
+from data_engine.validation import optional_numeric, require_numeric
 
 
 def _write_csv(path: Path, header: str, rows: list[str]) -> Path:
@@ -224,7 +224,7 @@ class TestCompatibility:
 
     def test_strategy_framework_data_loaders_delegates(self):
         import strategy_framework.data_loaders as dl
-        from market_data_engine.loader import load_events as canonical
+        from data_engine.loader import load_events as canonical
 
         assert dl.load_events is canonical
         warmup, live = dl.load_events({"mode": "synthetic", "warmup_bars": 5, "live_bars": 5})
@@ -257,7 +257,7 @@ class TestCompatibility:
     def test_live_synthetic_imports_public_helper_only(self):
         import inspect
 
-        import market_data_engine.sources.live_synthetic as ls
+        import data_engine.sources.live_synthetic as ls
 
         src = inspect.getsource(ls)
         # Must use the public demo_closes, never the old private name.

@@ -135,7 +135,7 @@ class TestRunnerBoundary:
 
     def test_delegates_to_framework(self):
         src = inspect.getsource(run_strategy)
-        assert "from market_data_engine.loader import load_events" in src
+        assert "from data_engine.loader import load_events" in src
         assert "from strategy_framework import output" in src
         assert "load_events(" in src
         assert "output." in src

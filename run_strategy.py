@@ -25,8 +25,9 @@ from typing import Any
 
 import yaml
 
-from market_data_engine.loader import load_events
+from data_engine.loader import load_events
 from strategy_framework import output
+from strategy_framework.backends import build_backend
 from strategy_framework.backtest import SignalRecorder
 from strategy_framework.registry import get_entry
 from nautilus_ext.features.runner import FeatureStrategyRunner
@@ -94,6 +95,9 @@ def main(argv: list[str] | None = None) -> None:
     output_cfg = cfg.get("output", {})
     print_table = output_cfg.get("print_table", True)
     recorder = SignalRecorder(spec_names) if output_cfg.get("record_signals", False) else None
+    # Optional execution backend (see strategy_framework/backends/). None keeps
+    # the legacy print/record-only behaviour.
+    backend = build_backend(cfg.get("execution", {}), spec_names)
 
     if print_table:
         output.print_event_table_header(spec_names)
@@ -102,9 +106,13 @@ def main(argv: list[str] | None = None) -> None:
             output.print_event_row(event, snapshot, signal, spec_names)
         if recorder is not None:
             recorder.record(event, snapshot, signal)
+        if backend is not None:
+            backend.on_signal(event, snapshot, signal)
 
     if recorder is not None:
         output.print_signal_summary(recorder.signal_counts())
+    if backend is not None:
+        backend.close()
 
 
 if __name__ == "__main__":

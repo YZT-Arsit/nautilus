@@ -1,4 +1,0 @@
-# Optional extras for distributed offline computation and shared state.
--r requirements.txt
-ray[default]>=2.9
-redis>=5.0
