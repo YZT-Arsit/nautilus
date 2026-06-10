@@ -42,6 +42,7 @@ class CsvBarSource:
         self._high_column = high_column
         self._low_column = low_column
         self._volume_column = volume_column
+        self._bars: list[BarEvent] | None = None  # cache: read the file once
 
     def _row_to_bar(self, row: dict[str, str], index: int) -> BarEvent:
         close_col = self._close_column
@@ -56,7 +57,10 @@ class CsvBarSource:
 
         ts_col = self._timestamp_column
         if ts_col and row.get(ts_col) not in (None, ""):
-            event_time_ns = to_event_time_ns(row[ts_col], self._timestamp_unit)
+            try:
+                event_time_ns = to_event_time_ns(row[ts_col], self._timestamp_unit)
+            except ValueError as exc:
+                raise ValueError(f"row {index}: {exc}") from None
         else:
             event_time_ns = index * ONE_SECOND_NS  # monotonic fallback
 
@@ -76,11 +80,16 @@ class CsvBarSource:
         bars.sort(key=lambda b: b.event_time_ns)
         return bars
 
+    def _bars_cached(self) -> list[BarEvent]:
+        if self._bars is None:
+            self._bars = self._load_sorted()
+        return self._bars
+
     def warmup(self) -> list[BarEvent]:
-        return split_warmup_live(self._load_sorted(), self._warmup_bars)[0]
+        return split_warmup_live(self._bars_cached(), self._warmup_bars)[0]
 
     def stream(self) -> list[BarEvent]:
-        return split_warmup_live(self._load_sorted(), self._warmup_bars)[1]
+        return split_warmup_live(self._bars_cached(), self._warmup_bars)[1]
 
 
 def load_csv_bars(data_config: dict[str, Any]) -> tuple[list[BarEvent], list[BarEvent]]:
@@ -100,5 +109,4 @@ def load_csv_bars(data_config: dict[str, Any]) -> tuple[list[BarEvent], list[Bar
         low_column=data_config.get("low_column", "low"),
         volume_column=data_config.get("volume_column", "volume"),
     )
-    bars = source._load_sorted()
-    return split_warmup_live(bars, source._warmup_bars)
+    return split_warmup_live(source._bars_cached(), source._warmup_bars)

@@ -149,6 +149,30 @@ class TestCsvBarSource:
         with pytest.raises(ValueError, match="unsupported timestamp_unit"):
             CsvBarSource(path="x", instrument_id="X", timestamp_unit="weeks")
 
+    def test_malformed_timestamp_error_includes_row(self, tmp_path):
+        path = _write_csv(tmp_path / "ts.csv", "ts,close", ["0,100", "oops,101"])
+        src = CsvBarSource(path=str(path), instrument_id="X", warmup_bars=0,
+                           timestamp_column="ts", timestamp_unit="ns")
+        with pytest.raises(ValueError, match=r"row 1: "):
+            src.stream()
+
+    def test_file_read_once_across_warmup_and_stream(self, tmp_path, monkeypatch):
+        path = _write_csv(tmp_path / "once.csv", "close", ["100", "101", "102", "103"])
+        src = CsvBarSource(path=str(path), instrument_id="X", warmup_bars=2)
+
+        calls = {"n": 0}
+        original = src._load_sorted
+
+        def counted():
+            calls["n"] += 1
+            return original()
+
+        monkeypatch.setattr(src, "_load_sorted", counted)
+        warmup, live = src.warmup(), src.stream()
+        assert [b.close for b in warmup] == [100.0, 101.0]
+        assert [b.close for b in live] == [102.0, 103.0]
+        assert calls["n"] == 1  # cached: the file is read exactly once
+
 
 # F. LiveSyntheticBarSource --------------------------------------------------
 
@@ -229,3 +253,30 @@ class TestCompatibility:
         assert "import csv" not in src
         assert "110.0" not in src
         assert "def load_events" not in src
+
+    def test_live_synthetic_imports_public_helper_only(self):
+        import inspect
+
+        import market_data_engine.sources.live_synthetic as ls
+
+        src = inspect.getsource(ls)
+        # Must use the public demo_closes, never the old private name.
+        assert "_demo_closes" not in src
+        assert "demo_closes" in src
+
+
+# I. run_strategy CSV path resolution from any CWD ---------------------------
+
+class TestRunStrategyCsvPathResolution:
+
+    def test_csv_config_runs_from_non_root_cwd(self, tmp_path, monkeypatch, capsys):
+        import run_strategy
+
+        repo_root = Path(run_strategy.__file__).resolve().parent
+        config = repo_root / "strategies" / "ma_crossover" / "config_backtest.yaml"
+
+        # Run from an unrelated CWD: the relative data.path in the config must
+        # still resolve against the repo root, not the caller's directory.
+        monkeypatch.chdir(tmp_path)
+        run_strategy.main(["--config", str(config)])
+        assert "[ma_crossover] warmed up" in capsys.readouterr().out

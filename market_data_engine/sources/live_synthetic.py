@@ -11,7 +11,7 @@ from typing import Any, Iterable, Iterator
 
 from market_data_engine.adapters.bar_adapter import make_bar_event, make_bars
 from market_data_engine.events import BarEvent
-from market_data_engine.sources.synthetic import _demo_closes
+from market_data_engine.sources.synthetic import demo_closes
 from market_data_engine.time import ONE_SECOND_NS
 
 
@@ -31,11 +31,11 @@ class LiveSyntheticBarSource:
         self._delay_seconds = delay_seconds
 
     def warmup(self) -> list[BarEvent]:
-        warmup_closes, _ = _demo_closes(self._warmup_bars, self._live_bars)
+        warmup_closes, _ = demo_closes(self._warmup_bars, self._live_bars)
         return make_bars(warmup_closes, instrument_id=self._instrument_id)
 
     def stream(self) -> Iterator[BarEvent]:
-        _, live_closes = _demo_closes(self._warmup_bars, self._live_bars)
+        _, live_closes = demo_closes(self._warmup_bars, self._live_bars)
         start_ns = self._warmup_bars * ONE_SECOND_NS
         for i, close in enumerate(live_closes):
             if self._delay_seconds > 0:

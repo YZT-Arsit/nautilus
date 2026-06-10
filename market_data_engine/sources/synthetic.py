@@ -8,7 +8,7 @@ from market_data_engine.events import BarEvent
 from market_data_engine.time import ONE_SECOND_NS
 
 
-def _demo_closes(warmup_bars: int, live_bars: int) -> tuple[list[float], list[float]]:
+def demo_closes(warmup_bars: int, live_bars: int) -> tuple[list[float], list[float]]:
     """Flat warmup, then a rise -> fall path that triggers an MA crossover."""
     warmup_closes = [100.0] * warmup_bars
     live_closes = ([100.0] + [110.0] * 3 + [100.0] * 3 + [90.0] * 3 + [80.0] * live_bars)[:live_bars]
@@ -29,11 +29,11 @@ class SyntheticBarSource:
         self._live_bars = live_bars
 
     def warmup(self) -> list[BarEvent]:
-        warmup_closes, _ = _demo_closes(self._warmup_bars, self._live_bars)
+        warmup_closes, _ = demo_closes(self._warmup_bars, self._live_bars)
         return make_bars(warmup_closes, instrument_id=self._instrument_id)
 
     def stream(self) -> list[BarEvent]:
-        _, live_closes = _demo_closes(self._warmup_bars, self._live_bars)
+        _, live_closes = demo_closes(self._warmup_bars, self._live_bars)
         start_ns = self._warmup_bars * ONE_SECOND_NS
         return make_bars(live_closes, instrument_id=self._instrument_id, start_ns=start_ns)
 
