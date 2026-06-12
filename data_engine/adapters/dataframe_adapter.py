@@ -1,4 +1,4 @@
-"""BarEvent <-> Polars DataFrame 桥接。
+"""BarEvent <-> Polars DataFrame 桥接（polars 懒加载）。
 
 ``data_engine`` 的标准事件是 :class:`BarEvent`（字段 ``instrument_id`` /
 ``event_time_ns``）。``feature_engine`` 的批/流式特征路径则以 Polars
@@ -26,15 +26,19 @@
 优先用 ``event_time_ns``，没有时才从 ``ts_event`` 推导，从而保证
 round-trip 不丢精度。
 
-不依赖 pandas，仅使用 Polars。
+**polars 懒加载**：本模块顶层不 import polars，因此 ``import data_engine``
+在没有安装 polars 的纯 Python 环境里也能成功。polars 仅在真正调用
+``bars_to_polars`` / ``polars_to_bars`` 时才导入；缺失时给出清晰错误。
+不依赖 pandas、不依赖 Nautilus。
 """
 from __future__ import annotations
 
-from typing import Iterable
-
-import polars as pl
+from typing import TYPE_CHECKING, Iterable
 
 from data_engine.events import BarEvent
+
+if TYPE_CHECKING:  # pragma: no cover - 仅类型检查
+    import polars as pl
 
 # feature_engine 侧的标准列名（与 feature_engine.core.types.Cols 对齐）。
 _SYMBOL = "symbol"
@@ -53,30 +57,45 @@ _OUTPUT_COLUMNS = (
     *_OHLCV,
 )
 
-# 当 BarEvent 列表为空时，仍然返回带正确 schema 的空 DataFrame，
-# 这样下游 ``concat`` / ``sort`` 不会因为缺列而报错。
-_EMPTY_SCHEMA: dict[str, pl.DataType] = {
-    _SYMBOL: pl.Utf8,
-    _INSTRUMENT_ID: pl.Utf8,
-    _TS_EVENT: pl.Datetime(time_unit="ns", time_zone="UTC"),
-    _EVENT_TIME_NS: pl.Int64,
-    "open": pl.Float64,
-    "high": pl.Float64,
-    "low": pl.Float64,
-    "close": pl.Float64,
-    "volume": pl.Float64,
-}
+
+def _require_polars():
+    """懒加载 polars；缺失时给出清晰、可操作的错误。"""
+    try:
+        import polars as pl  # noqa: PLC0415 - 懒加载
+    except ImportError as exc:  # pragma: no cover - 取决于环境
+        raise ImportError(
+            "bars_to_polars / polars_to_bars 需要 polars。"
+            "请 `pip install polars`（仅 feature_engine 的 DataFrame 路径需要它；"
+            "data_engine 的核心事件 / CSV / 分钟线路径无需 polars）。"
+        ) from exc
+    return pl
 
 
-def bars_to_polars(events: Iterable[BarEvent]) -> pl.DataFrame:
+def _empty_schema(pl) -> dict:
+    """空输入时仍返回带正确 schema 的空表，下游 concat/sort 不会缺列报错。"""
+    return {
+        _SYMBOL: pl.Utf8,
+        _INSTRUMENT_ID: pl.Utf8,
+        _TS_EVENT: pl.Datetime(time_unit="ns", time_zone="UTC"),
+        _EVENT_TIME_NS: pl.Int64,
+        "open": pl.Float64,
+        "high": pl.Float64,
+        "low": pl.Float64,
+        "close": pl.Float64,
+        "volume": pl.Float64,
+    }
+
+
+def bars_to_polars(events: Iterable[BarEvent]) -> "pl.DataFrame":
     """把 ``BarEvent`` 序列转换为 Polars ``DataFrame``。
 
     输出列见模块 docstring。``instrument_id`` 同时映射为 ``symbol``，
     ``event_time_ns`` 同时还原为 UTC 的 ``ts_event``。
     """
+    pl = _require_polars()
     rows = list(events)
     if not rows:
-        return pl.DataFrame(schema=_EMPTY_SCHEMA)
+        return pl.DataFrame(schema=_empty_schema(pl))
 
     df = pl.DataFrame(
         {
@@ -100,7 +119,7 @@ def bars_to_polars(events: Iterable[BarEvent]) -> pl.DataFrame:
 
 
 def polars_to_bars(
-    df: pl.DataFrame,
+    df: "pl.DataFrame",
     *,
     instrument_id_col: str = "instrument_id",
 ) -> list[BarEvent]:
@@ -112,6 +131,7 @@ def polars_to_bars(
     缺少 OHLC 时用 ``close`` 兜底，缺少 ``volume`` 时用 ``0.0``，与
     ``data_engine.adapters.make_bar_event`` 的默认行为保持一致。
     """
+    pl = _require_polars()  # 缺 polars 时也给出清晰错误（即便 df 已是 polars 对象）
     if df.is_empty():
         return []
 
