@@ -17,13 +17,11 @@
 
 分区约定
 --------
-当前特征数据的 Hive 分区列是 ``(feature_group, frequency, trading_date)``，
-与写入侧（``EodArchiver`` / ``ParquetStore``）保持一致。``instrument_id``
-维度当前**不在分区路径里**，而是作为数据体的 ``symbol`` 列存在（由
-``data_engine`` 的 ``bars_to_polars`` 把 ``instrument_id`` 映射为 ``symbol``）。
-因此按 ``instrument_id`` 查询时，本类在扫描结果上对 ``symbol`` 列做等值过滤。
-未来若把 instrument 提升为分区维度，只需扩展 ``partition_cols``，查询接口的
-签名保持不变。
+默认特征数据的 Hive 分区列是新版平级布局
+``(feature_group, asset_class, exchange, frequency, trading_date, instrument_id)``。
+读层仍兼容旧布局 ``(feature_group, frequency, trading_date)``：目录缺少的新分区
+列不会被强制要求，``instrument_id`` 查询会回落到数据体中的 ``symbol`` /
+``instrument_id`` 列过滤。
 
 为什么按 group 分别扫描再 concat
 --------------------------------
@@ -45,15 +43,12 @@ from pathlib import Path
 
 import polars as pl
 
+from feature_engine.storage.layout import FEATURE_DATA_PARTITION_COLS
 from feature_engine.storage.metadata import Manifest
 from feature_engine.storage.parquet_store import ParquetStore
 
-# 默认特征分区列，与 EodArchiver / 既有 test_storage 写入侧一致。
-DEFAULT_FEATURE_PARTITION_COLS: tuple[str, ...] = (
-    "feature_group",
-    "frequency",
-    "trading_date",
-)
+# 默认使用新版 feature_data 平级布局。
+DEFAULT_FEATURE_PARTITION_COLS: tuple[str, ...] = FEATURE_DATA_PARTITION_COLS
 
 # 这些列是“骨架列”而非特征本身，available_features 推断时需要排除。
 _NON_FEATURE_COLUMNS = frozenset(
@@ -69,8 +64,8 @@ class FeatureDataReader:
     feature_root : 特征数据根目录（例如 ``historical_data/feature_data``）。
     manifest_root : manifest 根目录。给定时 :meth:`available_features` 会优先
         从 manifest 返回特征清单；为 ``None`` 时退化为从数据列名推断。
-    partition_cols : 特征数据的 Hive 分区列顺序，默认
-        ``("feature_group", "frequency", "trading_date")``。必须与写入侧一致。
+        partition_cols : 特征数据的 Hive 分区列顺序，默认新版平级布局。旧布局可
+        显式传入，也可在默认 reader 下被兼容读取。
     """
 
     def __init__(
@@ -102,7 +97,7 @@ class FeatureDataReader:
         """读取历史特征数据，返回一个干净的特征矩阵。
 
         ``trading_date`` / ``frequency`` / ``feature_group`` 做分区裁剪，
-        ``instrument_id`` 做列级过滤（对 ``symbol`` 列等值匹配），``columns``
+        ``instrument_id`` 做分区/列级过滤（按可用列匹配），``columns``
         做列投影。不指定 ``feature_group`` 时跨 group 合并成一行/(symbol, ts_event)。
         """
         if "feature_group" in self.partition_cols:
@@ -201,7 +196,10 @@ class FeatureDataReader:
         """
         if "feature_group" not in df.columns:
             return df
-        keys = [c for c in ("symbol", "ts_event") if c in df.columns]
+        id_key = "symbol" if "symbol" in df.columns else (
+            "instrument_id" if "instrument_id" in df.columns else None
+        )
+        keys = [c for c in (id_key, "ts_event") if c is not None and c in df.columns]
         if not keys or df["feature_group"].n_unique() <= 1:
             return df
 

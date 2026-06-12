@@ -4,6 +4,7 @@ from __future__ import annotations
 import polars as pl
 
 from feature_engine.storage import FeatureDataReader, Manifest, ParquetStore
+from feature_engine.storage.layout import FEATURE_DATA_PARTITION_COLS
 from feature_engine.storage.metadata import params_hash
 
 
@@ -24,6 +25,31 @@ def _write_feature_partition(
             "feature_group": feature_group,
             "frequency": frequency,
             "trading_date": trading_date,
+        },
+    )
+
+
+def _write_new_feature_partition(
+    root,
+    *,
+    feature_group: str,
+    asset_class: str,
+    exchange: str,
+    frequency: str,
+    trading_date: str,
+    instrument_id: str,
+    df: pl.DataFrame,
+) -> None:
+    store = ParquetStore(root, partition_cols=FEATURE_DATA_PARTITION_COLS)
+    store.write(
+        df,
+        partition_values={
+            "feature_group": feature_group,
+            "asset_class": asset_class,
+            "exchange": exchange,
+            "frequency": frequency,
+            "trading_date": trading_date,
+            "instrument_id": instrument_id,
         },
     )
 
@@ -162,6 +188,56 @@ def test_scan_features_across_feature_groups(tmp_path) -> None:
     row = df.sort("ts_event").row(0, named=True)
     assert row["sma_20"] == 10.0
     assert row["vwm_20"] == 0.1
+
+
+def test_scan_features_new_layout_instrument_filter_and_group_merge(tmp_path) -> None:
+    """新版布局：instrument_id 是分区列，跨 feature_group 查询仍合并成特征矩阵。"""
+    root = tmp_path / "feature_data"
+    for instrument_id, base in [("AAA.CFFEX", 10.0), ("BBB.CFFEX", 20.0)]:
+        _write_new_feature_partition(
+            root,
+            feature_group="technical",
+            asset_class="future",
+            exchange="CFFEX",
+            frequency="1m",
+            trading_date="2026-05-26",
+            instrument_id=instrument_id,
+            df=pl.DataFrame(
+                {
+                    "symbol": [instrument_id, instrument_id],
+                    "ts_event": [1, 2],
+                    "sma_20": [base, base + 1.0],
+                }
+            ),
+        )
+        _write_new_feature_partition(
+            root,
+            feature_group="volume",
+            asset_class="future",
+            exchange="CFFEX",
+            frequency="1m",
+            trading_date="2026-05-26",
+            instrument_id=instrument_id,
+            df=pl.DataFrame(
+                {
+                    "symbol": [instrument_id, instrument_id],
+                    "ts_event": [1, 2],
+                    "vwm_20": [base / 100.0, (base + 1.0) / 100.0],
+                }
+            ),
+        )
+
+    reader = FeatureDataReader(root)
+    df = reader.scan_features(
+        trading_date="2026-05-26", frequency="1m", instrument_id="AAA.CFFEX"
+    ).sort("ts_event")
+
+    assert df.height == 2
+    assert set(df["symbol"].to_list()) == {"AAA.CFFEX"}
+    assert "sma_20" in df.columns
+    assert "vwm_20" in df.columns
+    assert df.row(0, named=True)["sma_20"] == 10.0
+    assert df.row(0, named=True)["vwm_20"] == 0.1
 
 
 def test_available_features_from_manifest(tmp_path) -> None:

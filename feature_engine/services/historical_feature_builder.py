@@ -11,7 +11,8 @@ polars / pyarrow / feature_engine.core **懒加载**：``import`` 本服务不�
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Literal
+from uuid import uuid4
 
 if TYPE_CHECKING:  # pragma: no cover
     import polars as pl
@@ -100,20 +101,37 @@ class HistoricalFeatureBuilder:
         trading_date: str,
         instrument_id: str,
         manifest_root: str | Path | None = None,
+        mode: Literal["error", "append", "overwrite"] = "overwrite",
+        legacy_layout: bool = False,
     ) -> list[Path]:
-        """把特征结果按 feature_group 落成新版 feature_data Hive Parquet。
+        """把特征结果按 feature_group 落成 feature_data Hive Parquet。
 
         每个特征按其 ``meta.feature_group`` 归到对应分区；同一次调用可能写出多个
-        feature_group 分区。可选地向 ``manifest_root`` 追加 feature_manifest。
+        feature_group 分区。默认写新版平级布局；``legacy_layout=True`` 时显式写
+        旧 ``feature_group/frequency/trading_date`` 布局。可选地向
+        ``manifest_root`` 追加 feature_manifest。
         """
         from feature_engine.core import registry as _registry  # noqa: PLC0415
-        from feature_engine.storage.layout import FEATURE_DATA_PARTITION_COLS  # noqa: PLC0415
+        from feature_engine.storage.layout import (  # noqa: PLC0415
+            FEATURE_DATA_PARTITION_COLS,
+            LEGACY_FEATURE_PARTITION_COLS,
+            feature_data_path,
+        )
 
         try:
             import pyarrow as pa  # noqa: PLC0415
             import pyarrow.dataset as ds  # noqa: PLC0415
         except ImportError as exc:  # pragma: no cover
             raise ImportError("write_feature_data 需要 pyarrow。") from exc
+
+        if mode not in {"error", "append", "overwrite"}:
+            raise ValueError("mode 必须是 error / append / overwrite")
+
+        partition_cols = (
+            LEGACY_FEATURE_PARTITION_COLS
+            if legacy_layout
+            else FEATURE_DATA_PARTITION_COLS
+        )
 
         # 按 feature_group 分组输出列。
         key_cols = [c for c in ("symbol", "instrument_id", "ts_event") if c in df.columns]
@@ -126,14 +144,28 @@ class HistoricalFeatureBuilder:
 
         written: list[Path] = []
         for feature_group, cols in group_to_cols.items():
+            partition_values = {
+                "feature_group": feature_group,
+                "asset_class": asset_class,
+                "exchange": exchange,
+                "frequency": frequency,
+                "trading_date": trading_date,
+                "instrument_id": instrument_id,
+            }
+            if legacy_layout:
+                target_dir = (
+                    Path(feature_root)
+                    / f"feature_group={feature_group}"
+                    / f"frequency={frequency}"
+                    / f"trading_date={trading_date}"
+                )
+            else:
+                target_dir = feature_data_path(feature_root, **partition_values)
+            _prepare_partition(target_dir, mode)
+
             sub = df.select([*key_cols, *cols]).with_columns(
                 _lit_cols(
-                    feature_group=feature_group,
-                    asset_class=asset_class,
-                    exchange=exchange,
-                    frequency=frequency,
-                    trading_date=trading_date,
-                    instrument_id=instrument_id,
+                    **{k: partition_values[k] for k in partition_cols}
                 )
             )
             table = sub.to_arrow()
@@ -145,10 +177,14 @@ class HistoricalFeatureBuilder:
                 table,
                 base_dir=str(feature_root),
                 format="parquet",
-                partitioning=list(FEATURE_DATA_PARTITION_COLS),
+                partitioning=list(partition_cols),
                 partitioning_flavor="hive",
                 existing_data_behavior="overwrite_or_ignore",
-                basename_template="part-{i}.parquet",
+                basename_template=(
+                    f"part-{uuid4().hex[:12]}-{{i}}.parquet"
+                    if mode == "append"
+                    else "part-{i}.parquet"
+                ),
                 file_visitor=_visit,
             )
             if manifest_root is not None:
@@ -162,6 +198,7 @@ class HistoricalFeatureBuilder:
                     frequency=frequency,
                     trading_date=trading_date,
                     instrument_id=instrument_id,
+                    legacy_layout=legacy_layout,
                 )
         return written
 
@@ -183,10 +220,19 @@ class HistoricalFeatureBuilder:
             records.append(
                 {
                     "partition_key": (
-                        f"feature_group={kw['feature_group']}/"
-                        f"asset_class={kw['asset_class']}/exchange={kw['exchange']}/"
-                        f"frequency={kw['frequency']}/trading_date={kw['trading_date']}/"
-                        f"instrument_id={kw['instrument_id']}"
+                        (
+                            f"feature_group={kw['feature_group']}/"
+                            f"frequency={kw['frequency']}/"
+                            f"trading_date={kw['trading_date']}"
+                        )
+                        if kw.get("legacy_layout")
+                        else (
+                            f"feature_group={kw['feature_group']}/"
+                            f"asset_class={kw['asset_class']}/exchange={kw['exchange']}/"
+                            f"frequency={kw['frequency']}/"
+                            f"trading_date={kw['trading_date']}/"
+                            f"instrument_id={kw['instrument_id']}"
+                        )
                     ),
                     "feature_name": name,
                     "version": version,
@@ -204,6 +250,15 @@ def _lit_cols(**values: str):
     import polars as pl  # noqa: PLC0415
 
     return [pl.lit(v).alias(k) for k, v in values.items()]
+
+
+def _prepare_partition(path: Path, mode: str) -> None:
+    """Apply write mode before pyarrow writes a partition."""
+    if mode == "error" and path.exists() and any(path.glob("*.parquet")):
+        raise FileExistsError(f"Partition {path} is non-empty and mode='error'")
+    if mode == "overwrite" and path.exists():
+        for part in path.glob("*.parquet"):
+            part.unlink()
 
 
 __all__ = ["HistoricalFeatureBuilder"]

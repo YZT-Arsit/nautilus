@@ -64,6 +64,7 @@ def main() -> int:
 
     from data_engine.adapters import bars_to_polars
     from feature_engine.core import registry as _registry
+    from feature_engine.core.dag import FeatureDAG
     from feature_engine.features import load_all
     from feature_engine.services import HistoricalFeatureBuilder
 
@@ -73,10 +74,22 @@ def main() -> int:
 
     failed = 0
     for name in _FEATURES:
-        cls = _registry.get(name)
-        expected = cls().compute_batch(df)
-        streamer = cls()
-        pieces = [streamer.update(chunk) for chunk in _chunks(df, 7)]
+        dag = FeatureDAG([name])
+        order = list(dag.order)
+        expected_full = HistoricalFeatureBuilder(order).build_from_dataframe(df)
+        target_outputs = [
+            c for feat in [name] for c in _registry.get(feat).meta.outputs
+        ]
+        expected = expected_full.select(target_outputs)
+
+        instances = dag.instantiate()
+        pieces = []
+        for chunk in _chunks(df, 7):
+            out = chunk
+            for dep in order:
+                cols = instances[dep].update(out)
+                out = out.hstack(cols)
+            pieces.append(out.select(target_outputs))
         actual = pl.concat(pieces, how="vertical")
         ok = _approx_equal(expected, actual, tol=1e-6)
         print(f"[{'PASS' if ok else 'FAIL'}] parity {name}")

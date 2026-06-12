@@ -39,7 +39,9 @@ def parse_frequency(frequency: str) -> int:
     unit = f[-1]
     if unit not in _UNIT_NS:
         raise ValueError(f"不支持的 frequency 单位 {unit!r}（支持 {sorted(_UNIT_NS)}）")
-    num_part = f[:-1] or "1"
+    num_part = f[:-1]
+    if not num_part:
+        raise ValueError(f"frequency 必须显式包含正整数：{frequency!r}")
     try:
         n = int(num_part)
     except ValueError as exc:

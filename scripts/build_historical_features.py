@@ -10,11 +10,10 @@
 ::
 
     market_data (Hive / CSV / Parquet)
-        -> data_engine BarEvent
-        -> data_engine.bars_to_polars            (Part 4 桥接)
-        -> feature_engine FeatureDAG + StreamingEngine
+        -> data_engine.bars_to_polars            (必要时做 schema 桥接)
+        -> feature_engine.services.HistoricalFeatureBuilder
         -> enriched DataFrame (raw + feature 列)
-        -> feature_engine EodArchiver
+        -> HistoricalFeatureBuilder.write_feature_data
         -> feature_data/ (Hive Parquet) + manifests/
 
 示例
@@ -50,13 +49,13 @@ from data_engine.sources.csv_bars import CsvBarSource
 from feature_engine.core import registry as _registry
 from feature_engine.core.dag import FeatureDAG
 from feature_engine.features import load_all
+from feature_engine.services import HistoricalFeatureBuilder
+from feature_engine.storage.layout import MARKET_DATA_PARTITION_COLS
 from feature_engine.storage.metadata import Manifest
 from feature_engine.storage.parquet_store import ParquetStore
 from feature_engine.streaming.archiver import EodArchiver
-from feature_engine.streaming.engine import StreamingEngine, StreamingEngineConfig
 
 # 与写入侧（archiver / test_storage）一致的分区列。
-RAW_PARTITION_COLS = ("asset_class", "exchange", "frequency", "trading_date")
 FEATURE_PARTITION_COLS = ("feature_group", "frequency", "trading_date")
 
 # 特征数据体 + 原始 OHLCV 骨架列。
@@ -166,25 +165,15 @@ def _resolve_feature_names(raw: str) -> list[str]:
 def _compute_features(
     df: pl.DataFrame, feature_names: list[str], *, trading_date: str, frequency: str
 ) -> tuple[pl.DataFrame, list[str]]:
-    """用 FeatureDAG + StreamingEngine 计算特征，返回 (enriched_df, 全部计算的特征名)。
+    """用 HistoricalFeatureBuilder 计算特征，返回 (enriched_df, 全部计算的特征名)。
 
     DAG 会自动把依赖（如 ``vwm_zscore_60`` 依赖 ``vwm_20``）一并拉入，因此
     返回的特征名是拓扑序的全集，便于归档与写 manifest。
     """
     dag = FeatureDAG(feature_names)
-    engine = StreamingEngine(
-        dag,
-        config=StreamingEngineConfig(
-            session_id=trading_date,
-            frequency=frequency,
-            checkpoint_every_n_batches=1_000_000,  # 单批离线计算，无需中途 checkpoint
-        ),
-    )
-    engine.run([df])
-    enriched = engine.drain()
-    if enriched is None:
-        enriched = df
-    return enriched, list(dag.order)
+    computed_features = list(dag.order)
+    enriched = HistoricalFeatureBuilder(computed_features).build_from_dataframe(df)
+    return enriched, computed_features
 
 
 # --------------------------------------------------------------------- 落盘
@@ -195,33 +184,90 @@ def _write(
     computed_features: list[str],
     args: argparse.Namespace,
 ) -> dict[str, Any]:
-    """用 EodArchiver 写 feature_data（可选 raw market_data）+ manifest。"""
-    feature_store = ParquetStore(args.feature_root, FEATURE_PARTITION_COLS)
-    raw_root = args.raw_root or str(Path(args.feature_root).parent / "market_data")
-    raw_store = ParquetStore(raw_root, RAW_PARTITION_COLS)
-    manifest = Manifest(args.manifest_root)
+    """写 feature_data（可选 raw market_data）+ manifest。
 
-    archiver = EodArchiver(
-        raw_store=raw_store,
-        feature_store=feature_store,
-        manifest=manifest,
-    )
+    默认走新版平级 feature_data；``--legacy-layout`` 显式回退到旧 EodArchiver
+    分区，便于读取历史产物。
+    """
 
     partition_values = {
         "asset_class": args.asset_class,
         "exchange": args.exchange or _exchange_from_instrument(args.instrument_id),
         "frequency": args.frequency,
         "trading_date": args.trading_date,
+        "instrument_id": args.instrument_id,
     }
-    # 默认不重复写 raw market_data，除非 --write-raw。
-    raw_columns = list(_RAW_BODY_COLS) if args.write_raw else []
 
-    return archiver.archive(
+    raw_paths = _write_raw(enriched, args, partition_values) if args.write_raw else []
+
+    if args.legacy_layout:
+        feature_store = ParquetStore(args.feature_root, FEATURE_PARTITION_COLS)
+        raw_root = args.raw_root or str(Path(args.feature_root).parent / "market_data")
+        raw_store = ParquetStore(raw_root, MARKET_DATA_PARTITION_COLS)
+        archiver = EodArchiver(
+            raw_store=raw_store,
+            feature_store=feature_store,
+            manifest=Manifest(args.manifest_root),
+        )
+        legacy_partition_values = {
+            k: v for k, v in partition_values.items() if k != "instrument_id"
+        }
+        report = archiver.archive(
+            enriched,
+            feature_names=computed_features,
+            raw_columns=[],
+            partition_values=legacy_partition_values,
+            mode=args.mode,
+        )
+        report["raw_partitions_written"] = len(raw_paths)
+        report["layout"] = "legacy"
+        return report
+
+    paths = HistoricalFeatureBuilder(computed_features).write_feature_data(
         enriched,
-        feature_names=computed_features,
-        raw_columns=raw_columns,
-        partition_values=partition_values,
+        feature_root=args.feature_root,
+        asset_class=partition_values["asset_class"],
+        exchange=partition_values["exchange"],
+        frequency=partition_values["frequency"],
+        trading_date=partition_values["trading_date"],
+        instrument_id=partition_values["instrument_id"],
+        manifest_root=args.manifest_root,
         mode=args.mode,
+    )
+    return {
+        "run_id": None,
+        "mode": args.mode,
+        "layout": "new",
+        "partitions_written": len(paths) + len(raw_paths),
+        "raw_partitions_written": len(raw_paths),
+        "feature_partitions_written": len(paths),
+        "rows": enriched.height,
+        "manifest_rows": len(computed_features),
+        "paths": [str(p) for p in paths],
+    }
+
+
+def _write_raw(
+    enriched: pl.DataFrame,
+    args: argparse.Namespace,
+    partition_values: dict[str, str],
+) -> list[Path]:
+    """可选把 raw OHLCV 骨架写入新版 market_data。"""
+    raw_root = args.raw_root or str(Path(args.feature_root).parent / "market_data")
+    store = ParquetStore(raw_root, MARKET_DATA_PARTITION_COLS)
+    cols = [c for c in _RAW_BODY_COLS if c in enriched.columns]
+    if not cols:
+        return []
+    if args.mode == "overwrite":
+        target = Path(raw_root)
+        for k in MARKET_DATA_PARTITION_COLS:
+            target = target / f"{k}={partition_values[k]}"
+        if target.exists():
+            for part in target.glob("*.parquet"):
+                part.unlink()
+    return store.write(
+        enriched.select(cols),
+        partition_values={k: partition_values[k] for k in MARKET_DATA_PARTITION_COLS},
     )
 
 
@@ -268,6 +314,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="同时把 raw 行情列写回 market_data（默认不写）",
     )
+    p.add_argument(
+        "--legacy-layout",
+        action="store_true",
+        help="显式写旧 feature_data 分区 feature_group/frequency/trading_date",
+    )
     p.add_argument("--raw-root", help="raw market_data 根目录（默认 feature_root 同级）")
     p.add_argument("--asset-class", default="unknown", help="资产类别分区值")
     p.add_argument("--exchange", help="交易所分区值（默认从 instrument_id 推断）")
@@ -307,6 +358,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     print(f"manifest rows    : {report.get('manifest_rows', 0)}")
     print(f"run_id           : {report['run_id']}")
     print(f"mode             : {report['mode']}")
+    print(f"layout           : {report.get('layout', 'legacy')}")
     print(f"feature_root     : {args.feature_root}")
     print(f"manifest_root    : {args.manifest_root}")
     print("=" * 60)
