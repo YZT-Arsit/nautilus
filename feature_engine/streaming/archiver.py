@@ -174,6 +174,7 @@ class EodArchiver:
             "mode": mode,
             "partitions_written": len(staged),
             "rows": df.height,
+            "manifest_rows": len(manifest_rows),
         }
 
     # ------------------------------------------------------------------ stage

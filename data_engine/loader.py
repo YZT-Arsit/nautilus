@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from data_engine.sources.csv_bars import load_csv_bars
+from data_engine.sources.live_gateway import load_live_gateway
 from data_engine.sources.live_synthetic import load_live_synthetic
 from data_engine.sources.parquet_bars import load_parquet_bars
 from data_engine.sources.synthetic import load_synthetic_bars
@@ -20,6 +21,7 @@ _LOADERS = {
     "parquet_bars": load_parquet_bars,
     "hive_parquet_bars": load_parquet_bars,  # alias of parquet_bars
     "live_synthetic": load_live_synthetic,
+    "live_gateway": load_live_gateway,
 }
 
 

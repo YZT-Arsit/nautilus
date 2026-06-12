@@ -1,5 +1,10 @@
-"""Concrete data sources (synthetic, CSV, live skeleton)."""
+"""Concrete data sources (synthetic, CSV, live skeleton, live gateway)."""
 from data_engine.sources.csv_bars import CsvBarSource, load_csv_bars
+from data_engine.sources.live_gateway import (
+    LiveGatewayConfig,
+    LiveGatewaySource,
+    load_live_gateway,
+)
 from data_engine.sources.live_synthetic import (
     LiveSyntheticBarSource,
     load_live_synthetic,
@@ -13,4 +18,7 @@ __all__ = [
     "load_csv_bars",
     "LiveSyntheticBarSource",
     "load_live_synthetic",
+    "LiveGatewayConfig",
+    "LiveGatewaySource",
+    "load_live_gateway",
 ]

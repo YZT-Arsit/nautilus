@@ -7,9 +7,17 @@ synthetic skeleton).
 
 Public API::
 
-    from data_engine import BarEvent, load_events, make_bar_event, make_bars
+    from data_engine import (
+        BarEvent,
+        load_events,
+        make_bar_event,
+        make_bars,
+        bars_to_polars,
+        polars_to_bars,
+    )
 """
 from data_engine.adapters.bar_adapter import make_bar_event, make_bars
+from data_engine.adapters.dataframe_adapter import bars_to_polars, polars_to_bars
 from data_engine.events import BarEvent
 from data_engine.loader import load_events
 
@@ -18,4 +26,6 @@ __all__ = [
     "load_events",
     "make_bar_event",
     "make_bars",
+    "bars_to_polars",
+    "polars_to_bars",
 ]
