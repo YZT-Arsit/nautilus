@@ -87,10 +87,20 @@ class EodArchiver:
         """
         if df.is_empty():
             logger.warning("Archive called with empty frame")
-            return {"run_id": None, "partitions_written": 0, "rows": 0}
+            return {
+                "run_id": None,
+                "mode": mode,
+                "partitions_written": 0,
+                "raw_partitions_written": 0,
+                "feature_partitions_written": 0,
+                "rows": 0,
+                "manifest_rows": 0,
+            }
 
         run_id = uuid.uuid4().hex[:12]
         staged: list[tuple[Path, Path, str]] = []  # (staged_file, target_dir, basename)
+        raw_staged_count = 0
+        feature_staged_count = 0
         manifest_rows: list[dict] = []
 
         try:
@@ -103,9 +113,11 @@ class EodArchiver:
                     for k, v in partition_values.items()
                     if k in self.raw_store.partition_cols
                 }
-                staged.extend(
-                    self._stage(self.raw_store, raw_df, raw_partitions, run_id, mode)
+                raw_files = self._stage(
+                    self.raw_store, raw_df, raw_partitions, run_id, mode
                 )
+                raw_staged_count += len(raw_files)
+                staged.extend(raw_files)
 
             # 2. Stage features, bucketed by feature_group.
             feat_base = {
@@ -122,11 +134,11 @@ class EodArchiver:
                     continue
                 group_df = df.select(cols_present)
                 group_partitions = {**feat_base, "feature_group": group}
-                staged.extend(
-                    self._stage(
-                        self.feature_store, group_df, group_partitions, run_id, mode
-                    )
+                feature_files = self._stage(
+                    self.feature_store, group_df, group_partitions, run_id, mode
                 )
+                feature_staged_count += len(feature_files)
+                staged.extend(feature_files)
 
                 pkey = PartitionKey.from_dict(
                     group_partitions, self.feature_store.partition_cols
@@ -173,6 +185,8 @@ class EodArchiver:
             "run_id": run_id,
             "mode": mode,
             "partitions_written": len(staged),
+            "raw_partitions_written": raw_staged_count,
+            "feature_partitions_written": feature_staged_count,
             "rows": df.height,
             "manifest_rows": len(manifest_rows),
         }

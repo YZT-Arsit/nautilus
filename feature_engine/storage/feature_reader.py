@@ -9,7 +9,8 @@
 
 * :meth:`FeatureDataReader.scan_features` —— 按 ``trading_date`` /
   ``frequency`` / ``feature_group`` 做分区裁剪，按 ``instrument_id`` 做列级
-  过滤，并支持列投影。
+  过滤，并支持列投影。不指定 ``feature_group`` 时，会把各 group 合并成一个
+  “每个 (symbol, ts_event) 一行、特征列齐全”的特征矩阵。
 * :meth:`FeatureDataReader.available_features` —— 回答“某个分区下有哪些特征
   可用”，优先读 :class:`~feature_engine.storage.metadata.Manifest`，没有
   manifest 时退化为从数据列名推断。
@@ -23,6 +24,18 @@
 因此按 ``instrument_id`` 查询时，本类在扫描结果上对 ``symbol`` 列做等值过滤。
 未来若把 instrument 提升为分区维度，只需扩展 ``partition_cols``，查询接口的
 签名保持不变。
+
+为什么按 group 分别扫描再 concat
+--------------------------------
+不同 ``feature_group`` 落在不同分区目录，且各自的特征列不同（technical 有
+sma/rsi，volume 有 vwm）。如果用一个 PyArrow dataset 一次性扫描跨 group 的根
+目录，union 出来的 schema 可能只采用第一个 fragment，导致只存在于某个 group 的
+列（如 ``vwm_20``）被丢弃。为此这里**枚举 ``feature_group=*`` 目录，对每个
+group 用其子根目录单独扫描（schema 同构）**，再用
+``pl.concat(..., how="diagonal_relaxed")`` 合并——不同 schema 由 Polars 取列
+并集、缺失列 null 补齐对齐，所有特征列都会保留——最后
+:meth:`_merge_feature_groups` 把跨 group 的 null 补齐行折叠成
+“一行/(symbol, ts_event)”。
 
 不依赖 pandas，仅使用 Polars / PyArrow。
 """
@@ -70,6 +83,10 @@ class FeatureDataReader:
         self.partition_cols = tuple(partition_cols)
         self._store = ParquetStore(self.feature_root, self.partition_cols)
         self._manifest = Manifest(manifest_root) if manifest_root is not None else None
+        # feature_group 之后的分区列（用于子根扫描），如 (frequency, trading_date)。
+        self._sub_partition_cols = tuple(
+            c for c in self.partition_cols if c != "feature_group"
+        )
 
     # ------------------------------------------------------------------ scan
 
@@ -82,46 +99,98 @@ class FeatureDataReader:
         feature_group: str | None = None,
         columns: list[str] | None = None,
     ) -> pl.DataFrame:
-        """读取历史特征数据。
+        """读取历史特征数据，返回一个干净的特征矩阵。
 
-        ``trading_date`` / ``frequency`` / ``feature_group`` 中凡是属于分区列
-        的，都会下推为 Hive 分区裁剪（只读命中的分区目录）。``instrument_id``
-        作为列级过滤（对 ``symbol`` 列等值匹配）。``columns`` 用于列投影。
-
-        返回的 DataFrame 保留分区列，方便下游辨认每行来自哪个分区。
+        ``trading_date`` / ``frequency`` / ``feature_group`` 做分区裁剪，
+        ``instrument_id`` 做列级过滤（对 ``symbol`` 列等值匹配），``columns``
+        做列投影。不指定 ``feature_group`` 时跨 group 合并成一行/(symbol, ts_event)。
         """
-        part_filters = {
-            "feature_group": feature_group,
-            "frequency": frequency,
-            "trading_date": trading_date,
-        }
-        # 只保留“非 None 且确实是分区列”的过滤条件。
-        active = {
-            k: v
-            for k, v in part_filters.items()
-            if v is not None and k in self.partition_cols
-        }
+        if "feature_group" in self.partition_cols:
+            groups = (
+                [feature_group]
+                if feature_group is not None
+                else self._discover_feature_groups()
+            )
+            df = self._scan_groups(groups, frequency, trading_date)
+        else:
+            df = self._scan_single(feature_group, frequency, trading_date)
 
-        df = self._store.scan(
-            filters=active or None,
-            drop_partition_cols=False,
-        )
         if df.is_empty():
             return df
 
         if instrument_id is not None:
             df = self._filter_instrument(df, instrument_id)
 
-        # 特征按 feature_group 分区落盘（如 technical / volume），跨 group 扫描会
-        # 得到“每个 group 一份、互相 null 补齐”的行。对训练/回测/warmup 复用而言，
-        # 期望的是“每个 (symbol, ts_event) 一行、所有特征列齐全”的特征矩阵，
-        # 因此在这里把多个 feature_group 合并回一行。
+        # 跨 feature_group 的 null 补齐行 -> 一行/(symbol, ts_event)。
         df = self._merge_feature_groups(df)
 
         if columns is not None:
             keep = [c for c in columns if c in df.columns]
             df = df.select(keep)
         return df
+
+    def _discover_feature_groups(self) -> list[str]:
+        """枚举 ``feature_root`` 下已存在的 ``feature_group=*`` 目录名。"""
+        groups: list[str] = []
+        if self.feature_root.exists():
+            for child in sorted(self.feature_root.iterdir()):
+                if child.is_dir() and child.name.startswith("feature_group="):
+                    groups.append(child.name.split("=", 1)[1])
+        return groups
+
+    def _scan_groups(
+        self,
+        groups: list[str],
+        frequency: str | None,
+        trading_date: str | None,
+    ) -> pl.DataFrame:
+        """逐个 feature_group 扫描其子根目录（schema 同构），vertical_relaxed 合并。"""
+        frames: list[pl.DataFrame] = []
+        for group in groups:
+            sub_root = self.feature_root / f"feature_group={group}"
+            if not sub_root.exists():
+                continue
+            sub_store = ParquetStore(sub_root, self._sub_partition_cols)
+            active = {}
+            if trading_date is not None and "trading_date" in self._sub_partition_cols:
+                active["trading_date"] = trading_date
+            if frequency is not None and "frequency" in self._sub_partition_cols:
+                active["frequency"] = frequency
+            f = sub_store.scan(filters=active or None, drop_partition_cols=False)
+            if f.is_empty():
+                continue
+            # 重新挂回被窄化剥离的分区信息，保证跨 group 列一致、可被 merge 识别。
+            f = f.with_columns(pl.lit(group).alias("feature_group"))
+            if frequency is not None and "frequency" not in f.columns:
+                f = f.with_columns(pl.lit(frequency).alias("frequency"))
+            if trading_date is not None and "trading_date" not in f.columns:
+                f = f.with_columns(pl.lit(trading_date).alias("trading_date"))
+            frames.append(f)
+
+        if not frames:
+            return pl.DataFrame()
+        # 各 group 列集不同（technical: sma/rsi, volume: vwm），用 diagonal_relaxed
+        # 取列并集、缺失列 null 补齐（vertical_relaxed 只放宽 dtype、要求列集相同）。
+        return pl.concat(frames, how="diagonal_relaxed")
+
+    def _scan_single(
+        self,
+        feature_group: str | None,
+        frequency: str | None,
+        trading_date: str | None,
+    ) -> pl.DataFrame:
+        """无 feature_group 维度的布局：直接按分区过滤扫描。"""
+        wanted = {
+            "feature_group": feature_group,
+            "frequency": frequency,
+            "trading_date": trading_date,
+        }
+        active = {
+            k: v
+            for k, v in wanted.items()
+            if v is not None and k in self.partition_cols
+        }
+        return self._store.scan(filters=active or None, drop_partition_cols=False)
 
     def _merge_feature_groups(self, df: pl.DataFrame) -> pl.DataFrame:
         """把跨 feature_group 的 null 补齐行合并成一行/(symbol, ts_event)。

@@ -302,6 +302,8 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     print(f"实际计算 features: {computed_features}")
     print(f"输出 feature 列  : {feature_cols}")
     print(f"写入 partitions  : {report['partitions_written']}")
+    print(f"  - raw 分区     : {report.get('raw_partitions_written', 0)}")
+    print(f"  - feature 分区 : {report.get('feature_partitions_written', 0)}")
     print(f"manifest rows    : {report.get('manifest_rows', 0)}")
     print(f"run_id           : {report['run_id']}")
     print(f"mode             : {report['mode']}")

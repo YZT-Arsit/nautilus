@@ -116,6 +116,54 @@ def test_scan_features_empty_root_returns_empty(tmp_path) -> None:
     assert got.is_empty()
 
 
+def test_scan_features_across_feature_groups(tmp_path) -> None:
+    """不指定 feature_group 时，technical 和 volume 两组特征列都应返回。"""
+    root = tmp_path / "feature_data"
+    # technical group: sma_20 / rsi_14
+    _write_feature_partition(
+        root,
+        feature_group="technical",
+        frequency="1m",
+        trading_date="2026-05-26",
+        df=pl.DataFrame(
+            {
+                "symbol": ["IH2303.CFFEX", "IH2303.CFFEX", "IH2303.CFFEX"],
+                "ts_event": [1, 2, 3],
+                "sma_20": [10.0, 11.0, 12.0],
+                "rsi_14": [40.0, 50.0, 60.0],
+            }
+        ),
+    )
+    # volume group: vwm_20（不同 schema，落在不同分区目录）
+    _write_feature_partition(
+        root,
+        feature_group="volume",
+        frequency="1m",
+        trading_date="2026-05-26",
+        df=pl.DataFrame(
+            {
+                "symbol": ["IH2303.CFFEX", "IH2303.CFFEX", "IH2303.CFFEX"],
+                "ts_event": [1, 2, 3],
+                "vwm_20": [0.1, 0.2, 0.3],
+            }
+        ),
+    )
+
+    reader = FeatureDataReader(root)
+    df = reader.scan_features(trading_date="2026-05-26", frequency="1m")
+
+    # 关键：跨 group 读取时 volume 分区的 vwm_20 不能丢。
+    assert "vwm_20" in df.columns
+    assert "sma_20" in df.columns
+    assert "rsi_14" in df.columns
+    # 折叠成一行/(symbol, ts_event)，3 个时间戳 -> 3 行。
+    assert df.height == 3
+    # 同一行同时拿到 technical 和 volume 的特征值。
+    row = df.sort("ts_event").row(0, named=True)
+    assert row["sma_20"] == 10.0
+    assert row["vwm_20"] == 0.1
+
+
 def test_available_features_from_manifest(tmp_path) -> None:
     feature_root = tmp_path / "feature_data"
     manifest_root = tmp_path / "manifests"
