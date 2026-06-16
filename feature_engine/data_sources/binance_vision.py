@@ -231,7 +231,7 @@ def normalize_binance_kline(
 
     # Detect timestamp unit from first row
     unit = _detect_timestamp_unit(rows[0]["open_time"])
-    factor = 1000 if unit == "ms" else 1
+    factor = 1000 if unit == "ms" else 1_000_000
 
     normalized_rows = []
     for row in rows:
@@ -369,6 +369,7 @@ class BinanceVisionImporter:
             if len(failed_dates) > 3:
                 print(f"... and {len(failed_dates) - 3} more")
 
+        import polars as pl  # noqa: PLC0415
         return pl.concat(all_dfs).sort("ts")
 
     @staticmethod
