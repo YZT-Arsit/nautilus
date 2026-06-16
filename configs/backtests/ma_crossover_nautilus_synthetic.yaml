@@ -1,0 +1,46 @@
+# MA crossover over a synthetic bar path, executed through the NATIVE Nautilus
+# BacktestEngine path (no network, no external data).
+#
+#   python run_strategy.py --config configs/backtests/ma_crossover_nautilus_synthetic.yaml
+#
+# Full chain:
+#   data_engine (synthetic bars)
+#     -> feature_engine (FeatureSpec -> BackendRegistry -> PythonBackend)
+#     -> ma_crossover strategy (BUY/SELL/HOLD signals)
+#     -> SignalToOrderPolicy (signal -> OrderIntent / PositionIntent)
+#     -> NautilusBacktestBackend(mode=nautilus_native)
+#     -> Nautilus BacktestEngine (real matching / fills / account)
+#     -> outputs/backtests/<run_name>/ (signals, intents, trades, positions,
+#        equity_curve, metrics.json, report.md)
+
+run_name: ma_crossover_nautilus_synthetic
+strategy: ma_crossover
+
+params:
+  fast_window: 5
+  slow_window: 20
+  input_type: bar
+  input_field: close
+
+data:
+  mode: synthetic
+  # instrument_id must map to a Nautilus instrument for native mode
+  # (see strategy_framework/backends/nautilus_native.py).
+  instrument_id: BTCUSDT.BINANCE
+  warmup_bars: 20
+  live_bars: 20
+
+execution:
+  backend: nautilus_backtest
+  mode: nautilus_native
+  initial_cash: 100000
+  quantity: 1.0
+  sell_means: flat        # SELL closes the long (CASH/spot account)
+  allow_short: false
+  price_field: close
+  fee_rate: 0.0005
+  slippage_bps: 1.0
+
+output:
+  root: outputs/backtests
+  print_table: false      # the backend writes a full report directory instead

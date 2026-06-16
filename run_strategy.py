@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Top-level user entry point — run any registered strategy.
+"""Top-level user entry point - run any registered strategy.
 
 This is the only normal execution entry. It is strategy-agnostic: it loads a
 config, looks up the strategy plugin in the registry, builds the runner, gets
@@ -32,7 +32,7 @@ from strategy_framework.backtest import SignalRecorder
 from strategy_framework.registry import get_entry
 from feature_engine.runner import FeatureStrategyRunner
 
-# Repository root — relative config paths (e.g. a plugin's default_config_path)
+# Repository root - relative config paths (e.g. a plugin's default_config_path)
 # resolve against this so the runner works regardless of the caller's CWD.
 _REPO_ROOT = Path(__file__).resolve().parent
 
@@ -97,8 +97,16 @@ def main(argv: list[str] | None = None) -> None:
     print_table = output_cfg.get("print_table", True)
     recorder = SignalRecorder(spec_names) if output_cfg.get("record_signals", False) else None
     # Optional execution backend (see strategy_framework/backends/). None keeps
-    # the legacy print/record-only behaviour.
-    backend = build_backend(cfg.get("execution", {}), spec_names)
+    # the legacy print/record-only behaviour. ``context`` carries run/output
+    # metadata so an artifact-emitting backend can write its report directory.
+    backend_context = {
+        "run_name": cfg.get("run_name") or name,
+        "output": output_cfg,
+        "data": data_cfg,
+        "config": cfg,
+        "repo_root": str(_REPO_ROOT),
+    }
+    backend = build_backend(cfg.get("execution", {}), spec_names, backend_context)
 
     if print_table:
         output.print_event_table_header(spec_names)

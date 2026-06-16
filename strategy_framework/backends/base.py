@@ -21,17 +21,26 @@ class ExecutionBackend(Protocol):
         ...
 
     def close(self) -> None:
-        """Flush/finalize at the end of a run (print a summary, close files…)."""
+        """Flush/finalize at the end of a run (print a summary, close files...)."""
         ...
 
 
-def build_backend(execution_config: dict[str, Any] | None, spec_names: list[str]):
+def build_backend(
+    execution_config: dict[str, Any] | None,
+    spec_names: list[str],
+    context: dict[str, Any] | None = None,
+):
     """Return an :class:`ExecutionBackend` for an ``execution`` config, or ``None``.
 
     ``None`` (no ``execution`` block, or no ``backend`` key) preserves the legacy
     behaviour where ``run_strategy.py`` only prints/records via the output module.
     Imports are lazy so selecting one backend never loads the others (notably the
     Nautilus placeholders).
+
+    ``context`` (optional) carries run/output metadata - ``run_name``, the
+    ``output`` and ``data`` config blocks, the resolved ``config`` dict, and
+    ``repo_root`` - forwarded to backends that emit artifacts (the Nautilus
+    backtest backend). It is ignored by the simpler backends.
     """
     if not execution_config:
         return None
@@ -50,7 +59,7 @@ def build_backend(execution_config: dict[str, Any] | None, spec_names: list[str]
     if name == "nautilus_backtest":
         from strategy_framework.backends.nautilus_backtest import NautilusBacktestBackend
 
-        return NautilusBacktestBackend(spec_names, execution_config)
+        return NautilusBacktestBackend(spec_names, execution_config, context)
     if name == "nautilus_live":
         from strategy_framework.backends.nautilus_live import NautilusLiveBackend
 

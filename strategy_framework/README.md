@@ -50,8 +50,10 @@ data_engine
     -> SignalToOrderPolicy              (signal -> intent)
     -> OrderIntent / PositionIntent
     -> NautilusBacktestBackend
-        -> simulated fills / PnL now    (IntentFillSimulator, no deps)
-        -> native Nautilus BacktestEngine later
+        -> mode=simulated:      IntentFillSimulator (dependency-free fills/PnL)
+        -> mode=nautilus_native: real Nautilus BacktestEngine (lazy adapter)
+        -> shared report writer -> outputs/backtests/<run_name>/
+           (signals, intents, trades, positions, equity_curve, metrics.json, report.md)
 ```
 
 - `data_engine` owns data loading; `feature_engine` owns feature computation;
@@ -73,23 +75,39 @@ data_engine
     price_field: close           # simulated mode: event attribute used as fill price
   ```
 
-### Nautilus Trader is an optional execution/backtest/live backend
+### Nautilus Trader is an optional execution/backtest backend
 
-The `nautilus_backtest` backend currently provides:
+The `nautilus_backtest` backend provides two fill sources behind one report
+shape (see [`docs/nautilus_backtest_backend.md`](../docs/nautilus_backtest_backend.md)):
 
-- a Nautilus-backend **boundary** (intent → execution, isolated in the backend);
-- **intent collection** from signals;
-- a dependency-free **simulated fill/PnL reference path** (`mode="simulated"`,
-  the default) via `IntentFillSimulator` — average-price positions, realized &
-  unrealized PnL, an `ExecutionReport` printed by `close()`;
-- a **lazy placeholder** for native Nautilus (`mode="nautilus_native"`), which
-  raises a clear `NotImplementedError` when driven until implemented.
+- **`mode="simulated"`** (default) — a dependency-free reference fill model
+  (`IntentFillSimulator`): average-price positions, realized & unrealized PnL.
+  No Nautilus required.
+- **`mode="nautilus_native"`** — a **real** Nautilus `BacktestEngine` run via the
+  lazy `strategy_framework/backends/nautilus_native.py` adapter. Internal bars
+  become Nautilus `Bar`s, pre-computed intents are replayed as market orders by a
+  thin `Strategy`, and `OrderFilled` events become `FillRecord`s. Requires the
+  `nautilus_trader` package (built on the backtest server); when it is absent the
+  backend raises a clear `NautilusUnavailableError` — **not** a placeholder
+  `NotImplementedError`.
 
-This is **not** full exchange/live trading: no real orders are sent, and **no
-Nautilus dependency is required for the normal test suite**. Native
-`BacktestEngine` integration is the next stage. All Nautilus imports are **lazy**
-(inside the optional `try_translate_to_nautilus_order` /
-`try_build_nautilus_backtest_engine` helpers only).
+Both modes feed the same dependency-free report writer
+(`strategy_framework/execution/backtest_report.py`), so the artifact set
+(`signals/intents/trades/positions/equity_curve/metrics.json/report.md`) is
+identical regardless of which engine produced the fills.
+
+All `nautilus_trader` imports are **lazy and confined to the native adapter** —
+`feature_engine`, `data_engine`, `strategies`, and the rest of
+`strategy_framework` never import Nautilus. Run it with:
+
+```bash
+python run_strategy.py --config configs/backtests/ma_crossover_nautilus_synthetic.yaml
+```
+
+**Native MVP scope:** single instrument (Binance spot pairs mapped in the
+adapter), market orders, one bar type; `sell_means="flat"` closes the long.
+Multi-instrument, commission/slippage models, and live execution are future
+work.
 
 ## Legacy
 

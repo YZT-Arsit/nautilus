@@ -295,11 +295,12 @@ class TestNautilusBacktestSimulated:
         assert rep.realized_pnl == pytest.approx(10.0)
 
     def test_close_prints_report(self, capsys):
+        # No output dir configured -> concise summary (no report directory).
         backend = NautilusBacktestBackend(["x"])
         backend.on_signal(_Event(), _Snapshot(), "BUY")
         backend.close()
         out = capsys.readouterr().out
-        assert "[nautilus_backtest]" in out and "fills:" in out and "pnl:" in out
+        assert "[nautilus_backtest]" in out and "fills:" in out
 
     def test_unknown_mode_raises(self):
         with pytest.raises(ValueError, match="unknown nautilus_backtest mode"):
@@ -314,16 +315,31 @@ class TestNautilusNativeModeLazy:
         NautilusBacktestBackend(["x"], {"mode": "nautilus_native"})
         assert "nautilus_trader" not in sys.modules
 
-    def test_native_on_signal_raises_clear_error(self):
+    def test_native_on_signal_does_not_raise(self):
+        # Native mode accumulates during the run; the engine runs at close().
+        # This must NOT raise the old placeholder NotImplementedError.
         backend = NautilusBacktestBackend(["x"], {"mode": "nautilus_native"})
-        with pytest.raises(NotImplementedError, match="nautilus_native"):
-            backend.on_signal(_Event(), _Snapshot(), "BUY")
+        backend.on_signal(_Event(), _Snapshot(), "BUY")  # no raise
 
-    def test_native_report_and_close_raise(self):
+    def test_native_report_raises_runtime_error(self):
+        # report() is simulated-mode only; native users read close()/last_result.
         backend = NautilusBacktestBackend(["x"], {"mode": "nautilus_native"})
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(RuntimeError):
             backend.report()
-        with pytest.raises(NotImplementedError):
+
+    def test_native_close_clear_error_or_runs(self):
+        import importlib.util
+
+        from strategy_framework.backends.nautilus_native import NautilusUnavailableError
+
+        # find_spec probes availability without importing nautilus_trader (so this
+        # test does not pollute sys.modules for the construction boundary tests).
+        if importlib.util.find_spec("nautilus_trader") is not None:
+            pytest.skip("nautilus_trader present; native engine covered by smoke test")
+        backend = NautilusBacktestBackend(["x"], {"mode": "nautilus_native"})
+        backend.on_signal(_Event(), _Snapshot(), "BUY")
+        # Clear dependency error, NOT a placeholder NotImplementedError.
+        with pytest.raises(NautilusUnavailableError):
             backend.close()
 
     def test_build_engine_helper_returns_none_without_nautilus(self):
