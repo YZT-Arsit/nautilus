@@ -5,6 +5,7 @@ a numeric string from a CSV) in a given unit to nanoseconds.
 """
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 from typing import Any
 
 ONE_SECOND_NS = 1_000_000_000
@@ -24,12 +25,22 @@ def validate_time_unit(unit: str) -> None:
 def to_event_time_ns(value: Any, unit: str = "ns") -> int:
     """Convert ``value`` in ``unit`` to an integer nanosecond timestamp.
 
-    Accepts numeric strings (e.g. from CSV). Raises ValueError for an unsupported
-    unit, a missing value, or a non-numeric value.
+    Accepts numeric strings (e.g. from CSV) and ``datetime``/``date`` objects
+    (e.g. a Parquet timestamp column such as Binance Vision's ``ts``). Naive
+    datetimes are treated as UTC. Raises ValueError for an unsupported unit, a
+    missing value, or a non-numeric value.
     """
     validate_time_unit(unit)
     if value is None or value == "":
         raise ValueError("timestamp value is required but missing")
+    # Parquet timestamp columns arrive as datetime/date, not numerics. The
+    # ``unit`` argument does not apply here: a datetime already names an instant.
+    if isinstance(value, datetime):
+        when = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return int(round(when.timestamp() * ONE_SECOND_NS))
+    if isinstance(value, date):
+        when = datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+        return int(round(when.timestamp() * ONE_SECOND_NS))
     try:
         numeric = float(value)
     except (TypeError, ValueError):
