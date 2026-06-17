@@ -25,17 +25,35 @@ from data_engine.time import ONE_SECOND_NS, to_event_time_ns, validate_time_unit
 from data_engine.validation import optional_numeric, require_numeric
 
 
-def _equality_filter(filters: dict[str, Any] | None):
-    """Turn ``{col: value}`` equality pairs into a combined pyarrow expression."""
-    if not filters:
-        return None
-    import pyarrow.dataset as ds
+def _hive_partition_values(path: str) -> dict[str, str]:
+    """Parse Hive ``key=value`` directory segments out of a fragment path."""
+    values: dict[str, str] = {}
+    for segment in path.replace("\\", "/").split("/"):
+        key, sep, value = segment.partition("=")
+        if sep:
+            values[key] = value
+    return values
 
-    expr = None
-    for column, value in filters.items():
-        condition = ds.field(column) == value
-        expr = condition if expr is None else (expr & condition)
-    return expr
+
+def _matching_fragments(dataset, filters: dict[str, Any]) -> list:
+    """Select dataset fragments whose Hive partition values satisfy ``filters``.
+
+    A unified ``market_data`` root mixes partition layouts: bars live under
+    ``bar_type=...`` while trades live under ``data_type=aggTrades``.  Pruning by
+    an equality expression alone is unreliable, because a partition key present
+    in one layout (``data_type``) is simply absent from the other, so pyarrow
+    cannot prove a bar fragment is incompatible and may keep it.  We therefore
+    match the Hive ``key=value`` path segments **exactly** — a bar fragment has
+    no ``data_type`` segment, so it is dropped here regardless of how pyarrow
+    would prune it.
+    """
+    fragments = dataset.get_fragments()
+    matched = []
+    for fragment in fragments:
+        parts = _hive_partition_values(fragment.path)
+        if all(str(parts.get(key)) == str(value) for key, value in filters.items()):
+            matched.append(fragment)
+    return matched
 
 
 class ParquetTradeSource:
@@ -118,12 +136,27 @@ class ParquetTradeSource:
         )
 
     def _load_sorted(self) -> list[TradeEvent]:
+        import pyarrow as pa
         import pyarrow.dataset as ds
 
         dataset = ds.dataset(self._root, format="parquet", partitioning="hive")
-        schema_names = set(dataset.schema.names)
+
+        # Restrict to the filter-matching trade fragments *before* any schema
+        # check.  In a unified ``market_data`` root, the global dataset schema
+        # may be inferred from a bar fragment (no ``price`` column); selecting
+        # the trade fragments first makes the guard accurate.
+        fragments = _matching_fragments(dataset, self._filters)
+        if not fragments:
+            raise ValueError(
+                f"no parquet fragments under {self._root!r} match filters {self._filters!r}"
+            )
+
+        # Schema guard based on the matching trade fragments, not the mixed root.
+        schema_names = set(fragments[0].physical_schema.names)
         if self._price_column not in schema_names:
             raise ValueError(f"required price column {self._price_column!r} is missing")
+        if self._quantity_column not in schema_names:
+            raise ValueError(f"required quantity column {self._quantity_column!r} is missing")
 
         wanted = [
             self._timestamp_column,
@@ -136,7 +169,8 @@ class ParquetTradeSource:
         ]
         columns = [c for c in wanted if c and c in schema_names]
 
-        table = dataset.to_table(columns=columns, filter=_equality_filter(self._filters))
+        tables = [fragment.to_table(columns=columns) for fragment in fragments]
+        table = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
         data = table.to_pydict()
         trades = [
             self._row_to_trade({col: data[col][i] for col in columns}, i)
