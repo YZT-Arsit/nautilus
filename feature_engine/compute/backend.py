@@ -35,30 +35,17 @@ from typing import Protocol, runtime_checkable
 
 from feature_engine.compute.feature_base import FeatureBase
 from feature_engine.compute.features import (
-    AtrFeature,
-    BollingerPercentBFeature,
-    BollingerWidthFeature,
     BookImbalanceFeature,
-    BreakoutDownFeature,
-    BreakoutUpFeature,
-    CandleBodyRatioFeature,
     DifferenceDerivedFeature,
-    DrawdownFromRollingHighFeature,
     EWMAFeature,
     LogReturnFeature,
-    LowerShadowRatioFeature,
     MidPriceFeature,
-    MomentumNFeature,
-    PricePositionFeature,
     ProductDerivedFeature,
-    QuoteVolumeFeature,
     RatioDerivedFeature,
     RealizedVolatilityFeature,
-    ReturnNFeature,
     RollingMaxFeature,
     RollingMeanFeature,
     RollingMinFeature,
-    RollingRangeFeature,
     RollingStdDerivedFeature,
     RollingStdFeature,
     RollingSumFeature,
@@ -66,13 +53,29 @@ from feature_engine.compute.features import (
     SimpleReturnFeature,
     SpreadFeature,
     SumDerivedFeature,
+    VWAPFeature,
+)
+# Modular OHLCV feature library (pure Python; kept out of the legacy features.py).
+from feature_engine.compute.feature_lib import (
+    ATRFeature,
+    BollingerPercentBFeature,
+    BollingerWidthFeature,
+    BreakoutDownFeature,
+    BreakoutUpFeature,
+    CandleBodyRatioFeature,
+    DrawdownFromRollingHighFeature,
+    LowerShadowRatioFeature,
+    MomentumNFeature,
+    PricePositionFeature,
+    QuoteVolumeFeature,
+    ReturnNFeature,
+    RollingRangeFeature,
     TrueRangeFeature,
     UpperShadowRatioFeature,
     VolatilityRatioFeature,
     VolumeRatioFeature,
     VolumeZScoreFeature,
-    VWAPFeature,
-    VwapDistanceFeature,
+    VWAPDistanceFeature,
     ZScoreFeature,
 )
 from feature_engine.compute.spec import FeatureSpec
@@ -131,7 +134,7 @@ _FEATURE_CLASSES: dict[str, type] = {
     "breakout_up": BreakoutUpFeature,
     "breakout_down": BreakoutDownFeature,
     # C. volatility
-    "atr": AtrFeature,
+    "atr": ATRFeature,
     "volatility_ratio": VolatilityRatioFeature,
     "bollinger_width": BollingerWidthFeature,
     "bollinger_percent_b": BollingerPercentBFeature,
@@ -140,7 +143,7 @@ _FEATURE_CLASSES: dict[str, type] = {
     "volume_zscore": VolumeZScoreFeature,
     "volume_ratio": VolumeRatioFeature,
     "quote_volume": QuoteVolumeFeature,
-    "vwap_distance": VwapDistanceFeature,
+    "vwap_distance": VWAPDistanceFeature,
 }
 
 # Sorted longest-first to avoid prefix ambiguity (e.g. "rolling_std" vs "rolling_std_dev")

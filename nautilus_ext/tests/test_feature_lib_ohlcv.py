@@ -1,4 +1,5 @@
-"""Deterministic unit tests for the pure-Python OHLCV feature library.
+"""Deterministic unit tests for the modular pure-Python OHLCV feature library
+(``feature_engine/compute/feature_lib/``).
 
 Every new feature is tested for:
   * warmup / not_ready before enough history,
@@ -9,7 +10,7 @@ Every new feature is tested for:
 Plus:
   * PythonBackend.available_feature_types() exposes every new type,
   * each public builder produces a FeatureSpec the BackendRegistry can build,
-  * no nautilus_trader import anywhere in feature_engine.compute.
+  * no nautilus_trader import anywhere in feature_engine.compute (incl. feature_lib).
 
 These run anywhere (pure Python, stdlib only) - no Nautilus, pandas, or network.
 """
@@ -87,7 +88,6 @@ def test_true_range_first_bar_and_prev_close():
 def test_candle_body_ratio_and_divzero():
     f = _feature(feat_api.candle_body_ratio_spec("body"))
     assert f.update(mk(0, 10, 13, 9, 12)).value.value == pytest.approx(0.5)
-    # high == low -> guarded by eps; equal open/close -> 0.0 (no crash)
     f2 = _feature(feat_api.candle_body_ratio_spec("body2"))
     assert f2.update(mk(0, 10, 10, 10, 10)).value.value == pytest.approx(0.0)
 
@@ -110,10 +110,9 @@ def test_return_n_warmup_and_value_and_divzero():
     us = _updates(f, bars)
     assert not us[0].value.is_ready and not us[1].value.is_ready  # warmup
     assert us[2].value.value == pytest.approx(0.2)                # 12/10 - 1
-    # divide-by-zero: close[-n] == 0 -> not ready
     g = _feature(feat_api.return_n_spec("ret2b", window=2))
     us2 = _updates(g, [mk(0, 0, 0, 0, 0), mk(1, 0, 0, 0, 5), mk(2, 0, 0, 0, 10)])
-    assert not us2[2].value.is_ready
+    assert not us2[2].value.is_ready                              # close[-n] == 0
 
 
 def test_momentum_n():
@@ -128,7 +127,6 @@ def test_price_position_and_divzero():
     out = _updates(f, [mk(0, 0, 10, 5, 8), mk(1, 0, 12, 6, 11)])
     assert not out[0].value.is_ready
     assert out[1].value.value == pytest.approx((11 - 5) / (12 - 5))
-    # flat bars -> range 0 -> guarded -> 0.0
     g = _feature(feat_api.price_position_spec("pp2", window=2))
     out2 = _updates(g, [mk(0, 0, 10, 10, 10), mk(1, 0, 10, 10, 10)])
     assert out2[1].value.value == pytest.approx(0.0)
@@ -143,7 +141,6 @@ def test_drawdown_from_rolling_high():
 
 def test_breakout_up_and_down():
     up = _feature(feat_api.breakout_up_spec("bo_up", window=2))
-    # highs 10,11,9,13 ; closes 9,10,8,12
     ups = _updates(up, [mk(0, 0, 10, 0, 9), mk(1, 0, 11, 0, 10),
                         mk(2, 0, 9, 0, 8), mk(3, 0, 13, 0, 12)])
     assert not ups[0].value.is_ready and not ups[1].value.is_ready
@@ -151,7 +148,6 @@ def test_breakout_up_and_down():
     assert ups[3].value.value is True    # close 12 > max(11,9)=11 ? yes
 
     dn = _feature(feat_api.breakout_down_spec("bo_dn", window=2))
-    # lows 10,9,11,5 ; closes 11,10,12,4
     dns = _updates(dn, [mk(0, 0, 0, 10, 11), mk(1, 0, 0, 9, 10),
                         mk(2, 0, 0, 11, 12), mk(3, 0, 0, 5, 4)])
     assert dns[2].value.value is False   # close 12 < min(10,9)=9 ? no
@@ -174,9 +170,8 @@ def test_volatility_ratio_constant_prices():
     f = _feature(feat_api.volatility_ratio_spec("vr", short_window=2, long_window=3))
     out = _updates(f, [mk(i, 0, 0, 0, 100.0) for i in range(5)])
     assert not out[2].value.is_ready
-    # constant prices -> all log-returns 0 -> 0 / max(0, eps) = 0.0
     assert out[-1].value.is_ready
-    assert out[-1].value.value == pytest.approx(0.0)
+    assert out[-1].value.value == pytest.approx(0.0)  # 0 / max(0, eps)
 
 
 def test_bollinger_width_and_percent_b():
@@ -239,9 +234,8 @@ def test_vwap_distance_session_and_divzero():
     out = _updates(f, [mk(0, 0, 0, 0, 10, v=2), mk(1, 0, 0, 0, 20, v=2)])
     assert out[0].value.value == pytest.approx(0.0)          # vwap == close
     assert out[1].value.value == pytest.approx(20 / 15 - 1)  # vwap=(10*2+20*2)/4=15
-    # zero volume -> vwap undefined -> not ready
     g = _feature(feat_api.vwap_distance_spec("vd0"))
-    assert not g.update(mk(0, 0, 0, 0, 10, v=0)).value.is_ready
+    assert not g.update(mk(0, 0, 0, 0, 10, v=0)).value.is_ready  # zero volume
 
 
 # ---------------------------------------------------------------------------
@@ -249,8 +243,7 @@ def test_vwap_distance_session_and_divzero():
 # ---------------------------------------------------------------------------
 
 def test_missing_field_multi_field_features():
-    # No high/low on the event -> not ready, no crash.
-    ev = SimpleNamespace(close=10.0, event_time_ns=0)
+    ev = SimpleNamespace(close=10.0, event_time_ns=0)  # no high/low
     for spec in (
         feat_api.rolling_range_spec("a"),
         feat_api.candle_body_ratio_spec("b"),
@@ -320,17 +313,15 @@ def test_every_builder_spec_is_buildable_by_registry():
 def test_state_dict_round_trip_atr():
     spec = feat_api.atr_spec("atr_rt", window=2)
     a = _feature(spec)
-    bars = [mk(0, 9, 10, 8, 9), mk(1, 9, 11, 9, 10), mk(2, 9, 12, 7, 8)]
-    for b in bars:
+    for b in [mk(0, 9, 10, 8, 9), mk(1, 9, 11, 9, 10), mk(2, 9, 12, 7, 8)]:
         a.update(b)
-    snap = a.state_dict()
     b2 = _feature(spec)
-    b2.load_state_dict(snap)
+    b2.load_state_dict(a.state_dict())
     assert b2.is_ready
     assert b2.value.value == pytest.approx(a.value.value)
 
 
-def test_no_nautilus_import_in_compute():
+def test_no_nautilus_import_in_feature_library():
     """The compute feature library must never import nautilus_trader.
 
     Checks for actual import statements (a passing mention in a comment is fine).
@@ -339,10 +330,18 @@ def test_no_nautilus_import_in_compute():
 
     import feature_engine.builders as builders_mod
     import feature_engine.compute.backend as backend_mod
+    import feature_engine.compute.feature_lib as lib_pkg
+    import feature_engine.compute.feature_lib.base as lib_base
+    import feature_engine.compute.feature_lib.normalization as lib_norm
+    import feature_engine.compute.feature_lib.price_action as lib_price
+    import feature_engine.compute.feature_lib.returns as lib_returns
+    import feature_engine.compute.feature_lib.volatility as lib_vol
+    import feature_engine.compute.feature_lib.volume as lib_volume
     import feature_engine.compute.features as features_mod
     import feature_engine.compute.state as state_mod
 
-    for mod in (features_mod, backend_mod, state_mod, builders_mod):
+    for mod in (lib_pkg, lib_base, lib_price, lib_returns, lib_vol, lib_volume,
+                lib_norm, features_mod, backend_mod, state_mod, builders_mod):
         src = inspect.getsource(mod)
         assert "import nautilus_trader" not in src, mod.__name__
         assert "from nautilus_trader" not in src, mod.__name__
