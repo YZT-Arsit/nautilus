@@ -25,7 +25,29 @@ SpecFeatureEngine
 rolling_mean_spec
     Convenience builder for a rolling-mean ``FeatureSpec`` (hides ``params``).
 """
-from feature_engine.builders import rolling_mean_spec
+from feature_engine.builders import (
+    atr_spec,
+    bollinger_percent_b_spec,
+    bollinger_width_spec,
+    breakout_down_spec,
+    breakout_up_spec,
+    candle_body_ratio_spec,
+    drawdown_from_rolling_high_spec,
+    lower_shadow_ratio_spec,
+    momentum_n_spec,
+    price_position_spec,
+    quote_volume_spec,
+    return_n_spec,
+    rolling_mean_spec,
+    rolling_range_spec,
+    true_range_spec,
+    upper_shadow_ratio_spec,
+    volatility_ratio_spec,
+    volume_ratio_spec,
+    volume_zscore_spec,
+    vwap_distance_spec,
+    zscore_spec,
+)
 from feature_engine.compute import (
     FeatureSnapshot,
     FeatureSpec,
@@ -39,4 +61,25 @@ __all__ = [
     "FeatureSnapshot",
     "SpecFeatureEngine",
     "rolling_mean_spec",
+    # OHLCV feature-library builders
+    "rolling_range_spec",
+    "true_range_spec",
+    "candle_body_ratio_spec",
+    "upper_shadow_ratio_spec",
+    "lower_shadow_ratio_spec",
+    "return_n_spec",
+    "momentum_n_spec",
+    "price_position_spec",
+    "drawdown_from_rolling_high_spec",
+    "breakout_up_spec",
+    "breakout_down_spec",
+    "atr_spec",
+    "volatility_ratio_spec",
+    "bollinger_width_spec",
+    "bollinger_percent_b_spec",
+    "zscore_spec",
+    "volume_zscore_spec",
+    "volume_ratio_spec",
+    "quote_volume_spec",
+    "vwap_distance_spec",
 ]

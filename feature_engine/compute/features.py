@@ -1247,3 +1247,988 @@ class RollingStdDerivedFeature(_AbstractDerivedFeature):
             self._cached = FeatureValue(
                 name=self._spec.name, value=self._state.std, is_ready=True,
             )
+
+
+# ===========================================================================
+# OHLCV feature library (pure Python; no nautilus_trader)
+# ===========================================================================
+#
+# A set of common technical features computed incrementally from bar events.
+# Each is a self-contained _AbstractFeature subclass: it reads bar fields
+# directly (open/high/low/close/volume), keeps its own RollingWindowState /
+# VWAPState, guards division by zero with _EPS, and reports not_ready until it
+# has enough history.  Formulas reference standard indicator definitions
+# (TA-Lib / common technical analysis) but the maths is implemented here in
+# plain Python — no Nautilus indicators are used.
+#
+# Categories:
+#   A. price / bar structure   — rolling_range, true_range, candle_body_ratio,
+#                                 upper_shadow_ratio, lower_shadow_ratio
+#   B. trend / momentum        — return_n, momentum_n, price_position,
+#                                 drawdown_from_rolling_high, breakout_up,
+#                                 breakout_down
+#   C. volatility              — atr, volatility_ratio, bollinger_width,
+#                                 bollinger_percent_b
+#   D. normalization / volume  — zscore, volume_zscore, volume_ratio,
+#                                 quote_volume, vwap_distance
+# ---------------------------------------------------------------------------
+
+# Small constant used to guard divisions (matches the spec's ``max(denom, eps)``).
+_EPS = 1e-12
+
+
+def _bar_field(event: Any, name: str) -> float | None:
+    """Alias of _field for readability in OHLCV features."""
+    return _field(event, name)
+
+
+# ---------------------------------------------------------------------------
+# A. Price / bar-structure features (single bar, ready after 1 event)
+# ---------------------------------------------------------------------------
+
+class RollingRangeFeature(_AbstractFeature):
+    """Intrabar range: ``high - low`` for the current bar."""
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        high = _bar_field(event, "high")
+        low = _bar_field(event, "low")
+        if high is None or low is None:
+            return self._no_change()
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        return self._emit(
+            high - low, True, triggered,
+            source_event_time_ns=ts_ns, update_status="updated",
+        )
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+
+
+class TrueRangeFeature(_AbstractFeature):
+    """True range: ``max(high-low, |high-prev_close|, |low-prev_close|)``.
+
+    On the first bar (no previous close) the true range is ``high - low``.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._prev_close: float | None = None
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._prev_close = None
+        self._reset_base()
+
+    def _true_range(self, high: float, low: float) -> float:
+        if self._prev_close is None:
+            return high - low
+        return max(
+            high - low,
+            abs(high - self._prev_close),
+            abs(low - self._prev_close),
+        )
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        high = _bar_field(event, "high")
+        low = _bar_field(event, "low")
+        close = _bar_field(event, "close")
+        if high is None or low is None or close is None:
+            return self._no_change()
+        tr = self._true_range(high, low)
+        self._prev_close = close
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        return self._emit(
+            tr, True, triggered,
+            source_event_time_ns=ts_ns, update_status="updated",
+        )
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "prev_close": self._prev_close}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._prev_close = state.get("prev_close")
+
+
+class CandleBodyRatioFeature(_AbstractFeature):
+    """Body / range: ``|close - open| / max(high - low, eps)``."""
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        o = _bar_field(event, "open")
+        h = _bar_field(event, "high")
+        low = _bar_field(event, "low")
+        c = _bar_field(event, "close")
+        if None in (o, h, low, c):
+            return self._no_change()
+        ratio = abs(c - o) / max(h - low, _EPS)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        return self._emit(
+            ratio, True, triggered,
+            source_event_time_ns=ts_ns, update_status="updated",
+        )
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+
+
+class UpperShadowRatioFeature(_AbstractFeature):
+    """Upper shadow / range: ``(high - max(open, close)) / max(high - low, eps)``."""
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        o = _bar_field(event, "open")
+        h = _bar_field(event, "high")
+        low = _bar_field(event, "low")
+        c = _bar_field(event, "close")
+        if None in (o, h, low, c):
+            return self._no_change()
+        ratio = (h - max(o, c)) / max(h - low, _EPS)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        return self._emit(
+            ratio, True, triggered,
+            source_event_time_ns=ts_ns, update_status="updated",
+        )
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+
+
+class LowerShadowRatioFeature(_AbstractFeature):
+    """Lower shadow / range: ``(min(open, close) - low) / max(high - low, eps)``."""
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        o = _bar_field(event, "open")
+        h = _bar_field(event, "high")
+        low = _bar_field(event, "low")
+        c = _bar_field(event, "close")
+        if None in (o, h, low, c):
+            return self._no_change()
+        ratio = (min(o, c) - low) / max(h - low, _EPS)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        return self._emit(
+            ratio, True, triggered,
+            source_event_time_ns=ts_ns, update_status="updated",
+        )
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+
+
+# ---------------------------------------------------------------------------
+# B. Trend / momentum features
+# ---------------------------------------------------------------------------
+
+class ReturnNFeature(_AbstractFeature):
+    """N-bar simple return: ``close / close[-n] - 1`` (``window`` == n)."""
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        n = spec.window or 1
+        self._n = n
+        self._state = RollingWindowState(maxlen=n + 1)
+        self._field_name = spec.input_field or "close"
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._n + 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        cur = _bar_field(event, self._field_name)
+        if cur is None:
+            return self._missing_field(self._field_name)
+        self._state.push(cur)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        if not self._state.is_full:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        past = self._state.values[0]
+        if abs(past) < _EPS:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        return self._emit(cur / past - 1.0, True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+
+
+class MomentumNFeature(_AbstractFeature):
+    """N-bar momentum: ``close - close[-n]`` (``window`` == n)."""
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        n = spec.window or 1
+        self._n = n
+        self._state = RollingWindowState(maxlen=n + 1)
+        self._field_name = spec.input_field or "close"
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._n + 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        cur = _bar_field(event, self._field_name)
+        if cur is None:
+            return self._missing_field(self._field_name)
+        self._state.push(cur)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full
+        value = (cur - self._state.values[0]) if ready else None
+        return self._emit(value, ready, triggered,
+                          source_event_time_ns=ts_ns,
+                          update_status="updated" if ready else "not_ready")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+
+
+class PricePositionFeature(_AbstractFeature):
+    """Stochastic-style position of close within the n-bar high/low range::
+
+        (close - rolling_min(low, n)) / max(rolling_max(high, n) - rolling_min(low, n), eps)
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        n = spec.window or 1
+        self._low_state = RollingWindowState(maxlen=n)
+        self._high_state = RollingWindowState(maxlen=n)
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._spec.window or 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._low_state.is_full and self._high_state.is_full
+
+    def reset(self) -> None:
+        self._low_state.reset()
+        self._high_state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        h = _bar_field(event, "high")
+        low = _bar_field(event, "low")
+        c = _bar_field(event, "close")
+        if None in (h, low, c):
+            return self._no_change()
+        self._low_state.push(low)
+        self._high_state.push(h)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self.is_ready
+        if not ready:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        lo = self._low_state.min
+        hi = self._high_state.max
+        pos = (c - lo) / max(hi - lo, _EPS)
+        return self._emit(pos, True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return {
+            **self._base_state(),
+            "low": self._low_state.state_dict(),
+            "high": self._high_state.state_dict(),
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._low_state.load_state_dict(state["low"])
+        self._high_state.load_state_dict(state["high"])
+
+
+class DrawdownFromRollingHighFeature(_AbstractFeature):
+    """Drawdown from the rolling high: ``close / rolling_max(close, n) - 1``."""
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 1)
+        self._field_name = spec.input_field or "close"
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._spec.window or 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        c = _bar_field(event, self._field_name)
+        if c is None:
+            return self._missing_field(self._field_name)
+        self._state.push(c)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full
+        if not ready:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        roll_max = self._state.max
+        value = c / max(roll_max, _EPS) - 1.0
+        return self._emit(value, True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+
+
+class BreakoutUpFeature(_AbstractFeature):
+    """Breakout up: ``close > previous rolling_max(high, n)`` (bool, 1.0/0.0-style).
+
+    "Previous" means the rolling max of the prior n highs, evaluated **before**
+    the current bar's high is included, so the current bar cannot break out
+    against itself.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 1)
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=(self._spec.window or 1) + 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        h = _bar_field(event, "high")
+        c = _bar_field(event, "close")
+        if h is None or c is None:
+            return self._no_change()
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full  # n prior highs available
+        if ready:
+            prev_max = self._state.max
+            result: bool | None = c > prev_max
+        else:
+            result = None
+        self._state.push(h)  # current high becomes "previous" for the next bar
+        return self._emit(result, ready, triggered,
+                          source_event_time_ns=ts_ns,
+                          update_status="updated" if ready else "not_ready")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+
+
+class BreakoutDownFeature(_AbstractFeature):
+    """Breakout down: ``close < previous rolling_min(low, n)`` (bool)."""
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 1)
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=(self._spec.window or 1) + 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        low = _bar_field(event, "low")
+        c = _bar_field(event, "close")
+        if low is None or c is None:
+            return self._no_change()
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full
+        if ready:
+            prev_min = self._state.min
+            result: bool | None = c < prev_min
+        else:
+            result = None
+        self._state.push(low)
+        return self._emit(result, ready, triggered,
+                          source_event_time_ns=ts_ns,
+                          update_status="updated" if ready else "not_ready")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+
+
+# ---------------------------------------------------------------------------
+# C. Volatility features
+# ---------------------------------------------------------------------------
+
+class AtrFeature(_AbstractFeature):
+    """Average True Range: rolling mean of true range over ``window`` bars.
+
+    Uses a simple moving average of the true range (the spec's definition),
+    not Wilder's smoothing.  The first bar's true range is ``high - low``.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 1)
+        self._prev_close: float | None = None
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._spec.window or 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._prev_close = None
+        self._reset_base()
+
+    def _true_range(self, high: float, low: float) -> float:
+        if self._prev_close is None:
+            return high - low
+        return max(
+            high - low,
+            abs(high - self._prev_close),
+            abs(low - self._prev_close),
+        )
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        h = _bar_field(event, "high")
+        low = _bar_field(event, "low")
+        c = _bar_field(event, "close")
+        if None in (h, low, c):
+            return self._no_change()
+        tr = self._true_range(h, low)
+        self._prev_close = c
+        self._state.push(tr)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full
+        return self._emit(self._state.mean if ready else None, ready, triggered,
+                          source_event_time_ns=ts_ns,
+                          update_status="updated" if ready else "not_ready")
+
+    def state_dict(self) -> dict:
+        return {
+            **self._base_state(),
+            "rolling": self._state.state_dict(),
+            "prev_close": self._prev_close,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+        self._prev_close = state.get("prev_close")
+        if self._state.is_full:
+            self._cached = FeatureValue(
+                name=self._spec.name, value=self._state.mean, is_ready=True,
+            )
+
+
+class VolatilityRatioFeature(_AbstractFeature):
+    """Short/long realized-volatility ratio::
+
+        std(logret, short) / max(std(logret, long), eps)
+
+    Realized volatility is the sample std of log close-to-close returns.
+
+    Parameters (from ``params``)
+    -----------------------------
+    short_window : int   — short volatility window (default 5).
+    long_window  : int   — long volatility window (default 20).
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._short = int(spec.params.get("short_window", 5))
+        self._long = int(spec.params.get("long_window", 20))
+        self._short_state = RollingWindowState(maxlen=self._short, track_squares=True)
+        self._long_state = RollingWindowState(maxlen=self._long, track_squares=True)
+        self._prev: float | None = None
+        self._field_name = spec.input_field or "close"
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._long + 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._short_state.is_full and self._long_state.is_full
+
+    def reset(self) -> None:
+        self._short_state.reset()
+        self._long_state.reset()
+        self._prev = None
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        cur = _bar_field(event, self._field_name)
+        if cur is None:
+            return self._missing_field(self._field_name)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        if self._prev is None or self._prev <= 0.0 or cur <= 0.0:
+            self._prev = cur
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        log_ret = math.log(cur / self._prev)
+        self._prev = cur
+        self._short_state.push(log_ret)
+        self._long_state.push(log_ret)
+        ready = self.is_ready
+        if not ready:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        short_vol = self._short_state.std or 0.0
+        long_vol = self._long_state.std or 0.0
+        ratio = short_vol / max(long_vol, _EPS)
+        return self._emit(ratio, True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return {
+            **self._base_state(),
+            "short": self._short_state.state_dict(),
+            "long": self._long_state.state_dict(),
+            "prev": self._prev,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._short_state.load_state_dict(state["short"])
+        self._long_state.load_state_dict(state["long"])
+        self._prev = state.get("prev")
+
+
+class _BollingerBase(_AbstractFeature):
+    """Shared state for Bollinger-band features: rolling mean/std of close.
+
+    Parameters (from ``params``)
+    -----------------------------
+    k : float   — number of standard deviations for the bands (default 2.0).
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 2, track_squares=True)
+        self._k = float(spec.params.get("k", 2.0))
+        self._field_name = spec.input_field or "close"
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._spec.window or 2, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def _compute(self, close: float) -> float:  # pragma: no cover - overridden
+        raise NotImplementedError
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        c = _bar_field(event, self._field_name)
+        if c is None:
+            return self._missing_field(self._field_name)
+        self._state.push(c)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full
+        if not ready:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        return self._emit(self._compute(c), True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+
+
+class BollingerWidthFeature(_BollingerBase):
+    """Bollinger band width: ``(upper - lower) / max(middle, eps)`` = ``2k*std / max(mean, eps)``."""
+
+    def _compute(self, close: float) -> float:
+        middle = self._state.mean or 0.0
+        std = self._state.std or 0.0
+        return (2.0 * self._k * std) / max(middle, _EPS)
+
+
+class BollingerPercentBFeature(_BollingerBase):
+    """Bollinger %B: ``(close - lower) / max(upper - lower, eps)``."""
+
+    def _compute(self, close: float) -> float:
+        middle = self._state.mean or 0.0
+        std = self._state.std or 0.0
+        lower = middle - self._k * std
+        band = 2.0 * self._k * std
+        return (close - lower) / max(band, _EPS)
+
+
+# ---------------------------------------------------------------------------
+# D. Normalization / volume features
+# ---------------------------------------------------------------------------
+
+class ZScoreFeature(_AbstractFeature):
+    """Rolling z-score: ``(x - rolling_mean(x, n)) / max(rolling_std(x, n), eps)``.
+
+    ``x`` is ``spec.input_field`` (default ``"close"``).
+    """
+
+    _DEFAULT_FIELD = "close"
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 2, track_squares=True)
+        self._field_name = spec.input_field or self._DEFAULT_FIELD
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._spec.window or 2, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        v = _bar_field(event, self._field_name)
+        if v is None:
+            return self._missing_field(self._field_name)
+        self._state.push(v)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full
+        if not ready:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        mean = self._state.mean or 0.0
+        std = self._state.std or 0.0
+        z = (v - mean) / max(std, _EPS)
+        return self._emit(z, True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+
+
+class VolumeZScoreFeature(ZScoreFeature):
+    """Z-score of volume: ``ZScoreFeature`` with default ``input_field="volume"``."""
+
+    _DEFAULT_FIELD = "volume"
+
+
+class VolumeRatioFeature(_AbstractFeature):
+    """Volume ratio: ``volume / max(rolling_mean(volume, n), eps)``."""
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = RollingWindowState(maxlen=spec.window or 1)
+        self._field_name = spec.input_field or "volume"
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._spec.window or 1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._state.is_full
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        v = _bar_field(event, self._field_name)
+        if v is None:
+            return self._missing_field(self._field_name)
+        self._state.push(v)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self._state.is_full
+        if not ready:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        mean = self._state.mean or 0.0
+        ratio = v / max(mean, _EPS)
+        return self._emit(ratio, True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "rolling": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["rolling"])
+
+
+class QuoteVolumeFeature(_AbstractFeature):
+    """Quote (notional) volume.
+
+    Reads ``quote_volume`` from the event when present; otherwise falls back to
+    ``close * volume``.
+    """
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=1, unit="bars")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        qv = _bar_field(event, "quote_volume")
+        if qv is None:
+            close = _bar_field(event, "close")
+            volume = _bar_field(event, "volume")
+            if close is None or volume is None:
+                return self._no_change()
+            qv = close * volume
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        return self._emit(qv, True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return self._base_state()
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+
+
+class VwapDistanceFeature(_AbstractFeature):
+    """Distance of close from VWAP: ``close / max(vwap, eps) - 1``.
+
+    VWAP is computed internally (session by default, or a rolling count/time
+    window via ``window`` / ``window_unit``).  Reuses VWAPState.
+
+    Parameters (from ``params``)
+    -----------------------------
+    price_field  : str   — VWAP price field (default "close").
+    volume_field : str   — VWAP volume field (default "volume").
+    """
+
+    _NS_PER_UNIT = VWAPFeature._NS_PER_UNIT
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        window = spec.window
+        unit = spec.window_unit or "bars"
+        window_ns: int | None = None
+        count_window: int | None = None
+        if window is not None:
+            if unit in self._NS_PER_UNIT:
+                window_ns = window * self._NS_PER_UNIT[unit]
+            else:
+                count_window = window
+        self._state = VWAPState(window=count_window, window_ns=window_ns)
+        self._price_field = spec.params.get("price_field", "close")
+        self._volume_field = spec.params.get("volume_field", "volume")
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(n_events=self._spec.window or 1,
+                                 unit=self._spec.window_unit or "bars", mandatory=False)
+
+    @property
+    def is_ready(self) -> bool:
+        return self._cached.is_ready
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        price = _bar_field(event, self._price_field)
+        close = _bar_field(event, "close")
+        volume = _bar_field(event, self._volume_field)
+        if price is None or close is None or volume is None:
+            return self._no_change()
+        self._state.push(price, volume, ts_ns=ts_ns)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        vwap = self._state.vwap
+        if vwap is None:
+            return self._emit(None, False, triggered,
+                              source_event_time_ns=ts_ns, update_status="not_ready")
+        value = close / max(vwap, _EPS) - 1.0
+        return self._emit(value, True, triggered,
+                          source_event_time_ns=ts_ns, update_status="updated")
+
+    def state_dict(self) -> dict:
+        return {**self._base_state(), "vwap": self._state.state_dict()}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["vwap"])

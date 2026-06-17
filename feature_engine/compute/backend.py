@@ -35,17 +35,30 @@ from typing import Protocol, runtime_checkable
 
 from feature_engine.compute.feature_base import FeatureBase
 from feature_engine.compute.features import (
+    AtrFeature,
+    BollingerPercentBFeature,
+    BollingerWidthFeature,
     BookImbalanceFeature,
+    BreakoutDownFeature,
+    BreakoutUpFeature,
+    CandleBodyRatioFeature,
     DifferenceDerivedFeature,
+    DrawdownFromRollingHighFeature,
     EWMAFeature,
     LogReturnFeature,
+    LowerShadowRatioFeature,
     MidPriceFeature,
+    MomentumNFeature,
+    PricePositionFeature,
     ProductDerivedFeature,
+    QuoteVolumeFeature,
     RatioDerivedFeature,
     RealizedVolatilityFeature,
+    ReturnNFeature,
     RollingMaxFeature,
     RollingMeanFeature,
     RollingMinFeature,
+    RollingRangeFeature,
     RollingStdDerivedFeature,
     RollingStdFeature,
     RollingSumFeature,
@@ -53,7 +66,14 @@ from feature_engine.compute.features import (
     SimpleReturnFeature,
     SpreadFeature,
     SumDerivedFeature,
+    TrueRangeFeature,
+    UpperShadowRatioFeature,
+    VolatilityRatioFeature,
+    VolumeRatioFeature,
+    VolumeZScoreFeature,
     VWAPFeature,
+    VwapDistanceFeature,
+    ZScoreFeature,
 )
 from feature_engine.compute.spec import FeatureSpec
 
@@ -96,6 +116,31 @@ _FEATURE_CLASSES: dict[str, type] = {
     "sum": SumDerivedFeature,
     "product": ProductDerivedFeature,
     "rolling_std_derived": RollingStdDerivedFeature,
+    # OHLCV feature library (pure Python; input_type="bar")
+    # A. price / bar structure
+    "rolling_range": RollingRangeFeature,
+    "true_range": TrueRangeFeature,
+    "candle_body_ratio": CandleBodyRatioFeature,
+    "upper_shadow_ratio": UpperShadowRatioFeature,
+    "lower_shadow_ratio": LowerShadowRatioFeature,
+    # B. trend / momentum
+    "return_n": ReturnNFeature,
+    "momentum_n": MomentumNFeature,
+    "price_position": PricePositionFeature,
+    "drawdown_from_rolling_high": DrawdownFromRollingHighFeature,
+    "breakout_up": BreakoutUpFeature,
+    "breakout_down": BreakoutDownFeature,
+    # C. volatility
+    "atr": AtrFeature,
+    "volatility_ratio": VolatilityRatioFeature,
+    "bollinger_width": BollingerWidthFeature,
+    "bollinger_percent_b": BollingerPercentBFeature,
+    # D. normalization / volume
+    "zscore": ZScoreFeature,
+    "volume_zscore": VolumeZScoreFeature,
+    "volume_ratio": VolumeRatioFeature,
+    "quote_volume": QuoteVolumeFeature,
+    "vwap_distance": VwapDistanceFeature,
 }
 
 # Sorted longest-first to avoid prefix ambiguity (e.g. "rolling_std" vs "rolling_std_dev")
