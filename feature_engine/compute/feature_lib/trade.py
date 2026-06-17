@@ -30,6 +30,7 @@ from feature_engine.compute.feature_lib.base import (
     _bar_field,
     _ts_ns,
     FeatureUpdate,
+    FeatureValue,
     RollingWindowState,
     VWAPState,
     WarmupRequirement,
@@ -38,6 +39,19 @@ from feature_engine.compute.spec import FeatureSpec
 from feature_engine.compute.state import TimeWindowState
 
 _BUY, _SELL = "BUY", "SELL"
+
+
+def _restore_cached(feature: _AbstractFeature, value: float | None, ready: bool) -> None:
+    """Rebuild ``feature._cached`` after a state restore.
+
+    ``_load_base`` resets the cache to ``value=None, is_ready=False``; the legacy
+    OHLCV features rebuild it from the restored state so that, after a warm
+    restart, ``feature.value`` stays consistent with ``feature.is_ready``.  Trade
+    features must do the same.  When not ready we leave the not-ready default
+    that ``_load_base`` already installed.
+    """
+    if ready:
+        feature._cached = FeatureValue(name=feature._spec.name, value=value, is_ready=True)
 
 
 def _trade_side(event: Any) -> str | None:
@@ -100,6 +114,9 @@ class TradeCountFeature(_AbstractFeature):
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
         self._state.load_state_dict(state["tw"])
+        # update() always emits ready=True; restored-ready iff it had any event.
+        ready = self._event_count > 0
+        _restore_cached(self, float(self._state.count) if ready else None, ready)
 
 
 class TradeIntensityFeature(_AbstractFeature):
@@ -139,6 +156,10 @@ class TradeIntensityFeature(_AbstractFeature):
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
         self._state.load_state_dict(state["tw"])
+        # update() always emits ready=True; restored-ready iff it had any event.
+        ready = self._event_count > 0
+        intensity = self._state.count / max(self._window_seconds, _EPS)
+        _restore_cached(self, intensity if ready else None, ready)
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +211,9 @@ class TradeVolumeSumFeature(_AbstractFeature):
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
         self._state.load_state_dict(state["rolling"])
+        ready = self._state.is_full
+        # self._value() is overridden by AvgTradeSizeFeature (mean vs sum).
+        _restore_cached(self, self._value() if ready else None, ready)
 
 
 class AvgTradeSizeFeature(TradeVolumeSumFeature):
@@ -242,6 +266,8 @@ class TradeQuoteVolumeSumFeature(_AbstractFeature):
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
         self._state.load_state_dict(state["rolling"])
+        ready = self._state.is_full
+        _restore_cached(self, self._state.sum if ready else None, ready)
 
 
 class SignedTradeVolumeFeature(_AbstractFeature):
@@ -285,6 +311,8 @@ class SignedTradeVolumeFeature(_AbstractFeature):
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
         self._state.load_state_dict(state["rolling"])
+        ready = self._state.is_full
+        _restore_cached(self, self._state.sum if ready else None, ready)
 
 
 class TradeImbalanceFeature(_AbstractFeature):
@@ -338,6 +366,11 @@ class TradeImbalanceFeature(_AbstractFeature):
         self._load_base(state)
         self._buy.load_state_dict(state["buy"])
         self._sell.load_state_dict(state["sell"])
+        ready = self.is_ready
+        if ready:
+            buy_vol, sell_vol = self._buy.sum, self._sell.sum
+            imb = (buy_vol - sell_vol) / max(buy_vol + sell_vol, _EPS)
+            _restore_cached(self, imb, True)
 
 
 class TradeVWAPFeature(_AbstractFeature):
@@ -381,6 +414,8 @@ class TradeVWAPFeature(_AbstractFeature):
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
         self._state.load_state_dict(state["vwap"])
+        ready = self._state.count >= self._n and self._state.vwap is not None
+        _restore_cached(self, self._state.vwap if ready else None, ready)
 
 
 class LargeTradeRatioFeature(_AbstractFeature):
@@ -436,3 +471,6 @@ class LargeTradeRatioFeature(_AbstractFeature):
     def load_state_dict(self, state: dict) -> None:
         self._load_base(state)
         self._state.load_state_dict(state["rolling"])
+        ready = self._state.is_full
+        ratio = self._state.sum / max(float(self._state.count), _EPS)
+        _restore_cached(self, ratio if ready else None, ready)

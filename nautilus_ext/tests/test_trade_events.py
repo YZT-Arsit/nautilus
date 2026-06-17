@@ -89,6 +89,7 @@ def _write_standard_trades(root, n=20):
         table, base_dir=str(root), format="parquet",
         partitioning=["exchange", "venue_type", "symbol", "data_type", "date"],
         partitioning_flavor="hive",
+        existing_data_behavior="overwrite_or_ignore",
     )
     return n
 
@@ -121,6 +122,7 @@ def _write_bars_5m(root, n=10):
         table, base_dir=str(root), format="parquet",
         partitioning=["exchange", "venue_type", "symbol", "bar_type", "date"],
         partitioning_flavor="hive",
+        existing_data_behavior="overwrite_or_ignore",
     )
     return n
 

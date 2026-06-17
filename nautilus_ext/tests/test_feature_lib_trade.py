@@ -195,6 +195,60 @@ def test_state_dict_round_trip_trade_imbalance():
     assert b.value.value == pytest.approx(a.value.value)
 
 
+def _assert_value_equal(got, expected):
+    if expected is None:
+        assert got is None
+    else:
+        assert got == pytest.approx(expected)
+
+
+def _assert_round_trip(spec, events, next_event):
+    """After load_state_dict: value/is_ready match the source, the feature is
+    internally consistent (is_ready == value.is_ready), and a further update on
+    both features stays in lockstep (incremental state truly restored)."""
+    a = _feature(spec)
+    for e in events:
+        a.update(e)
+    b = _feature(spec)
+    b.load_state_dict(a.state_dict())
+    # restored value + readiness match the source feature
+    _assert_value_equal(b.value.value, a.value.value)
+    assert b.value.is_ready == a.value.is_ready
+    # internal consistency that the bug violated (was is_ready=True, value=None)
+    assert b.is_ready == b.value.is_ready
+    # continuing to stream the same next event keeps both in lockstep
+    ua = a.update(next_event)
+    ub = b.update(next_event)
+    assert ub.value.is_ready == ua.value.is_ready
+    _assert_value_equal(ub.value.value, ua.value.value)
+
+
+def test_state_dict_round_trip_trade_vwap():
+    # count-window feature: previously is_ready=True but value=None after restore.
+    _assert_round_trip(
+        feat_api.trade_vwap_spec("vw_rt", window=2),
+        [tr(0, 100, 2, "BUY"), tr(1, 110, 4, "SELL")],
+        tr(2, 120, 1, "BUY"),
+    )
+
+
+def test_state_dict_round_trip_trade_count():
+    # time-window feature: previously is_ready=False and value lost after restore.
+    _assert_round_trip(
+        feat_api.trade_count_spec("c_rt", window=3, window_unit="seconds"),
+        [tr(i, 100, 1, "BUY", ts_s=i) for i in range(3)],
+        tr(3, 100, 1, "BUY", ts_s=3),
+    )
+
+
+def test_state_dict_round_trip_trade_intensity():
+    _assert_round_trip(
+        feat_api.trade_intensity_spec("ti_rt", window=3, window_unit="seconds"),
+        [tr(i, 100, 1, "BUY", ts_s=i) for i in range(3)],
+        tr(3, 100, 1, "BUY", ts_s=3),
+    )
+
+
 def test_no_nautilus_import_in_trade_module():
     import inspect
 
