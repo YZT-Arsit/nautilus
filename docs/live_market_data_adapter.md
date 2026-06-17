@@ -76,9 +76,43 @@ combined-stream unwrap, unknown-message dropping, mock-source streaming, and a
 scan asserting **no** `nautilus_trader` and **no** network import (`websocket(s)`,
 `asyncio`, `urllib`, `aiohttp`) in the milestone-1 modules.
 
-## Not in this milestone
+## Milestone 2 — public market-data WebSocket source (bounded, read-only)
 
-Real async WS client (connect/subscribe/reconnect/heartbeat), a `data_engine`
-live source feeding a `feature_engine` online-update loop, account/order flow, and
-any Nautilus live-execution wiring. Each is a separate, later milestone — and the
-network transport will slot in behind the existing `MockMessageSource` seam.
+`data_engine/live/binance_ws_client.py` adds `BinancePublicWebSocketSource`: a
+minimal reader over Binance's **public** combined stream
+(`wss://stream.binance.com:9443/stream?streams=btcusdt@aggTrade/btcusdt@bookTicker`).
+It is **market-data only** — no API key, signature, account or order endpoint,
+and no `nautilus_trader`.
+
+- **Reuses the normalizer.** Every raw frame goes through the same
+  `LiveNormalizer` proven equivalent to the historical path (replay parity), so
+  live messages become the same `TradeEvent`/`QuoteEvent` model. Unknown/ack
+  frames still normalize to `None` and are counted as dropped.
+- **Bounded + clean disconnect.** `run_until(max_messages, timeout_seconds)`
+  (and `iter_messages(...)`) stop at the message cap **or** the wall-clock
+  timeout, whichever first; the transport is always `close()`d in a `finally`.
+  `disconnect_reason ∈ {max_messages, timeout, stream_closed}`.
+- **Injectable transport.** The socket is a `transport_factory` seam; the default
+  lazily imports `websocket-client` (the only network import, confined to this
+  module) and raises a clear, **gated** error if it is not installed. Unit tests
+  inject a fake transport + a deterministic clock, so they run fully offline.
+
+Smoke script (real network — run only when explicitly approved):
+
+```
+python scripts/run_binance_live_smoke.py --symbol BTCUSDT \
+  --streams aggTrade,bookTicker --max-messages 20 --timeout-seconds 20
+```
+prints connected stream, raw/normalized/trade/quote/dropped counts, first
+TradeEvent/QuoteEvent summaries, disconnect reason and elapsed seconds.
+
+Tests: `nautilus_ext/tests/test_live_binance_ws_client.py` — URL construction,
+max-messages cutoff, timeout cutoff (immediate + recv-timeout-then-deadline),
+stream-closed, raw→normalized counts, dropped unknown, clean close, and a scan
+asserting no account/order/trading reference and no `nautilus_trader` import.
+
+## Not yet built
+
+A `data_engine` live source feeding a `feature_engine` online-update loop, any
+account/order flow, and any Nautilus live-execution wiring. Each is a separate,
+later milestone.
