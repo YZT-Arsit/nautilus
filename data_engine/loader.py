@@ -12,7 +12,9 @@ from data_engine.sources.csv_bars import load_csv_bars
 from data_engine.sources.live_gateway import load_live_gateway
 from data_engine.sources.live_synthetic import load_live_synthetic
 from data_engine.sources.parquet_bars import load_parquet_bars
+from data_engine.sources.parquet_trades import load_parquet_trades
 from data_engine.sources.synthetic import load_synthetic_bars
+from data_engine.sources.synthetic_trades import load_synthetic_trades
 
 # mode -> loader. Register new sources here.
 _LOADERS = {
@@ -22,6 +24,10 @@ _LOADERS = {
     "hive_parquet_bars": load_parquet_bars,  # alias of parquet_bars
     "live_synthetic": load_live_synthetic,
     "live_gateway": load_live_gateway,
+    # Trade (tick) sources — produce TradeEvent, not BarEvent.
+    "synthetic_trades": load_synthetic_trades,
+    "parquet_trades": load_parquet_trades,
+    "hive_parquet_trades": load_parquet_trades,  # alias of parquet_trades
 }
 
 

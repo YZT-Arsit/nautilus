@@ -31,6 +31,17 @@ from feature_engine.compute.feature_lib.volatility import (
     TrueRangeFeature,
     VolatilityRatioFeature,
 )
+from feature_engine.compute.feature_lib.trade import (
+    AvgTradeSizeFeature,
+    LargeTradeRatioFeature,
+    SignedTradeVolumeFeature,
+    TradeCountFeature,
+    TradeImbalanceFeature,
+    TradeIntensityFeature,
+    TradeQuoteVolumeSumFeature,
+    TradeVolumeSumFeature,
+    TradeVWAPFeature,
+)
 from feature_engine.compute.feature_lib.volume import (
     QuoteVolumeFeature,
     VolumeRatioFeature,
@@ -64,4 +75,14 @@ __all__ = [
     "VolumeRatioFeature",
     "QuoteVolumeFeature",
     "VWAPDistanceFeature",
+    # trade (tick)
+    "TradeCountFeature",
+    "TradeVolumeSumFeature",
+    "TradeQuoteVolumeSumFeature",
+    "AvgTradeSizeFeature",
+    "SignedTradeVolumeFeature",
+    "TradeImbalanceFeature",
+    "TradeVWAPFeature",
+    "LargeTradeRatioFeature",
+    "TradeIntensityFeature",
 ]

@@ -71,9 +71,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Trading pair symbol (e.g., BTCUSDT)",
     )
     ap.add_argument(
+        "--data-type",
+        default="klines",
+        choices=["klines", "aggTrades"],
+        help="Data type to ingest (default: klines)",
+    )
+    ap.add_argument(
         "--interval",
-        required=True,
-        help="Bar interval (e.g., 1m, 5m, 15m, 1h, 4h, 1d)",
+        required=False,
+        default=None,
+        help="Bar interval (e.g., 1m, 5m, 15m, 1h, 4h, 1d). Required for klines.",
     )
     ap.add_argument(
         "--frequency",
@@ -134,10 +141,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Error: Invalid daily date format. Expected YYYY-MM-DD. {e}", file=sys.stderr)
                 return 1
 
+        is_trades = args.data_type == "aggTrades"
+        if not is_trades and not args.interval:
+            print("Error: --interval is required for --data-type klines", file=sys.stderr)
+            return 1
+
         print(f"[ingest_binance_vision] Starting import:")
+        print(f"  Data type: {args.data_type}")
         print(f"  Market: {args.market}")
         print(f"  Symbol: {args.symbol}")
-        print(f"  Interval: {args.interval}")
+        if not is_trades:
+            print(f"  Interval: {args.interval}")
         print(f"  Frequency: {args.frequency}")
         print(f"  Date range: {args.start} to {args.end}")
         print(f"  Output: {args.output}")
@@ -149,23 +163,34 @@ def main(argv: list[str] | None = None) -> int:
 
         # Import data
         importer = BinanceVisionImporter(timeout=args.timeout)
-        df = importer.import_period(
-            market=args.market,
-            symbol=args.symbol,
-            interval=args.interval,
-            frequency=args.frequency,
-            start_date=args.start,
-            end_date=args.end,
-        )
+        if is_trades:
+            df = importer.import_aggtrades_period(
+                market=args.market,
+                symbol=args.symbol,
+                frequency=args.frequency,
+                start_date=args.start,
+                end_date=args.end,
+            )
+            unit_label, price_field = "trades", "price"
+        else:
+            df = importer.import_period(
+                market=args.market,
+                symbol=args.symbol,
+                interval=args.interval,
+                frequency=args.frequency,
+                start_date=args.start,
+                end_date=args.end,
+            )
+            unit_label, price_field = "bars", "close"
 
-        print(f"[ingest_binance_vision] Imported {df.height} bars")
+        print(f"[ingest_binance_vision] Imported {df.height} {unit_label}")
         if df.height == 0:
-            print("Warning: No bars imported", file=sys.stderr)
+            print(f"Warning: No {unit_label} imported", file=sys.stderr)
             return 1
 
         # Show sample
         print(f"  Date range: {df['ts'].min()} to {df['ts'].max()}")
-        print(f"  Price range: {df['close'].min()} to {df['close'].max()}")
+        print(f"  Price range: {df[price_field].min()} to {df[price_field].max()}")
         print()
 
         if args.dry_run:
@@ -184,21 +209,23 @@ def main(argv: list[str] | None = None) -> int:
         output_root = Path(args.output)
         output_root.mkdir(parents=True, exist_ok=True)
 
-        # Define partitioning by exchange, venue_type, symbol, bar_type, and date
-        # Extract date from timestamp
+        # Extract the date partition column from the timestamp.
         df_with_date = df.with_columns([
             pl.col("ts").dt.strftime("%Y-%m-%d").alias("date")
         ])
+        if is_trades:
+            # Trade data has no bar_type; partition by data_type instead.
+            df_with_date = df_with_date.with_columns(
+                pl.lit("aggTrades").alias("data_type")
+            )
+            partitioning_cols = ["exchange", "venue_type", "symbol", "data_type", "date"]
+        else:
+            partitioning_cols = ["exchange", "venue_type", "symbol", "bar_type", "date"]
 
         # Convert to PyArrow table
         table = pa.table({
             col: df_with_date[col].to_list() for col in df_with_date.columns
         })
-        table = pa.table({
-            col: df_with_date[col].to_list() for col in df_with_date.columns
-        })
-
-        partitioning_cols = ["exchange", "venue_type", "symbol", "bar_type", "date"]
         existing_behavior = "overwrite_or_ignore" if args.overwrite else "error"
 
         print(f"[ingest_binance_vision] Writing to {output_root}")

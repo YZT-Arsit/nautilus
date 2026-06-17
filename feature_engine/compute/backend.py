@@ -55,21 +55,30 @@ from feature_engine.compute.features import (
     SumDerivedFeature,
     VWAPFeature,
 )
-# Modular OHLCV feature library (pure Python; kept out of the legacy features.py).
+# Modular feature library (pure Python; kept out of the legacy features.py).
 from feature_engine.compute.feature_lib import (
     ATRFeature,
+    AvgTradeSizeFeature,
     BollingerPercentBFeature,
     BollingerWidthFeature,
     BreakoutDownFeature,
     BreakoutUpFeature,
     CandleBodyRatioFeature,
     DrawdownFromRollingHighFeature,
+    LargeTradeRatioFeature,
     LowerShadowRatioFeature,
     MomentumNFeature,
     PricePositionFeature,
     QuoteVolumeFeature,
     ReturnNFeature,
     RollingRangeFeature,
+    SignedTradeVolumeFeature,
+    TradeCountFeature,
+    TradeImbalanceFeature,
+    TradeIntensityFeature,
+    TradeQuoteVolumeSumFeature,
+    TradeVolumeSumFeature,
+    TradeVWAPFeature,
     TrueRangeFeature,
     UpperShadowRatioFeature,
     VolatilityRatioFeature,
@@ -144,6 +153,16 @@ _FEATURE_CLASSES: dict[str, type] = {
     "volume_ratio": VolumeRatioFeature,
     "quote_volume": QuoteVolumeFeature,
     "vwap_distance": VWAPDistanceFeature,
+    # Trade (tick) features — input_type="trade"
+    "trade_count": TradeCountFeature,
+    "trade_volume_sum": TradeVolumeSumFeature,
+    "trade_quote_volume_sum": TradeQuoteVolumeSumFeature,
+    "avg_trade_size": AvgTradeSizeFeature,
+    "signed_trade_volume": SignedTradeVolumeFeature,
+    "trade_imbalance": TradeImbalanceFeature,
+    "trade_vwap": TradeVWAPFeature,
+    "large_trade_ratio": LargeTradeRatioFeature,
+    "trade_intensity": TradeIntensityFeature,
 }
 
 # Sorted longest-first to avoid prefix ambiguity (e.g. "rolling_std" vs "rolling_std_dev")

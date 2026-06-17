@@ -208,3 +208,87 @@ def vwap_distance_spec(
         params={"type": "vwap_distance",
                 "price_field": price_field, "volume_field": volume_field},
     )
+
+
+# ===========================================================================
+# Trade (tick) feature builders (input_type="trade")
+# ===========================================================================
+
+def trade_count_spec(
+    name: str, *, window: int, window_unit: str = "seconds",
+) -> FeatureSpec:
+    """Number of trades in the trailing time window."""
+    return FeatureSpec(
+        name, input_type="trade", window=window, window_unit=window_unit,
+        params={"type": "trade_count"},
+    )
+
+
+def trade_volume_sum_spec(
+    name: str, *, window: int, input_field: str = "quantity",
+) -> FeatureSpec:
+    """Rolling sum of ``quantity`` over the last N trades."""
+    return FeatureSpec(
+        name, input_type="trade", input_field=input_field, window=window,
+        params={"type": "trade_volume_sum"},
+    )
+
+
+def trade_quote_volume_sum_spec(name: str, *, window: int) -> FeatureSpec:
+    """Rolling sum of ``quote_quantity`` over the last N trades."""
+    return FeatureSpec(
+        name, input_type="trade", window=window,
+        params={"type": "trade_quote_volume_sum"},
+    )
+
+
+def avg_trade_size_spec(
+    name: str, *, window: int, input_field: str = "quantity",
+) -> FeatureSpec:
+    """Rolling mean of ``quantity`` over the last N trades."""
+    return FeatureSpec(
+        name, input_type="trade", input_field=input_field, window=window,
+        params={"type": "avg_trade_size"},
+    )
+
+
+def signed_trade_volume_spec(name: str, *, window: int) -> FeatureSpec:
+    """Rolling sum of signed quantity (+BUY, -SELL) over the last N trades."""
+    return FeatureSpec(
+        name, input_type="trade", window=window,
+        params={"type": "signed_trade_volume"},
+    )
+
+
+def trade_imbalance_spec(name: str, *, window: int) -> FeatureSpec:
+    """``(buy_vol - sell_vol) / max(buy_vol + sell_vol, eps)`` over the last N trades."""
+    return FeatureSpec(
+        name, input_type="trade", window=window,
+        params={"type": "trade_imbalance"},
+    )
+
+
+def trade_vwap_spec(name: str, *, window: int) -> FeatureSpec:
+    """Trade VWAP ``sum(price*qty)/sum(qty)`` over the last N trades."""
+    return FeatureSpec(
+        name, input_type="trade", window=window,
+        params={"type": "trade_vwap"},
+    )
+
+
+def large_trade_ratio_spec(name: str, *, window: int, threshold: float) -> FeatureSpec:
+    """Fraction of the last N trades with ``quantity >= threshold``."""
+    return FeatureSpec(
+        name, input_type="trade", window=window,
+        params={"type": "large_trade_ratio", "threshold": threshold},
+    )
+
+
+def trade_intensity_spec(
+    name: str, *, window: int, window_unit: str = "seconds",
+) -> FeatureSpec:
+    """Trades per second over the trailing time window: ``count / window_seconds``."""
+    return FeatureSpec(
+        name, input_type="trade", window=window, window_unit=window_unit,
+        params={"type": "trade_intensity"},
+    )

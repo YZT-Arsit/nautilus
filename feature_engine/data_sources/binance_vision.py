@@ -45,6 +45,31 @@ class StandardBar:
     ingested_at: datetime
 
 
+@dataclass(frozen=True)
+class StandardTrade:
+    """Standard trade (aggTrades) schema for normalized market data.
+
+    Trade data has no ``bar_type``; partitioning uses ``data_type`` instead.
+    ``side`` is the aggressor side derived from ``is_buyer_maker`` (Binance:
+    ``is_buyer_maker=True`` -> aggressive SELL, ``False`` -> aggressive BUY).
+    """
+    ts: datetime
+    exchange: str
+    venue_type: str
+    symbol: str
+    instrument_id: str
+    agg_trade_id: int
+    price: float
+    quantity: float
+    quote_quantity: float
+    first_trade_id: int
+    last_trade_id: int
+    is_buyer_maker: bool
+    side: str
+    source: str
+    ingested_at: datetime
+
+
 def build_binance_vision_kline_url(
     market: Market,
     symbol: str,
@@ -294,6 +319,183 @@ def normalize_binance_kline(
     return df.sort("ts")
 
 
+# ===========================================================================
+# aggTrades (trade data) — parallel to the kline path above
+# ===========================================================================
+
+def build_binance_vision_aggtrades_url(
+    market: Market,
+    symbol: str,
+    frequency: Frequency,
+    date: str,
+) -> str:
+    """Build a Binance Vision aggTrades download URL.
+
+    Example (spot daily)::
+
+        https://data.binance.vision/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2024-06-01.zip
+    """
+    if market not in ("spot", "futures_um", "futures_cm"):
+        raise ValueError(f"Invalid market: {market}. Must be spot|futures_um|futures_cm")
+
+    base_url = "https://data.binance.vision/data/spot"
+    if market == "futures_um":
+        base_url = "https://data.binance.vision/data/futures/um"
+    elif market == "futures_cm":
+        base_url = "https://data.binance.vision/data/futures/cm"
+
+    if frequency == "monthly":
+        if len(date) != 7 or date[4] != "-":
+            raise ValueError(f"Monthly date must be YYYY-MM format, got {date}")
+        return f"{base_url}/monthly/aggTrades/{symbol}/{symbol}-aggTrades-{date}.zip"
+    if len(date) != 10 or date[4] != "-" or date[7] != "-":
+        raise ValueError(f"Daily date must be YYYY-MM-DD format, got {date}")
+    return f"{base_url}/daily/aggTrades/{symbol}/{symbol}-aggTrades-{date}.zip"
+
+
+def _parse_bool(value: str) -> bool:
+    """Parse a Binance CSV boolean ('true'/'false', case-insensitive)."""
+    return str(value).strip().lower() in ("true", "1")
+
+
+def read_binance_aggtrades_zip(
+    url_or_bytes: str | bytes,
+    *,
+    timeout: int = 30,
+) -> list[dict]:
+    """Read Binance aggTrades CSV from a ZIP (URL or raw bytes).
+
+    Binance aggTrades CSV columns (no guaranteed header)::
+
+        aggTradeId, price, quantity, firstTradeId, lastTradeId,
+        transactTime(ms), isBuyerMaker[, isBestMatch]
+
+    Spot files carry the trailing ``isBestMatch``; futures files omit it. A
+    header row (if present) is detected and skipped (non-integer first field).
+    """
+    if isinstance(url_or_bytes, str):
+        try:
+            response = urlopen(url_or_bytes, timeout=timeout)
+            zip_bytes = response.read()
+        except HTTPError as e:
+            raise HTTPError(
+                url_or_bytes, e.code,
+                f"Download failed: {e.code} at {url_or_bytes}",
+                e.hdrs, e.fp,
+            ) from e
+    else:
+        zip_bytes = url_or_bytes
+
+    rows: list[dict] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            csv_files = [f for f in zf.namelist() if f.endswith(".csv")]
+            if not csv_files:
+                raise ValueError("No CSV file found in ZIP")
+            if len(csv_files) > 1:
+                warnings.warn(f"Multiple CSV files in ZIP, using first: {csv_files[0]}")
+            with zf.open(csv_files[0]) as f:
+                text_data = f.read().decode("utf-8")
+                for line in text_data.strip().split("\n"):
+                    if not line:
+                        continue
+                    fields = line.strip().split(",")
+                    if len(fields) < 7:
+                        continue
+                    try:
+                        agg_id = int(fields[0])
+                    except ValueError:
+                        # header row or malformed line — skip
+                        continue
+                    try:
+                        rows.append({
+                            "agg_trade_id": agg_id,
+                            "price": float(fields[1]),
+                            "quantity": float(fields[2]),
+                            "first_trade_id": int(fields[3]),
+                            "last_trade_id": int(fields[4]),
+                            "timestamp": int(fields[5]),
+                            "is_buyer_maker": _parse_bool(fields[6]),
+                            "is_best_match": _parse_bool(fields[7]) if len(fields) > 7 else None,
+                        })
+                    except (ValueError, IndexError) as e:
+                        warnings.warn(f"Failed to parse line: {line[:50]}... ({e})")
+    except zipfile.BadZipFile as e:
+        raise IOError("Invalid ZIP format") from e
+
+    return rows
+
+
+def normalize_binance_aggtrades(
+    rows: list[dict],
+    *,
+    market: Market,
+    symbol: str,
+    venue_type: str | None = None,
+) -> "pl.DataFrame":
+    """Normalize Binance aggTrades rows to the StandardTrade schema (polars).
+
+    ``quote_quantity = price * quantity``; ``side`` is derived from
+    ``is_buyer_maker`` (True -> SELL, False -> BUY); ``ts`` is a UTC
+    ``Datetime("us")``. Rows are validated to have monotonically increasing ``ts``.
+    """
+    if not rows:
+        raise ValueError("No rows to normalize")
+
+    import polars as pl  # noqa: PLC0415
+
+    venue = venue_type or market
+    ingested_at = datetime.utcnow()
+    unit = _detect_timestamp_unit(rows[0]["timestamp"])
+    factor = 1000 if unit == "ms" else 1_000_000
+
+    normalized_rows = []
+    for row in rows:
+        ts = datetime.utcfromtimestamp(row["timestamp"] / factor)
+        price = float(row["price"])
+        quantity = float(row["quantity"])
+        is_buyer_maker = bool(row["is_buyer_maker"])
+        normalized_rows.append({
+            "ts": ts,
+            "exchange": "BINANCE",
+            "venue_type": venue,
+            "symbol": symbol,
+            "instrument_id": symbol,
+            "agg_trade_id": int(row["agg_trade_id"]),
+            "price": price,
+            "quantity": quantity,
+            "quote_quantity": price * quantity,
+            "first_trade_id": int(row["first_trade_id"]),
+            "last_trade_id": int(row["last_trade_id"]),
+            "is_buyer_maker": is_buyer_maker,
+            "side": "SELL" if is_buyer_maker else "BUY",
+            "source": "binance_vision_aggTrades",
+            "ingested_at": ingested_at,
+        })
+
+    df = pl.DataFrame(normalized_rows, schema={
+        "ts": pl.Datetime("us"),
+        "exchange": pl.Utf8,
+        "venue_type": pl.Utf8,
+        "symbol": pl.Utf8,
+        "instrument_id": pl.Utf8,
+        "agg_trade_id": pl.Int64,
+        "price": pl.Float64,
+        "quantity": pl.Float64,
+        "quote_quantity": pl.Float64,
+        "first_trade_id": pl.Int64,
+        "last_trade_id": pl.Int64,
+        "is_buyer_maker": pl.Boolean,
+        "side": pl.Utf8,
+        "source": pl.Utf8,
+        "ingested_at": pl.Datetime("us"),
+    })
+
+    if not df["ts"].is_sorted():
+        df = df.sort("ts")
+    return df
+
+
 class BinanceVisionImporter:
     """High-level importer for Binance Vision historical data."""
 
@@ -372,6 +574,42 @@ class BinanceVisionImporter:
         import polars as pl  # noqa: PLC0415
         return pl.concat(all_dfs).sort("ts")
 
+    def import_aggtrades_period(
+        self,
+        market: Market,
+        symbol: str,
+        frequency: Frequency,
+        start_date: str,
+        end_date: str,
+    ) -> "pl.DataFrame":
+        """Import aggTrades for a date range into the StandardTrade schema."""
+        dates = self._generate_dates(frequency, start_date, end_date)
+        if not dates:
+            raise ValueError(f"No dates generated for range {start_date} to {end_date}")
+
+        all_dfs = []
+        failed_dates = []
+        for date in dates:
+            try:
+                url = build_binance_vision_aggtrades_url(market, symbol, frequency, date)
+                rows = read_binance_aggtrades_zip(url, timeout=self.timeout)
+                if rows:
+                    df = normalize_binance_aggtrades(rows, market=market, symbol=symbol)
+                    all_dfs.append(df)
+            except (HTTPError, IOError, ValueError) as e:
+                failed_dates.append((date, str(e)))
+
+        if not all_dfs:
+            raise ValueError(f"Failed to import any data. Failed dates: {failed_dates}")
+        if failed_dates:
+            for date, err in failed_dates[:3]:
+                print(f"Warning: failed to import {date}: {err}")
+            if len(failed_dates) > 3:
+                print(f"... and {len(failed_dates) - 3} more")
+
+        import polars as pl  # noqa: PLC0415
+        return pl.concat(all_dfs).sort("ts")
+
     @staticmethod
     def _generate_dates(
         frequency: Frequency,
@@ -423,6 +661,12 @@ __all__ = [
     "build_binance_vision_kline_url",
     "read_binance_kline_zip",
     "normalize_binance_kline",
+    "StandardBar",
+    # aggTrades (trade data)
+    "build_binance_vision_aggtrades_url",
+    "read_binance_aggtrades_zip",
+    "normalize_binance_aggtrades",
+    "StandardTrade",
     "Market",
     "Frequency",
 ]
