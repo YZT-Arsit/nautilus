@@ -21,25 +21,10 @@ from typing import Any
 
 from data_engine.adapters.bar_adapter import make_bar_event
 from data_engine.events import BarEvent
+from data_engine.sources.hive_partitioning import matching_fragments
 from data_engine.split import split_warmup_live
 from data_engine.time import ONE_SECOND_NS, to_event_time_ns, validate_time_unit
 from data_engine.validation import optional_numeric, require_numeric
-
-
-def _equality_filter(filters: dict[str, Any] | None):
-    """Turn ``{col: value}`` equality pairs into a combined pyarrow expression.
-
-    Returns ``None`` when there is nothing to filter (read everything).
-    """
-    if not filters:
-        return None
-    import pyarrow.dataset as ds
-
-    expr = None
-    for column, value in filters.items():
-        condition = ds.field(column) == value
-        expr = condition if expr is None else (expr & condition)
-    return expr
 
 
 class ParquetBarSource:
@@ -109,11 +94,23 @@ class ParquetBarSource:
         )
 
     def _load_sorted(self) -> list[BarEvent]:
+        import pyarrow as pa
         import pyarrow.dataset as ds
 
         dataset = ds.dataset(self._root, format="parquet", partitioning="hive")
-        schema_names = set(dataset.schema.names)
 
+        # Restrict to the filter-matching bar fragments *before* the schema guard.
+        # Under a unified ``market_data`` root, the global dataset schema may be
+        # inferred from a trade fragment (no ``close`` column); selecting the bar
+        # fragments first makes the guard and projection accurate.
+        fragments = matching_fragments(dataset, self._filters)
+        if not fragments:
+            raise ValueError(
+                f"no parquet fragments under {self._root!r} match filters {self._filters!r}"
+            )
+
+        # Schema guard based on the matching bar fragments, not the mixed root.
+        schema_names = set(fragments[0].physical_schema.names)
         if self._close_column not in schema_names:
             raise ValueError(f"required close column {self._close_column!r} is missing")
 
@@ -128,7 +125,8 @@ class ParquetBarSource:
         ]
         columns = [c for c in wanted if c and c in schema_names]
 
-        table = dataset.to_table(columns=columns, filter=_equality_filter(self._filters))
+        tables = [fragment.to_table(columns=columns) for fragment in fragments]
+        table = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
         data = table.to_pydict()  # column-oriented; no pandas
         bars = [
             self._row_to_bar({col: data[col][i] for col in columns}, i)

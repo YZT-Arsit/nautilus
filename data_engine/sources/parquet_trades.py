@@ -20,40 +20,10 @@ from typing import Any
 
 from data_engine.adapters.trade_adapter import make_trade_event, side_from_is_buyer_maker
 from data_engine.events import TradeEvent
+from data_engine.sources.hive_partitioning import matching_fragments
 from data_engine.split import split_warmup_live
 from data_engine.time import ONE_SECOND_NS, to_event_time_ns, validate_time_unit
 from data_engine.validation import optional_numeric, require_numeric
-
-
-def _hive_partition_values(path: str) -> dict[str, str]:
-    """Parse Hive ``key=value`` directory segments out of a fragment path."""
-    values: dict[str, str] = {}
-    for segment in path.replace("\\", "/").split("/"):
-        key, sep, value = segment.partition("=")
-        if sep:
-            values[key] = value
-    return values
-
-
-def _matching_fragments(dataset, filters: dict[str, Any]) -> list:
-    """Select dataset fragments whose Hive partition values satisfy ``filters``.
-
-    A unified ``market_data`` root mixes partition layouts: bars live under
-    ``bar_type=...`` while trades live under ``data_type=aggTrades``.  Pruning by
-    an equality expression alone is unreliable, because a partition key present
-    in one layout (``data_type``) is simply absent from the other, so pyarrow
-    cannot prove a bar fragment is incompatible and may keep it.  We therefore
-    match the Hive ``key=value`` path segments **exactly** — a bar fragment has
-    no ``data_type`` segment, so it is dropped here regardless of how pyarrow
-    would prune it.
-    """
-    fragments = dataset.get_fragments()
-    matched = []
-    for fragment in fragments:
-        parts = _hive_partition_values(fragment.path)
-        if all(str(parts.get(key)) == str(value) for key, value in filters.items()):
-            matched.append(fragment)
-    return matched
 
 
 class ParquetTradeSource:
@@ -145,7 +115,7 @@ class ParquetTradeSource:
         # check.  In a unified ``market_data`` root, the global dataset schema
         # may be inferred from a bar fragment (no ``price`` column); selecting
         # the trade fragments first makes the guard accurate.
-        fragments = _matching_fragments(dataset, self._filters)
+        fragments = matching_fragments(dataset, self._filters)
         if not fragments:
             raise ValueError(
                 f"no parquet fragments under {self._root!r} match filters {self._filters!r}"

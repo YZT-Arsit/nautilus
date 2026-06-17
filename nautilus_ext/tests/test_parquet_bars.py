@@ -9,6 +9,7 @@ pa = pytest.importorskip("pyarrow")
 ds = pytest.importorskip("pyarrow.dataset")
 
 from data_engine import load_events
+from data_engine.events import BarEvent
 from data_engine.sources.parquet_bars import ParquetBarSource, load_parquet_bars
 from data_engine.time import ONE_SECOND_NS
 
@@ -176,6 +177,75 @@ class TestLoaderAliases:
             "filters": {"trading_date": "2024-01-01", "instrument_id": "BTC-USDT"},
         })
         assert len(warmup) == 2 and len(list(live)) == 2
+
+
+# E2. Mixed unified root (bars + trades under one market_data root) -----------
+
+def _write_mixed_market_data_root(root: Path) -> tuple[int, int]:
+    """Write both a bar (bar_type=5m) and a trade (data_type=aggTrades) partition
+    under one root, mirroring the real unified ``market_data`` layout.  The trade
+    partition has price/quantity/side but NO ``close`` column."""
+    base = 1_700_000_000 * ONE_SECOND_NS
+    n_bars, n_trades = 5, 8
+    bar_tbl = pa.table({
+        "ts": [base + i * ONE_SECOND_NS for i in range(n_bars)],
+        "open": [100.0 + i for i in range(n_bars)],
+        "high": [101.0 + i for i in range(n_bars)],
+        "low": [99.0 + i for i in range(n_bars)],
+        "close": [100.5 + i for i in range(n_bars)],
+        "volume": [10.0 + i for i in range(n_bars)],
+        "exchange": ["BINANCE"] * n_bars, "venue_type": ["spot"] * n_bars,
+        "symbol": ["BTCUSDT"] * n_bars, "bar_type": ["5m"] * n_bars,
+        "date": ["2024-06-01"] * n_bars,
+    })
+    ds.write_dataset(
+        bar_tbl, str(root), format="parquet",
+        partitioning=["exchange", "venue_type", "symbol", "bar_type", "date"],
+        partitioning_flavor="hive", existing_data_behavior="overwrite_or_ignore",
+    )
+    trade_tbl = pa.table({
+        "ts": [base + i * ONE_SECOND_NS for i in range(n_trades)],
+        "price": [200.0 + i for i in range(n_trades)],   # NOTE: no 'close' column
+        "quantity": [1.0 for _ in range(n_trades)],
+        "side": ["BUY" for _ in range(n_trades)],
+        "exchange": ["BINANCE"] * n_trades, "venue_type": ["spot"] * n_trades,
+        "symbol": ["BTCUSDT"] * n_trades, "data_type": ["aggTrades"] * n_trades,
+        "date": ["2024-06-01"] * n_trades,
+    })
+    ds.write_dataset(
+        trade_tbl, str(root), format="parquet",
+        partitioning=["exchange", "venue_type", "symbol", "data_type", "date"],
+        partitioning_flavor="hive", existing_data_behavior="overwrite_or_ignore",
+    )
+    return n_bars, n_trades
+
+
+class TestMixedRoot:
+    """Regression: bar loader must ignore the data_type=aggTrades partition under a
+    unified root and never hit 'required close column close is missing'."""
+
+    def test_bar_loader_ignores_trade_partition(self, tmp_path):
+        root = tmp_path / "market_data"
+        n_bars, _ = _write_mixed_market_data_root(root)
+        warmup, live = load_events({
+            "mode": "hive_parquet_bars",
+            "root": str(root),
+            "instrument_id": "BTCUSDT.BINANCE",
+            "warmup_bars": 0,
+            "timestamp_column": "ts",
+            "timestamp_unit": "ns",
+            "filters": {"exchange": "BINANCE", "venue_type": "spot",
+                        "symbol": "BTCUSDT", "bar_type": "5m"},
+        })
+        live = list(live)
+        # Only the bar rows load — the 8 trade rows are ignored.
+        assert len(live) == n_bars
+        assert all(isinstance(b, BarEvent) for b in live)
+        times = [b.event_time_ns for b in live]
+        assert times == sorted(times)
+        assert live[0].open == 100.0
+        assert live[0].close == 100.5            # bar close, NOT trade price (200.0)
+        assert live[-1].close == 100.5 + (n_bars - 1)
 
 
 # F. End-to-end via run_strategy ---------------------------------------------
