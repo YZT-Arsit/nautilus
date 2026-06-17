@@ -48,3 +48,36 @@ class TradeEvent:
     source: str | None = None
     raw: dict | None = None
     event_type: str = "trade"
+
+
+@dataclass
+class QuoteEvent:
+    """A minimal top-of-book quote event (best bid/ask) — **our own** type, not
+    Nautilus ``QuoteTick``.
+
+    Produced by the live adapter from a Binance ``bookTicker`` message and shaped
+    so it can sit beside :class:`TradeEvent`/`BarEvent` in the same self-owned
+    event model.  The engine routes it by ``event_type="quote"`` (input_type
+    ``quote``).  ``event_time_ns`` falls back to ``receive_time_ns`` when the feed
+    carries no exchange timestamp (spot ``bookTicker`` has none).
+    """
+
+    event_time_ns: int
+    instrument_id: str
+    bid_price: float
+    ask_price: float
+    bid_size: float | None = None
+    ask_size: float | None = None
+    update_id: int | None = None
+    receive_time_ns: int | None = None
+    source: str | None = None
+    raw: dict | None = None
+    event_type: str = "quote"
+
+    @property
+    def mid_price(self) -> float:
+        return (self.bid_price + self.ask_price) / 2.0
+
+    @property
+    def spread(self) -> float:
+        return self.ask_price - self.bid_price
