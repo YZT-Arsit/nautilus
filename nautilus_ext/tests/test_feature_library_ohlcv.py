@@ -331,7 +331,10 @@ def test_state_dict_round_trip_atr():
 
 
 def test_no_nautilus_import_in_compute():
-    """The compute feature library must never reference nautilus_trader."""
+    """The compute feature library must never import nautilus_trader.
+
+    Checks for actual import statements (a passing mention in a comment is fine).
+    """
     import inspect
 
     import feature_engine.builders as builders_mod
@@ -340,4 +343,6 @@ def test_no_nautilus_import_in_compute():
     import feature_engine.compute.state as state_mod
 
     for mod in (features_mod, backend_mod, state_mod, builders_mod):
-        assert "nautilus_trader" not in inspect.getsource(mod), mod.__name__
+        src = inspect.getsource(mod)
+        assert "import nautilus_trader" not in src, mod.__name__
+        assert "from nautilus_trader" not in src, mod.__name__
