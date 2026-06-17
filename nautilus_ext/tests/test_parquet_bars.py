@@ -12,6 +12,8 @@ from data_engine import load_events
 from data_engine.events import BarEvent
 from data_engine.sources.parquet_bars import (
     ParquetBarSource,
+    coerce_partition_date,
+    filter_fragments_by_date_range,
     load_parquet_bars,
     resolve_bar_timestamp_column,
 )
@@ -357,6 +359,176 @@ class TestTimestampResolutionIntegration:
         bars = self._load(root, bar_type="5m")
         assert len(bars) == 4
         assert bars[0].event_time_ns == to_event_time_ns(datetime(2026, 6, 16, 0, 0), "ns")
+
+
+# E4. Date-range fragment filtering (start/end) ------------------------------
+
+class _FakeFrag:
+    def __init__(self, path):
+        self.path = path
+
+
+class TestDateRangePure:
+    """Pure rules for date coercion + fragment pruning (no pyarrow needed)."""
+
+    def test_coerce_partition_date_accepts_str_and_passthrough(self):
+        from datetime import date, datetime
+        assert coerce_partition_date("2026-06-14") == date(2026, 6, 14)
+        assert coerce_partition_date(date(2026, 6, 14)) == date(2026, 6, 14)
+        assert coerce_partition_date(datetime(2026, 6, 14, 9, 30)) == date(2026, 6, 14)
+        assert coerce_partition_date(None) is None
+
+    def test_coerce_partition_date_invalid_raises(self):
+        with pytest.raises(ValueError, match="expected YYYY-MM-DD"):
+            coerce_partition_date("2026/06/14")
+        with pytest.raises(ValueError, match="expected"):
+            coerce_partition_date(20260614)
+
+    def _frags(self, *dates):
+        base = "root/exchange=BINANCE/venue_type=spot/symbol=BTCUSDT/bar_type=1m"
+        return [_FakeFrag(f"{base}/date={d}/part-0.parquet") for d in dates]
+
+    def _dates_of(self, frags):
+        from data_engine.sources.hive_partitioning import hive_partition_values
+        return [hive_partition_values(f.path)["date"] for f in frags]
+
+    def test_inclusive_window(self):
+        frags = self._frags("2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16", "2026-06-17")
+        kept = filter_fragments_by_date_range(
+            frags, coerce_partition_date("2026-06-14"), coerce_partition_date("2026-06-16"))
+        assert self._dates_of(kept) == ["2026-06-14", "2026-06-15", "2026-06-16"]
+
+    def test_only_start(self):
+        frags = self._frags("2026-06-13", "2026-06-14", "2026-06-15")
+        kept = filter_fragments_by_date_range(frags, coerce_partition_date("2026-06-14"), None)
+        assert self._dates_of(kept) == ["2026-06-14", "2026-06-15"]
+
+    def test_only_end(self):
+        frags = self._frags("2026-06-13", "2026-06-14", "2026-06-15")
+        kept = filter_fragments_by_date_range(frags, None, coerce_partition_date("2026-06-14"))
+        assert self._dates_of(kept) == ["2026-06-13", "2026-06-14"]
+
+    def test_out_of_range_empty(self):
+        frags = self._frags("2026-06-14", "2026-06-15")
+        kept = filter_fragments_by_date_range(
+            frags, coerce_partition_date("2030-01-01"), coerce_partition_date("2030-01-02"))
+        assert kept == []
+
+    def test_missing_date_partition_raises(self):
+        # a bar fragment without a date= partition, while a date bound is set
+        frag = _FakeFrag("root/exchange=BINANCE/venue_type=spot/symbol=BTCUSDT/bar_type=1m/part-0.parquet")
+        with pytest.raises(ValueError, match="no 'date' partition"):
+            filter_fragments_by_date_range([frag], coerce_partition_date("2026-06-14"), None)
+
+
+def _multi_date_ts_dataset(root: Path, dates, *, bar_type="1m", n_per_day=4) -> Path:
+    """Hive bar dataset spanning several dates; time column ``ts`` (timestamp[us])."""
+    from datetime import datetime, timedelta
+
+    cols = {k: [] for k in ("ts", "open", "high", "low", "close", "volume",
+                            "exchange", "venue_type", "symbol", "bar_type", "date")}
+    for d in dates:
+        base = datetime.strptime(d, "%Y-%m-%d")
+        for i in range(n_per_day):
+            cols["ts"].append(base + timedelta(minutes=i))
+            cols["open"].append(100.0 + i); cols["high"].append(101.0 + i)
+            cols["low"].append(99.0 + i); cols["close"].append(100.5 + i)
+            cols["volume"].append(10.0 + i)
+            cols["exchange"].append("BINANCE"); cols["venue_type"].append("spot")
+            cols["symbol"].append("BTCUSDT"); cols["bar_type"].append(bar_type)
+            cols["date"].append(d)
+    table = pa.table({**cols, "ts": pa.array(cols["ts"], type=pa.timestamp("us"))})
+    ds.write_dataset(
+        table, str(root), format="parquet",
+        partitioning=["exchange", "venue_type", "symbol", "bar_type", "date"],
+        partitioning_flavor="hive", existing_data_behavior="overwrite_or_ignore",
+    )
+    return root
+
+
+class TestDateRangeIntegration:
+
+    def _load(self, root, **extra):
+        cfg = {
+            "mode": "hive_parquet_bars", "root": str(root),
+            "instrument_id": "BTCUSDT.BINANCE", "warmup_bars": 0,
+            "filters": {"exchange": "BINANCE", "venue_type": "spot",
+                        "symbol": "BTCUSDT", "bar_type": "1m"},
+        }
+        cfg.update(extra)
+        warmup, live = load_events(cfg)
+        return list(warmup) + list(live)
+
+    def test_absent_window_loads_all_dates(self, tmp_path):
+        root = _multi_date_ts_dataset(tmp_path / "m", ["2026-06-13", "2026-06-14", "2026-06-15"])
+        bars = self._load(root)
+        assert len(bars) == 12  # 3 dates x 4
+
+    def test_window_selects_only_in_range(self, tmp_path):
+        from datetime import datetime, timezone
+        root = _multi_date_ts_dataset(
+            tmp_path / "m", ["2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16", "2026-06-17"])
+        bars = self._load(root, start="2026-06-14", end="2026-06-16")
+        assert len(bars) == 12  # 3 dates x 4, boundaries inclusive
+        first = bars[0].event_time_ns
+        last = bars[-1].event_time_ns
+        assert first == to_event_time_ns(datetime(2026, 6, 14, 0, 0), "ns")
+        assert last == to_event_time_ns(datetime(2026, 6, 16, 0, 3), "ns")
+        # real 2026 timestamps (ts + range together), not 1970
+        assert first > 1_700_000_000 * ONE_SECOND_NS
+
+    def test_only_start(self, tmp_path):
+        root = _multi_date_ts_dataset(tmp_path / "m", ["2026-06-13", "2026-06-14", "2026-06-15"])
+        assert len(self._load(root, start="2026-06-14")) == 8
+
+    def test_only_end(self, tmp_path):
+        root = _multi_date_ts_dataset(tmp_path / "m", ["2026-06-13", "2026-06-14", "2026-06-15"])
+        assert len(self._load(root, end="2026-06-14")) == 8
+
+    def test_out_of_range_raises(self, tmp_path):
+        root = _multi_date_ts_dataset(tmp_path / "m", ["2026-06-14", "2026-06-15"])
+        with pytest.raises(ValueError, match="within date range"):
+            self._load(root, start="2030-01-01", end="2030-01-02")
+
+    def test_invalid_date_format_raises(self, tmp_path):
+        root = _multi_date_ts_dataset(tmp_path / "m", ["2026-06-14"])
+        with pytest.raises(ValueError, match="expected YYYY-MM-DD"):
+            self._load(root, start="2026/06/14")
+
+    def test_mixed_root_date_range_ignores_trades(self, tmp_path):
+        # 5m bar + aggTrades both under date=2024-06-01; range must still get bars only
+        root = tmp_path / "market_data"
+        n_bars, _ = _write_mixed_market_data_root(root)
+        warmup, live = load_events({
+            "mode": "hive_parquet_bars", "root": str(root),
+            "instrument_id": "BTCUSDT.BINANCE", "warmup_bars": 0,
+            "timestamp_column": "ts",
+            "filters": {"exchange": "BINANCE", "venue_type": "spot",
+                        "symbol": "BTCUSDT", "bar_type": "5m"},
+            "start": "2024-06-01", "end": "2024-06-01",
+        })
+        live = list(live)
+        assert len(live) == n_bars
+        assert all(isinstance(b, BarEvent) for b in live)
+        assert live[0].close == 100.5  # bar close, not trade price
+
+
+# E5. data_engine source hygiene ---------------------------------------------
+
+def test_parquet_bars_source_scan():
+    import inspect
+
+    from data_engine.sources import parquet_bars
+
+    src = inspect.getsource(parquet_bars)
+    assert "import nautilus_trader" not in src
+    assert "from nautilus_trader" not in src
+    import re
+    for net in ("websocket", "websockets", "asyncio", "aiohttp", "urllib", "requests", "socket"):
+        assert not re.search(rf"^\s*(?:import|from)\s+{net}\b", src, re.M), net
+    for forbidden in ("api_key", "apiKey", "secret", "signature", "place_order",
+                      "new_order", "cancel_order", "/api/v3/order", "/sapi/"):
+        assert forbidden not in src, forbidden
 
 
 # F. End-to-end via run_strategy ---------------------------------------------

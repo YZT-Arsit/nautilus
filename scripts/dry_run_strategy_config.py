@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Read-only **dry-run** validator for a strategy backtest config.
 
-Mirrors the *parsing/preparation* steps of ``run_strategy.py`` — config parse,
+Mirrors the *parsing/preparation* steps of ``run_strategy.py`` - config parse,
 registry lookup, config-object build, feature-spec build, strategy resolution,
-data-section validation, and a **bounded per-date** data load — **without**
+data-section validation, and a **bounded per-date** data load - **without**
 running the strategy loop, calling ``run_strategy.py``, building an execution
-backend, or entering the Nautilus ``BacktestEngine``.
+backend, or entering the Nautilus backtest engine.
 
     python scripts/dry_run_strategy_config.py \\
         --config configs/backtests/vwm_short_btcusdt_1m_dryrun.yaml
@@ -40,7 +40,9 @@ def load_config(path: str | Path) -> dict:
     """Parse a strategy YAML config into a dict."""
     import yaml  # lazy: only needed when actually parsing a file
 
-    text = Path(path).read_text()
+    # Read as UTF-8 explicitly: the platform default (e.g. gbk/cp936 on Windows)
+    # would fail on any non-ASCII byte in the config.
+    text = Path(path).read_text(encoding="utf-8")
     cfg = yaml.safe_load(text) or {}
     if not isinstance(cfg, dict):
         raise ValueError(f"config {str(path)!r} did not parse to a mapping")

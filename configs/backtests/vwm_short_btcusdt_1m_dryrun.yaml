@@ -41,7 +41,7 @@ data:
     venue_type: spot
     symbol: BTCUSDT
     bar_type: 1m
-  # Dry-run small window — per-date physical reads (2026-06-14..16 = 3 days).
+  # Dry-run small window - per-date physical reads (2026-06-14..16 = 3 days).
   # These keys are dry-run only; the production loader ignores unknown keys.
   start: 2026-06-14
   end: 2026-06-16

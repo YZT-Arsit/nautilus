@@ -21,7 +21,7 @@ from typing import Any
 
 from data_engine.adapters.bar_adapter import make_bar_event
 from data_engine.events import BarEvent
-from data_engine.sources.hive_partitioning import matching_fragments
+from data_engine.sources.hive_partitioning import hive_partition_values, matching_fragments
 from data_engine.split import split_warmup_live
 from data_engine.time import ONE_SECOND_NS, to_event_time_ns, validate_time_unit
 from data_engine.validation import optional_numeric, require_numeric
@@ -64,6 +64,50 @@ def resolve_bar_timestamp_column(schema_names, configured: str | None) -> str:
     return _DEFAULT_TIMESTAMP_COLUMN
 
 
+def coerce_partition_date(value, label: str = "date"):
+    """Coerce ``value`` to a ``datetime.date`` (accepts ``YYYY-MM-DD`` strings,
+    ``date``/``datetime``). Raises ValueError with a clear message otherwise."""
+    from datetime import date as _date, datetime as _datetime
+
+    if value is None:
+        return None
+    if isinstance(value, _datetime):
+        return value.date()
+    if isinstance(value, _date):
+        return value
+    if isinstance(value, str):
+        try:
+            return _datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError(f"invalid {label} {value!r}; expected YYYY-MM-DD") from None
+    raise ValueError(f"invalid {label} {value!r}; expected a YYYY-MM-DD string or date")
+
+
+def filter_fragments_by_date_range(fragments, start, end):
+    """Keep only fragments whose Hive ``date=`` partition is within the inclusive
+    ``[start, end]`` window (``start``/``end`` are ``date`` or ``None``).
+
+    Physical, fragment-level pruning — applied **before** any ``to_table`` read,
+    so out-of-window partitions are never read. A fragment missing a ``date``
+    partition while a date bound is set is an error (no silent full read).
+    """
+    out = []
+    for frag in fragments:
+        parts = hive_partition_values(frag.path)
+        if "date" not in parts:
+            raise ValueError(
+                "date-range filtering requested but a matching fragment has no "
+                f"'date' partition: {frag.path}"
+            )
+        d = coerce_partition_date(parts["date"], "partition date")
+        if start is not None and d < start:
+            continue
+        if end is not None and d > end:
+            continue
+        out.append(frag)
+    return out
+
+
 class ParquetBarSource:
     """Loads bars from a Hive-partitioned Parquet dataset.
 
@@ -86,6 +130,8 @@ class ParquetBarSource:
         high_column: str | None = "high",
         low_column: str | None = "low",
         volume_column: str | None = "volume",
+        start: object | None = None,
+        end: object | None = None,
     ) -> None:
         validate_time_unit(timestamp_unit)  # fail fast, even if column is absent
         self._root = root
@@ -93,6 +139,10 @@ class ParquetBarSource:
         self._warmup_bars = warmup_bars
         self._partition_cols = tuple(partition_cols) if partition_cols else ()
         self._filters = dict(filters) if filters else {}
+        # Optional inclusive date-range window (fragment-level pruning). Parsed
+        # eagerly so an invalid YYYY-MM-DD fails fast at construction.
+        self._start = coerce_partition_date(start, "start")
+        self._end = coerce_partition_date(end, "end")
         self._timestamp_column = timestamp_column
         self._timestamp_unit = timestamp_unit
         self._close_column = close_column
@@ -145,6 +195,16 @@ class ParquetBarSource:
             raise ValueError(
                 f"no parquet fragments under {self._root!r} match filters {self._filters!r}"
             )
+
+        # Optional inclusive date-range window: prune to fragments whose Hive
+        # ``date=`` partition falls in [start, end] *before* any read.
+        if self._start is not None or self._end is not None:
+            fragments = filter_fragments_by_date_range(fragments, self._start, self._end)
+            if not fragments:
+                raise ValueError(
+                    f"no parquet fragments under {self._root!r} match filters "
+                    f"{self._filters!r} within date range [{self._start}, {self._end}]"
+                )
 
         # Schema guard based on the matching bar fragments, not the mixed root.
         schema_names = set(fragments[0].physical_schema.names)
@@ -207,5 +267,7 @@ def load_parquet_bars(data_config: dict[str, Any]) -> tuple[list[BarEvent], list
         high_column=data_config.get("high_column", "high"),
         low_column=data_config.get("low_column", "low"),
         volume_column=data_config.get("volume_column", "volume"),
+        start=data_config.get("start"),
+        end=data_config.get("end"),
     )
     return split_warmup_live(source._bars_cached(), source._warmup_bars)

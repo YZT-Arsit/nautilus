@@ -201,9 +201,35 @@ def test_load_config_parses_yaml(tmp_path):
     pytest.importorskip("yaml")
     from scripts.dry_run_strategy_config import load_config
     p = tmp_path / "c.yaml"
-    p.write_text("strategy: vwm_short\nparams: {mom_len: 5}\n")
+    p.write_text("strategy: vwm_short\nparams: {mom_len: 5}\n", encoding="utf-8")
     cfg = load_config(p)
     assert cfg["strategy"] == "vwm_short" and cfg["params"]["mom_len"] == 5
+
+
+def test_load_config_reads_utf8_non_ascii_comment(tmp_path):
+    # A UTF-8 em-dash in a comment must NOT break reading, even where the
+    # platform default codec (e.g. gbk on Windows) would choke. load_config
+    # reads with encoding='utf-8' explicitly.
+    pytest.importorskip("yaml")
+    from scripts.dry_run_strategy_config import load_config
+    p = tmp_path / "c.yaml"
+    p.write_bytes(
+        ("# window — per-date\nstrategy: vwm_short\nparams: {mom_len: 5}\n")
+        .encode("utf-8"))
+    cfg = load_config(p)
+    assert cfg["strategy"] == "vwm_short" and cfg["params"]["mom_len"] == 5
+
+
+def test_new_artifacts_are_pure_ascii():
+    # Defensive: the dry-run config and script stay ASCII-only so locale-default
+    # readers never trip on them.
+    import scripts.dry_run_strategy_config as mod
+    script_path = Path(mod.__file__)
+    cfg_path = _REPO / "configs" / "backtests" / "vwm_short_btcusdt_1m_dryrun.yaml"
+    for path in (script_path, cfg_path):
+        data = path.read_bytes()
+        non_ascii = [b for b in data if b > 127]
+        assert not non_ascii, f"{path.name} has {len(non_ascii)} non-ASCII byte(s)"
 
 
 # --- source scan -----------------------------------------------------------
