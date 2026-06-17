@@ -10,8 +10,12 @@ ds = pytest.importorskip("pyarrow.dataset")
 
 from data_engine import load_events
 from data_engine.events import BarEvent
-from data_engine.sources.parquet_bars import ParquetBarSource, load_parquet_bars
-from data_engine.time import ONE_SECOND_NS
+from data_engine.sources.parquet_bars import (
+    ParquetBarSource,
+    load_parquet_bars,
+    resolve_bar_timestamp_column,
+)
+from data_engine.time import ONE_SECOND_NS, to_event_time_ns
 
 
 def _write_dataset(root: Path, columns: dict, partitioning: list[str]) -> Path:
@@ -246,6 +250,113 @@ class TestMixedRoot:
         assert live[0].open == 100.0
         assert live[0].close == 100.5            # bar close, NOT trade price (200.0)
         assert live[-1].close == 100.5 + (n_bars - 1)
+
+
+# E3. Timestamp column resolution (Binance Vision bar parquet uses ``ts``) -----
+
+class TestTimestampColumnResolutionPure:
+    """Pure rules for :func:`resolve_bar_timestamp_column` (no pyarrow needed)."""
+
+    def test_explicit_existing_column_respected(self):
+        assert resolve_bar_timestamp_column({"ts", "close"}, "ts") == "ts"
+        assert resolve_bar_timestamp_column(
+            {"event_time_ns", "close"}, "event_time_ns") == "event_time_ns"
+
+    def test_default_event_time_ns_falls_back_to_ts(self):
+        # the real Binance Vision case: default config, only ``ts`` present
+        assert resolve_bar_timestamp_column({"ts", "close"}, "event_time_ns") == "ts"
+
+    def test_event_time_ns_preferred_when_both_present(self):
+        assert resolve_bar_timestamp_column(
+            {"event_time_ns", "ts", "close"}, "event_time_ns") == "event_time_ns"
+
+    def test_custom_absent_column_kept_for_fallback(self):
+        # a custom (non-default) column that is absent keeps existing behavior
+        assert resolve_bar_timestamp_column({"close"}, "weird_ts") == "weird_ts"
+
+    def test_no_time_columns_keeps_default(self):
+        assert resolve_bar_timestamp_column({"close"}, "event_time_ns") == "event_time_ns"
+
+    def test_none_autodetects(self):
+        assert resolve_bar_timestamp_column({"ts", "close"}, None) == "ts"
+        assert resolve_bar_timestamp_column({"event_time_ns", "ts"}, None) == "event_time_ns"
+        assert resolve_bar_timestamp_column({"close"}, None) == "event_time_ns"
+
+
+def _ts_us_bar_dataset(root: Path, *, n=5, bar_type="1m", with_event_time_ns=False) -> Path:
+    """Binance-Vision-style hive bar dataset whose time column is ``ts``
+    (``timestamp[us]`` datetimes), under exchange/venue_type/symbol/bar_type/date."""
+    from datetime import datetime, timedelta
+
+    base = datetime(2026, 6, 16, 0, 0)  # naive == UTC for to_event_time_ns
+    ts_vals = [base + timedelta(minutes=i) for i in range(n)]
+    cols = {
+        "ts": pa.array(ts_vals, type=pa.timestamp("us")),
+        "open": [100.0 + i for i in range(n)],
+        "high": [101.0 + i for i in range(n)],
+        "low": [99.0 + i for i in range(n)],
+        "close": [100.5 + i for i in range(n)],
+        "volume": [10.0 + i for i in range(n)],
+        "exchange": ["BINANCE"] * n, "venue_type": ["spot"] * n,
+        "symbol": ["BTCUSDT"] * n, "bar_type": [bar_type] * n,
+        "date": ["2026-06-16"] * n,
+    }
+    if with_event_time_ns:
+        # distinct sentinel ns so we can prove event_time_ns is *preferred*
+        cols["event_time_ns"] = [(i + 1) * ONE_SECOND_NS for i in range(n)]
+    ds.write_dataset(
+        pa.table(cols), str(root), format="parquet",
+        partitioning=["exchange", "venue_type", "symbol", "bar_type", "date"],
+        partitioning_flavor="hive", existing_data_behavior="overwrite_or_ignore",
+    )
+    return root
+
+
+class TestTimestampResolutionIntegration:
+    """End-to-end: ``ts``-only bar parquet loads with real (not 1970) times."""
+
+    def _load(self, root, *, bar_type="1m", **extra):
+        cfg = {
+            "mode": "hive_parquet_bars", "root": str(root),
+            "instrument_id": "BTCUSDT.BINANCE", "warmup_bars": 0,
+            "filters": {"exchange": "BINANCE", "venue_type": "spot",
+                        "symbol": "BTCUSDT", "bar_type": bar_type},
+        }
+        cfg.update(extra)
+        warmup, live = load_events(cfg)
+        return list(warmup) + list(live)
+
+    def test_ts_only_default_config_uses_real_timestamps(self, tmp_path):
+        from datetime import datetime
+        root = _ts_us_bar_dataset(tmp_path / "market_data", n=5)
+        # DEFAULT config — no timestamp_column override (constructor default
+        # 'event_time_ns', which is ABSENT -> must resolve to 'ts').
+        bars = self._load(root)
+        assert len(bars) == 5
+        expected_first = to_event_time_ns(datetime(2026, 6, 16, 0, 0), "ns")
+        assert bars[0].event_time_ns == expected_first        # real 2026 time
+        assert bars[0].event_time_ns > 1_700_000_000 * ONE_SECOND_NS  # not 1970
+        assert bars[-1].event_time_ns == to_event_time_ns(datetime(2026, 6, 16, 0, 4), "ns")
+        assert [b.event_time_ns for b in bars] == sorted(b.event_time_ns for b in bars)
+
+    def test_event_time_ns_preferred_when_present(self, tmp_path):
+        root = _ts_us_bar_dataset(tmp_path / "market_data", n=5, with_event_time_ns=True)
+        bars = self._load(root)
+        # event_time_ns present -> used in preference to ts (sentinel 1s..5s)
+        assert [b.event_time_ns for b in bars] == [(i + 1) * ONE_SECOND_NS for i in range(5)]
+
+    def test_explicit_ts_column_respected(self, tmp_path):
+        from datetime import datetime
+        root = _ts_us_bar_dataset(tmp_path / "market_data", n=3)
+        bars = self._load(root, timestamp_column="ts")
+        assert bars[0].event_time_ns == to_event_time_ns(datetime(2026, 6, 16, 0, 0), "ns")
+
+    def test_5m_bar_type_also_resolves_ts(self, tmp_path):
+        from datetime import datetime
+        root = _ts_us_bar_dataset(tmp_path / "market_data", n=4, bar_type="5m")
+        bars = self._load(root, bar_type="5m")
+        assert len(bars) == 4
+        assert bars[0].event_time_ns == to_event_time_ns(datetime(2026, 6, 16, 0, 0), "ns")
 
 
 # F. End-to-end via run_strategy ---------------------------------------------

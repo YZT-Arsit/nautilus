@@ -26,6 +26,43 @@ from data_engine.split import split_warmup_live
 from data_engine.time import ONE_SECOND_NS, to_event_time_ns, validate_time_unit
 from data_engine.validation import optional_numeric, require_numeric
 
+# Canonical bar timestamp column (CSV / replay-parity data). Binance Vision /
+# Historical Data Manager bar parquet instead stores time in ``ts``
+# (``timestamp[us]``), so the loader resolves between them — see
+# :func:`resolve_bar_timestamp_column`.
+_DEFAULT_TIMESTAMP_COLUMN = "event_time_ns"
+_ALT_TIMESTAMP_COLUMN = "ts"
+
+
+def resolve_bar_timestamp_column(schema_names, configured: str | None) -> str:
+    """Resolve which column holds the bar timestamp (backward compatible).
+
+    Rules:
+
+    1. an explicit ``configured`` column that **exists** -> use it (config wins);
+    2. the default ``event_time_ns`` that is **absent**, when ``ts`` exists ->
+       use ``ts`` (the real Binance Vision / Hive bar schema);
+    3. any other ``configured`` column that is absent -> return it unchanged,
+       preserving the existing monotonic-index fallback in ``_row_to_bar``;
+    4. ``configured is None`` -> auto-detect ``event_time_ns`` then ``ts``.
+
+    This keeps ``event_time_ns`` datasets working exactly as before while making
+    ``ts``-based bar parquet load with real timestamps instead of falling back to
+    ``index x 1s`` (which produced 1970-epoch times).
+    """
+    names = set(schema_names)
+    if configured is not None:
+        if configured in names:
+            return configured
+        if configured == _DEFAULT_TIMESTAMP_COLUMN and _ALT_TIMESTAMP_COLUMN in names:
+            return _ALT_TIMESTAMP_COLUMN
+        return configured  # custom absent column -> keep existing fallback behavior
+    if _DEFAULT_TIMESTAMP_COLUMN in names:
+        return _DEFAULT_TIMESTAMP_COLUMN
+    if _ALT_TIMESTAMP_COLUMN in names:
+        return _ALT_TIMESTAMP_COLUMN
+    return _DEFAULT_TIMESTAMP_COLUMN
+
 
 class ParquetBarSource:
     """Loads bars from a Hive-partitioned Parquet dataset.
@@ -65,7 +102,7 @@ class ParquetBarSource:
         self._volume_column = volume_column
         self._bars: list[BarEvent] | None = None  # cache: read the dataset once
 
-    def _row_to_bar(self, row: dict[str, Any], index: int) -> BarEvent:
+    def _row_to_bar(self, row: dict[str, Any], index: int, ts_col: str | None = None) -> BarEvent:
         close_col = self._close_column
         close = require_numeric(row.get(close_col), close_col, index)
 
@@ -74,7 +111,7 @@ class ParquetBarSource:
                 return optional_numeric(row[col], default, col, index)
             return default
 
-        ts_col = self._timestamp_column
+        ts_col = ts_col if ts_col is not None else self._timestamp_column
         if ts_col and row.get(ts_col) is not None:
             try:
                 event_time_ns = to_event_time_ns(row[ts_col], self._timestamp_unit)
@@ -114,9 +151,14 @@ class ParquetBarSource:
         if self._close_column not in schema_names:
             raise ValueError(f"required close column {self._close_column!r} is missing")
 
+        # Resolve the real timestamp column: respect an explicit config, fall back
+        # from the default ``event_time_ns`` to ``ts`` for Binance Vision/Hive bar
+        # parquet, and otherwise keep the monotonic-index fallback behavior.
+        ts_col = resolve_bar_timestamp_column(schema_names, self._timestamp_column)
+
         # Column pushdown: project only the bar columns that actually exist.
         wanted = [
-            self._timestamp_column,
+            ts_col,
             self._close_column,
             self._open_column,
             self._high_column,
@@ -129,7 +171,7 @@ class ParquetBarSource:
         table = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
         data = table.to_pydict()  # column-oriented; no pandas
         bars = [
-            self._row_to_bar({col: data[col][i] for col in columns}, i)
+            self._row_to_bar({col: data[col][i] for col in columns}, i, ts_col=ts_col)
             for i in range(table.num_rows)
         ]
         bars.sort(key=lambda b: b.event_time_ns)
