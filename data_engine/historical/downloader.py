@@ -98,8 +98,12 @@ class BinanceVisionHistoricalDownloader:
         ``market`` is taken as ``venue_type`` (spot/futures_um/futures_cm).
         Returns ``(DownloadResult, DownloadPlan)``.
         """
-        if data_kind == "trade" and data_type is None:
-            data_type = "aggTrades"
+        if data_kind == "bar":
+            data_type = None  # bars never key on data_type
+        elif data_kind == "trade":
+            bar_type = None   # trades never key on bar_type
+            if data_type is None:
+                data_type = "aggTrades"
         plan = build_plan(
             catalog=self._catalog, exchange=exchange, venue_type=venue_type,
             symbols=symbol, data_kind=data_kind, bar_type=bar_type, data_type=data_type,

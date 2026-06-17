@@ -22,8 +22,13 @@ VALID_STATUS = {"downloaded", "skipped_existing", "verified", "failed"}
 
 
 def catalog_dir_for_root(root: str | Path) -> Path:
-    """``<root>/../_catalog`` -- sibling of the ``market_data`` dataset root."""
-    return Path(root).resolve().parent / "_catalog"
+    """``<root>/../_catalog`` -- sibling of the ``market_data`` dataset root.
+
+    Uses the parent as given (no ``resolve()``) so the manifest path tracks the
+    caller's root form -- important on platforms where tmp dirs are symlinked
+    (e.g. macOS ``/var`` -> ``/private/var``).
+    """
+    return Path(root).parent / "_catalog"
 
 
 def manifest_path_for_root(root: str | Path) -> Path:
