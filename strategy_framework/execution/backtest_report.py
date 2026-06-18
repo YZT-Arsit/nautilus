@@ -84,6 +84,7 @@ class _Accountant:
         self.fee_rate = float(fee_rate)
         self._pos: dict[str, _Pos] = {}
         self.trades: list[TradeRow] = []
+        self.total_commission = 0.0  # sum of all fill commissions (charged once)
 
     def position(self, instrument_id: str) -> _Pos:
         return self._pos.setdefault(instrument_id, _Pos())
@@ -99,6 +100,7 @@ class _Accountant:
         commission = float((fill.metadata or {}).get("commission") or 0.0)
         if commission == 0.0 and self.fee_rate:
             commission = qty * price * self.fee_rate
+        self.total_commission += commission
 
         notional = qty * price
         self.cash += (-notional if fill.side == "BUY" else notional) - commission
@@ -118,7 +120,10 @@ class _Accountant:
             realized = closing * (price - a) * sign_c
             pos.realized += realized
             new_qty = c + signed
-            # emit a trade for the portion that returned to (or through) flat
+            # ``win`` is judged on the *reported* (rounded) gross realized PnL so
+            # the flag is always consistent with the trades.csv ``realized_pnl``
+            # column. Reversal/partial-fill fragments can close at ~the entry
+            # price, leaving a floating residual that rounds to 0 -> not a win.
             self.trades.append(
                 TradeRow(
                     instrument_id=fill.instrument_id,
@@ -129,7 +134,7 @@ class _Accountant:
                     entry_price=a,
                     exit_price=price,
                     realized_pnl=realized,
-                    win=realized > 0,
+                    win=round(realized, 8) > 0,
                 )
             )
             if abs(signed) > abs(c):  # flipped past flat -> new position
@@ -298,6 +303,13 @@ def write_backtest_report(
     end_ns = bars_sorted[-1]["event_time_ns"] if bars_sorted else None
     actionable = sum(1 for s in signals if s.get("signal") in _ACTIONABLE)
 
+    gross_realized = acct.realized_total()          # price PnL, EXCLUDING fees
+    unrealized = acct.unrealized(last_marks)        # mark-to-market, gross
+    total_commission = acct.total_commission        # charged once (in cash)
+    net_realized = gross_realized - total_commission
+    net_pnl = final_equity - float(initial_cash)    # == net_realized + unrealized
+    gross_win_rate = round(wins / trade_count, 6) if trade_count else None
+
     metrics: dict[str, Any] = {
         "run_name": run_name,
         "mode": mode,
@@ -306,10 +318,19 @@ def write_backtest_report(
         "final_equity": round(final_equity, 8),
         "total_return": round((final_equity / initial_cash - 1.0) if initial_cash else 0.0, 8),
         "max_drawdown": round(_max_drawdown(equity_values), 8),
-        "realized_pnl": round(acct.realized_total(), 8),
-        "unrealized_pnl": round(acct.unrealized(last_marks), 8),
+        # ``realized_pnl`` is GROSS (price only, no fees) - kept for back-compat.
+        "realized_pnl": round(gross_realized, 8),
+        "gross_realized_pnl": round(gross_realized, 8),
+        "total_commission": round(total_commission, 8),
+        "net_realized_pnl": round(net_realized, 8),
+        "unrealized_pnl": round(unrealized, 8),
+        # net_pnl == final_equity - initial_cash == net_realized + unrealized.
+        "net_pnl": round(net_pnl, 8),
         "trade_count": trade_count,
-        "win_rate": round(wins / trade_count, 6) if trade_count else None,
+        # win_rate is GROSS (judged on per-trade gross realized PnL); see basis.
+        "win_rate": gross_win_rate,
+        "gross_win_rate": gross_win_rate,
+        "win_rate_basis": "gross",
         "fill_count": len(fills_sorted),
         "bar_count": len(bars_sorted),
         "signal_count": actionable,
@@ -443,10 +464,13 @@ def _render_report_md(metrics: dict[str, Any], trades: list[TradeRow],
         f"| final_equity | {m['final_equity']:.2f} |",
         f"| total_return | {m['total_return']:.4%} |",
         f"| max_drawdown | {m['max_drawdown']:.4%} |",
-        f"| realized_pnl | {m['realized_pnl']:.4f} |",
+        f"| realized_pnl (gross) | {m['realized_pnl']:.4f} |",
+        f"| total_commission | {m.get('total_commission', 0.0):.4f} |",
+        f"| net_realized_pnl | {m.get('net_realized_pnl', 0.0):.4f} |",
         f"| unrealized_pnl | {m['unrealized_pnl']:.4f} |",
+        f"| net_pnl | {m.get('net_pnl', 0.0):.4f} |",
         f"| trade_count | {m['trade_count']} |",
-        f"| win_rate | {('%.2f%%' % (m['win_rate'] * 100)) if m['win_rate'] is not None else 'n/a'} |",
+        f"| win_rate (gross) | {('%.2f%%' % (m['win_rate'] * 100)) if m['win_rate'] is not None else 'n/a'} |",
         f"| fill_count | {m['fill_count']} |",
         f"| signal_count (actionable) | {m['signal_count']} |",
         f"| bar_count | {m['bar_count']} |",

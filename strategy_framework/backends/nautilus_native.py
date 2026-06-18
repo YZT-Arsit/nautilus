@@ -16,6 +16,11 @@ It does **not** compute features, hold strategy logic, or read data files. The
 replay strategy only re-emits decisions already made outside Nautilus, keyed by
 bar timestamp - so the architectural rule "no feature maths inside Nautilus"
 holds.
+
+Fees: the config ``fee_rate`` is applied by rebuilding the instrument with
+``maker_fee = taker_fee = fee_rate`` (see :func:`_instrument_with_fees`).
+``slippage_bps`` is **not yet wired** into the fill price - it is accepted but a
+no-op at this stage (follow-up task).
 """
 from __future__ import annotations
 
@@ -47,6 +52,48 @@ def nautilus_available() -> bool:
         return True
     except Exception:
         return False
+
+
+def _instrument_with_fees(instrument, fee_rate: float):
+    """Return a copy of ``instrument`` whose maker & taker fees equal ``fee_rate``.
+
+    The bundled ``TestInstrumentProvider`` instruments carry their own default
+    fees (BTCUSDT spot taker = 0.001), so the config ``fee_rate`` was previously
+    ignored. We rebuild the instrument through its own ``to_dict``/``from_dict``
+    (version-robust; no hand-listing of every field) overriding only the fee
+    fields. Setting **both** maker and taker to ``fee_rate`` is intentional and
+    correct: a single fill is charged maker **or** taker (never both), so every
+    market (taker) fill then pays exactly ``fee_rate``.
+
+    Returns the instrument unchanged if it exposes no maker/taker fee fields, and
+    asserts the override actually took effect (fails loud rather than silently
+    using the wrong fee).
+    """
+    cls = type(instrument)
+    to_dict = getattr(cls, "to_dict", None) or getattr(instrument, "to_dict", None)
+    from_dict = getattr(cls, "from_dict", None)
+    if to_dict is None or from_dict is None:
+        return instrument
+    try:
+        d = cls.to_dict(instrument)
+    except TypeError:
+        d = instrument.to_dict()
+    if "maker_fee" not in d and "taker_fee" not in d:
+        return instrument  # this instrument type has no fee fields to wire
+    fee_str = format(float(fee_rate), "f")
+    if "maker_fee" in d:
+        d["maker_fee"] = fee_str
+    if "taker_fee" in d:
+        d["taker_fee"] = fee_str
+    rebuilt = from_dict(d)
+    # Guard: the override must have taken effect.
+    eff = float(getattr(rebuilt, "taker_fee", fee_rate))
+    if abs(eff - float(fee_rate)) > 1e-12:
+        raise NautilusUnavailableError(
+            f"failed to apply config fee_rate={fee_rate} to instrument "
+            f"{getattr(instrument, 'id', '?')}: effective taker_fee={eff}"
+        )
+    return rebuilt
 
 
 def _to_float(value: Any) -> float:
@@ -122,6 +169,11 @@ def run_native_backtest(
             f"strategy_framework/backends/nautilus_native.py to extend coverage."
         )
     instrument = getattr(TestInstrumentProvider, factory)()
+    # Wire the config fee_rate into the instrument's maker/taker fee so the
+    # backtest charges the configured rate instead of the test instrument's
+    # built-in default. slippage_bps is NOT yet wired into the fill price - it
+    # remains a no-op this stage (tracked as a follow-up; see module note).
+    instrument = _instrument_with_fees(instrument, fee_rate)
     venue = instrument.id.venue
     bar_type = BarType.from_str(f"{instrument.id}-1-MINUTE-LAST-EXTERNAL")
 
