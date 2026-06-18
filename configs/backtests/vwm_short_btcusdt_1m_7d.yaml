@@ -1,0 +1,66 @@
+# 7-day bounded REAL backtest config: VWM short over BTCUSDT spot 1m Binance
+# Vision bars, executed through the NATIVE Nautilus BacktestEngine path.
+#
+# Date scope is STRICT: 2026-06-10 .. 2026-06-16 (7 days, 10080 1m bars).
+# The hive_parquet_bars loader prunes to fragments whose date= partition is in
+# [start, end] BEFORE reading, so this consumes only the 7-day window - NOT the
+# full 1m cache. run_strategy.py uses the same standard load_events path.
+#
+# Identical to vwm_short_btcusdt_1m_small.yaml except start / end / run_name.
+# fee_rate=0.0005 is now honored by the engine; slippage_bps is still a no-op.
+#
+# Dry-run (no backtest):
+#   python scripts/dry_run_strategy_config.py \
+#       --config configs/backtests/vwm_short_btcusdt_1m_7d.yaml
+# Real backtest (writes outputs/backtests/<run_name>/):
+#   python run_strategy.py --config configs/backtests/vwm_short_btcusdt_1m_7d.yaml
+
+run_name: vwm_short_btcusdt_1m_20260610_20260616
+strategy: vwm_short
+
+params:
+  mom_len: 5
+  avg_len: 20
+  atr_len: 5
+  atr_pcnt: 0.5
+  setup_len: 5
+  instrument_id: BTCUSDT.BINANCE
+  bar_type: 1m
+
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT.BINANCE
+  warmup_bars: 0
+  # Binance Vision writes the bar open time as a datetime column named 'ts'.
+  timestamp_column: ts
+  timestamp_unit: ns        # ignored for datetime columns; must still be valid
+  open_column: open
+  high_column: high
+  low_column: low
+  close_column: close
+  volume_column: volume
+  # Partition pruning: read only BTCUSDT 1m spot.
+  filters:
+    exchange: BINANCE
+    venue_type: spot
+    symbol: BTCUSDT
+    bar_type: 1m
+  # STRICT 7-day window - fragment-level date pruning (2026-06-10..16 inclusive).
+  start: 2026-06-10
+  end: 2026-06-16
+
+execution:
+  backend: nautilus_backtest
+  mode: nautilus_native
+  initial_cash: 100000
+  quantity: 1.0
+  sell_means: short         # SELL opens a short; BUY closes it
+  allow_short: true         # MARGIN account so shorts are permitted
+  price_field: close
+  fee_rate: 0.0005
+  slippage_bps: 1.0
+
+output:
+  root: outputs/backtests
+  print_table: false        # the backend writes a full report directory instead
