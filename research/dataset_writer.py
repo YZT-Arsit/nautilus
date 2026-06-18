@@ -69,6 +69,8 @@ def build_dataset_partitioned(
     lead_in: int = DEFAULT_LEAD_IN,
     tail: int = DEFAULT_TAIL,
     keep_splits: tuple[str, ...] | None = None,
+    build_fn: Callable = build_dataset,
+    feature_columns: list = FEATURE_COLUMNS,
 ) -> tuple[list[tuple[str, str, list[dict]]], dict]:
     """Build the dataset month-by-month. Returns ``(parts, summary)``.
 
@@ -101,8 +103,8 @@ def build_dataset_partitioned(
         w0 = max(0, idxs[0] - lead_in)
         w1 = min(n, idxs[-1] + tail + 1)
         window = {k: v[w0:w1] for k, v in scols.items()}
-        rows, _ = build_dataset(window, horizon=horizon, fee_rate=fee_rate,
-                                buffer=buffer, splits=splits)
+        rows, _ = build_fn(window, horizon=horizon, fee_rate=fee_rate,
+                           buffer=buffer, splits=splits)
         # keep only this month's rows (excludes lead-in/tail rows of other months)
         month_rows = [r for r in rows if partition_key(r["event_time_ns"]) == m]
         by_split: dict[str, list[dict]] = {}
@@ -115,11 +117,13 @@ def build_dataset_partitioned(
 
     summary = _summarize(parts, raw_rows=n, horizon=horizon,
                          fee_rate=fee_rate, buffer=buffer,
-                         lead_in=lead_in, tail=tail, keep_splits=keep_splits)
+                         lead_in=lead_in, tail=tail, keep_splits=keep_splits,
+                         feature_columns=feature_columns)
     return parts, summary
 
 
-def _summarize(parts, *, raw_rows, horizon, fee_rate, buffer, lead_in, tail, keep_splits) -> dict:
+def _summarize(parts, *, raw_rows, horizon, fee_rate, buffer, lead_in, tail, keep_splits,
+               feature_columns: list = FEATURE_COLUMNS) -> dict:
     output_rows = sum(len(rows) for _, _, rows in parts)
     split_counts: dict[str, int] = {}
     month_counts: dict[str, int] = {}
@@ -150,7 +154,7 @@ def _summarize(parts, *, raw_rows, horizon, fee_rate, buffer, lead_in, tail, kee
         "label_distribution_by_split": by_split,
         "first_ts_by_split": first_ts,
         "last_ts_by_split": last_ts,
-        "feature_columns": list(FEATURE_COLUMNS),
+        "feature_columns": list(feature_columns),
         "horizon": horizon,
         "label_threshold": 2.0 * float(fee_rate) + float(buffer),
         "lead_in": lead_in,
@@ -192,6 +196,7 @@ def write_partitioned_dataset(
     summary: dict,
     overwrite: bool = False,
     part_writer: Callable[[list[dict], Path], None] = parquet_part_writer,
+    feature_columns: list = FEATURE_COLUMNS,
 ) -> Path:
     """Write parts + metadata under a temp dir, then atomically rename to final.
 
@@ -213,7 +218,7 @@ def write_partitioned_dataset(
             dest.parent.mkdir(parents=True, exist_ok=True)
             part_writer(rows, dest)
         (tmp / "feature_columns.json").write_text(
-            json.dumps(list(FEATURE_COLUMNS), indent=2), encoding="utf-8")
+            json.dumps(list(feature_columns), indent=2), encoding="utf-8")
         (tmp / "README.md").write_text(_readme(summary), encoding="utf-8")
         # summary.json LAST = completion marker.
         (tmp / "summary.json").write_text(json.dumps(summary, indent=2, default=str),
