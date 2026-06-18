@@ -220,6 +220,8 @@ def write_backtest_report(
     feature_names: list[str] | None = None,
     fee_rate: float = 0.0,
     slippage_bps: float = 0.0,
+    fill_timing: str = "same_bar",
+    execution_stats: dict[str, Any] | None = None,
     config: dict[str, Any] | None = None,
     engine_summary: dict[str, Any] | None = None,
 ) -> BacktestResult:
@@ -341,7 +343,14 @@ def write_backtest_report(
         "end_time": _ns_to_iso(end_ns),
         "fee_rate": float(fee_rate),
         "slippage_bps": float(slippage_bps),
+        # Execution-timing provenance (same_bar legacy default; next_bar shifts
+        # execution to the following bar). Counts come from the backend.
+        "fill_timing": fill_timing,
     }
+    if execution_stats:
+        for k in ("original_intent_count", "executed_intent_count", "dropped_tail_intents"):
+            if k in execution_stats:
+                metrics[k] = execution_stats[k]
     if engine_summary:
         metrics["engine"] = engine_summary
 
@@ -453,7 +462,8 @@ def _render_report_md(metrics: dict[str, Any], trades: list[TradeRow],
     lines = [
         f"# Backtest Report - {m['run_name']}",
         "",
-        f"- **Backend:** `{m['backend']}`  **Mode:** `{m['mode']}`",
+        f"- **Backend:** `{m['backend']}`  **Mode:** `{m['mode']}`  "
+        f"**Fill timing:** `{m.get('fill_timing', 'same_bar')}`",
         f"- **Period:** {m.get('start_time')} -> {m.get('end_time')}  ({m['bar_count']} bars)",
         "",
         "## Metrics",

@@ -82,6 +82,37 @@ def _intent_action(intent: Any) -> tuple[str, float] | None:
     return None
 
 
+def _shift_intents_to_next_bar(
+    intents_by_ts: dict[int, tuple[str, float]],
+    ordered_ts: list[int],
+) -> tuple[dict[int, tuple[str, float]], int]:
+    """Shift each intent's *execution* timestamp to the next bar (``next_bar`` mode).
+
+    ``ordered_ts`` is the full, ascending, de-duplicated list of bar timestamps.
+    An intent keyed at ``ts[t]`` moves to ``ts[t+1]``; an intent on the final bar
+    has no next bar and is **dropped** (and counted). Returns
+    ``(shifted_map, dropped_count)``.
+
+    The signal is still computed on bar ``t`` upstream - only *execution* moves to
+    ``t+1`` - so this removes the same-bar close-to-fill optimism without any
+    strategy-side change. The mapping ``ts[t] -> ts[t+1]`` is injective over a
+    strictly increasing sequence, so distinct intents never collide after the
+    shift (no silent loss): every non-tail intent is preserved.
+    """
+    next_of: dict[int, int] = {}
+    for i in range(len(ordered_ts) - 1):
+        next_of[ordered_ts[i]] = ordered_ts[i + 1]
+    shifted: dict[int, tuple[str, float]] = {}
+    dropped = 0
+    for ts, action in intents_by_ts.items():
+        nxt = next_of.get(int(ts))
+        if nxt is None:
+            dropped += 1
+        else:
+            shifted[nxt] = action
+    return shifted, dropped
+
+
 class NautilusBacktestBackend:
     """Signals -> intents -> fills (simulated or native) -> report artifacts."""
 
@@ -107,6 +138,25 @@ class NautilusBacktestBackend:
         self._price_field = cfg.get("price_field", "close")
         self._fee_rate = float(cfg.get("fee_rate", 0.0))
         self._slippage_bps = float(cfg.get("slippage_bps", 0.0))
+
+        # Execution timing: same_bar (default, legacy) submits/fills on the signal
+        # bar; next_bar shifts execution to the following bar to remove the
+        # same-bar close-to-fill optimism. Strategy-agnostic; the strategy never
+        # sees it. next_bar is wired for the native engine path only in this step.
+        self._fill_timing = cfg.get("fill_timing", "same_bar")
+        if self._fill_timing not in ("same_bar", "next_bar"):
+            raise ValueError(
+                f"unknown fill_timing {self._fill_timing!r}. Supported: "
+                "('same_bar', 'next_bar')"
+            )
+        if self._fill_timing == "next_bar" and self._mode == "simulated":
+            raise ValueError(
+                "fill_timing='next_bar' is only supported with mode='nautilus_native' "
+                "in this step; the simulated reference fill model is same_bar only."
+            )
+        # Populated at close(): the (possibly shifted) execution map + its stats.
+        self._exec_map: dict[int, tuple[str, float]] | None = None
+        self._exec_stats: dict[str, Any] | None = None
         self._policy = SignalToOrderPolicy(
             quantity=self._quantity,
             sell_means=cfg.get("sell_means", "flat"),
@@ -222,6 +272,35 @@ class NautilusBacktestBackend:
 
     # -- finalize ------------------------------------------------------------
 
+    def _execution_intents(self) -> tuple[dict[int, tuple[str, float]], dict[str, Any]]:
+        """Resolve the execution intent map honoring ``fill_timing``.
+
+        ``same_bar`` (default) returns the intents unchanged (legacy behaviour).
+        ``next_bar`` shifts each intent to the following bar; the final bar's
+        intent has no next bar and is dropped (counted). Returns ``(map, stats)``
+        where ``stats`` carries ``fill_timing`` + original/executed/dropped counts
+        for the report. Pure: no Nautilus, safe to call without the engine.
+        """
+        original = len(self._intents_by_ts)
+        if self._fill_timing == "same_bar":
+            return dict(self._intents_by_ts), {
+                "fill_timing": "same_bar",
+                "original_intent_count": original,
+                "executed_intent_count": original,
+                "dropped_tail_intents": 0,
+            }
+        ordered_ts = sorted({
+            int(b["event_time_ns"]) for b in self._bar_rows
+            if b.get("event_time_ns") is not None
+        })
+        shifted, dropped = _shift_intents_to_next_bar(self._intents_by_ts, ordered_ts)
+        return shifted, {
+            "fill_timing": "next_bar",
+            "original_intent_count": original,
+            "executed_intent_count": len(shifted),
+            "dropped_tail_intents": dropped,
+        }
+
     def _collect_fills(self):
         """Return ``(fills, engine_summary)`` from the configured fill source."""
         if self._mode == "simulated":
@@ -229,9 +308,11 @@ class NautilusBacktestBackend:
         # native: run the real Nautilus engine (lazy import keeps this module clean)
         from strategy_framework.backends.nautilus_native import run_native_backtest
 
+        # Use the fill_timing-resolved execution map (same_bar = identity).
+        exec_map = self._exec_map if self._exec_map is not None else self._intents_by_ts
         return run_native_backtest(
             bars=self._bar_rows,
-            intents_by_ts=self._intents_by_ts,
+            intents_by_ts=exec_map,
             instrument_id=self._instrument_id,
             quantity=self._quantity,
             initial_cash=self._initial_cash,
@@ -241,6 +322,10 @@ class NautilusBacktestBackend:
         )
 
     def close(self) -> None:
+        # Resolve the execution intent map (same_bar = identity; next_bar shifts
+        # execution to the following bar) BEFORE collecting fills, and keep its
+        # stats for the report.
+        self._exec_map, self._exec_stats = self._execution_intents()
         fills, engine_summary = self._collect_fills()
 
         if self._output_dir is not None:
@@ -259,6 +344,8 @@ class NautilusBacktestBackend:
                 feature_names=self._spec_names,
                 fee_rate=self._fee_rate,
                 slippage_bps=self._slippage_bps,
+                fill_timing=self._fill_timing,
+                execution_stats=self._exec_stats,
                 config=self._config,
                 engine_summary=engine_summary,
             )
@@ -275,7 +362,8 @@ class NautilusBacktestBackend:
 
         # No output directory configured: print a concise summary only.
         instruments = sorted({i.instrument_id for i in self._intents if i.instrument_id})
-        print(f"[nautilus_backtest] mode={self._mode} (no output dir configured)")
+        print(f"[nautilus_backtest] mode={self._mode} fill_timing={self._fill_timing} "
+              "(no output dir configured)")
         print(f"  intents: total={len(self._intents)} instruments={instruments}")
         print(f"  fills:   total={len(fills)}")
         if self._mode == "simulated" and self._simulator is not None:
