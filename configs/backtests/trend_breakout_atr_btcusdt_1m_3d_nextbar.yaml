@@ -1,0 +1,68 @@
+# Trend-breakout + ATR strategy, BTCUSDT spot 1m, native Nautilus backtest.
+#
+# NEXT-BAR execution variant of the 3-day config: identical strategy/params/data
+# window, only execution.fill_timing=next_bar (execution shifts to bar t+1 to
+# remove the same-bar close-to-fill optimism) and a distinct run_name. Used for
+# read-only validation before a single next_bar real backtest.
+#
+# fee_rate=0.0005 is honored by the engine; slippage_bps is still a no-op.
+#
+# Dry-run (no backtest):
+#   python scripts/dry_run_strategy_config.py \
+#       --config configs/backtests/trend_breakout_atr_btcusdt_1m_3d_nextbar.yaml
+# Real backtest:
+#   python run_strategy.py --config configs/backtests/trend_breakout_atr_btcusdt_1m_3d_nextbar.yaml
+
+run_name: trend_breakout_atr_btcusdt_1m_20260614_20260616_nextbar
+strategy: trend_breakout_atr
+
+params:
+  trend_len: 120
+  breakout_len: 60
+  atr_len: 30
+  atr_mult_stop: 2.0
+  atr_mult_exit: 1.0
+  cooldown_bars: 30
+  min_atr_pct: 0.0005
+  allow_short: true
+  quantity: 1.0
+  instrument_id: BTCUSDT.BINANCE
+  bar_type: 1m
+
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT.BINANCE
+  warmup_bars: 0
+  # Binance Vision writes the bar open time as a datetime column named 'ts'.
+  timestamp_column: ts
+  timestamp_unit: ns        # ignored for datetime columns; must still be valid
+  open_column: open
+  high_column: high
+  low_column: low
+  close_column: close
+  volume_column: volume
+  filters:
+    exchange: BINANCE
+    venue_type: spot
+    symbol: BTCUSDT
+    bar_type: 1m
+  # STRICT 3-day window - fragment-level date pruning (2026-06-14..16 inclusive).
+  start: 2026-06-14
+  end: 2026-06-16
+
+execution:
+  backend: nautilus_backtest
+  mode: nautilus_native
+  initial_cash: 100000
+  quantity: 1.0
+  sell_means: short         # SELL opens a short; BUY closes it (NETTING)
+  allow_short: true         # MARGIN account so shorts are permitted
+  price_field: close
+  fee_rate: 0.0005
+  slippage_bps: 1.0
+  fill_timing: next_bar     # execution shifts to bar t+1 (vs same_bar default)
+
+output:
+  root: outputs/backtests
+  print_table: false
