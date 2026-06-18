@@ -14,7 +14,7 @@ _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from strategies.trend_breakout_atr.strategy import (
+from strategies.trend_breakout_atr import (
     BUY,
     HOLD,
     SELL,
@@ -206,14 +206,39 @@ def test_default_config_dataclass():
 def test_source_scan_no_nautilus_network_or_order():
     import inspect
 
-    from strategies.trend_breakout_atr import strategy as mod
+    from strategies.trend_breakout_atr import config as config_mod
+    from strategies.trend_breakout_atr import engine as engine_mod
+    from strategies.trend_breakout_atr import plugin as plugin_mod
+    from strategies.trend_breakout_atr import strategy as strategy_mod
 
-    src = inspect.getsource(mod)
-    assert "import nautilus_trader" not in src
-    assert "from nautilus_trader" not in src
-    for net in ("import websocket", "import asyncio", "import aiohttp",
-                "import urllib", "import requests", "import socket"):
-        assert net not in src, net
-    for forbidden in ("api_key", "apiKey", "secret", "signature", "place_order",
-                      "new_order", "cancel_order", "/api/v3/order", "/sapi/"):
-        assert forbidden not in src, forbidden
+    # Scan every module of the (now split) strategy package, not just strategy.py.
+    for mod in (config_mod, engine_mod, strategy_mod, plugin_mod):
+        src = inspect.getsource(mod)
+        assert "import nautilus_trader" not in src, mod.__name__
+        assert "from nautilus_trader" not in src, mod.__name__
+        for net in ("import websocket", "import asyncio", "import aiohttp",
+                    "import urllib", "import requests", "import socket"):
+            assert net not in src, f"{mod.__name__}: {net}"
+        for forbidden in ("api_key", "apiKey", "secret", "signature", "place_order",
+                          "new_order", "cancel_order", "/api/v3/order", "/sapi/"):
+            assert forbidden not in src, f"{mod.__name__}: {forbidden}"
+
+
+def test_engine_module_is_framework_free():
+    # The pure decision engine must not import feature_engine / strategy_framework
+    # / nautilus / pandas / numpy - only config + stdlib. (Structural guarantee of
+    # the split.) Inspect actual import statements, not docstring mentions.
+    import inspect
+
+    from strategies.trend_breakout_atr import engine as engine_mod
+
+    import_lines = [
+        ln.strip() for ln in inspect.getsource(engine_mod).splitlines()
+        if ln.strip().startswith(("import ", "from "))
+    ]
+    for line in import_lines:
+        for banned in ("feature_engine", "strategy_framework", "nautilus_trader",
+                       "pandas", "numpy"):
+            assert banned not in line, f"{banned} in import: {line}"
+    # The only non-stdlib import is the sibling config module.
+    assert any("strategies.trend_breakout_atr.config" in ln for ln in import_lines)
