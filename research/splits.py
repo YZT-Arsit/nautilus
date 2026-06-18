@@ -3,9 +3,9 @@
 Splits are assigned by the **UTC calendar date** of each bar's
 ``event_time_ns``. The ranges are non-overlapping and contiguous:
 
-    train: 2024-06-17 .. 2025-12-31
-    val:   2026-01-01 .. 2026-04-30
-    test:  2026-05-01 .. 2026-06-16
+    train:      2024-06-17 .. 2025-12-31
+    validation: 2026-01-01 .. 2026-04-30
+    test:       2026-05-01 .. 2026-06-16
 
 Purge/embargo: because features are causal (only past bars), the only
 cross-split leakage risk is a **label** whose horizon bar ``t+H`` falls in a
@@ -23,7 +23,7 @@ from typing import Any
 # name -> (start_date_inclusive, end_date_inclusive) as ISO strings.
 DEFAULT_SPLITS: dict[str, tuple[str, str]] = {
     "train": ("2024-06-17", "2025-12-31"),
-    "val": ("2026-01-01", "2026-04-30"),
+    "validation": ("2026-01-01", "2026-04-30"),
     "test": ("2026-05-01", "2026-06-16"),
 }
 

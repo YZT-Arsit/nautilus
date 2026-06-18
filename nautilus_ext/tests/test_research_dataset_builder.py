@@ -78,7 +78,7 @@ def test_drop_accounting_identity():
 def test_split_counts_sum_to_output():
     _, s = build_dataset(_make_bars(250, _START))
     assert sum(s["split_counts"].values()) == s["output_rows"]
-    assert set(s["split_counts"]) <= {"train", "val", "test"}  # no 'none' kept
+    assert set(s["split_counts"]) <= {"train", "validation", "test"}  # no 'none' kept
 
 
 # --- 6. label distribution sums to output ----------------------------------

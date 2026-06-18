@@ -30,8 +30,8 @@ def _ts(y, m, d):
 def test_split_assignment_by_date():
     assert split_of_ts(_ts(2024, 7, 1)) == "train"
     assert split_of_ts(_ts(2025, 12, 31)) == "train"
-    assert split_of_ts(_ts(2026, 1, 1)) == "val"
-    assert split_of_ts(_ts(2026, 4, 30)) == "val"
+    assert split_of_ts(_ts(2026, 1, 1)) == "validation"
+    assert split_of_ts(_ts(2026, 4, 30)) == "validation"
     assert split_of_ts(_ts(2026, 5, 1)) == "test"
     assert split_of_ts(_ts(2026, 6, 16)) == "test"
     assert split_of_ts(_ts(2024, 1, 1)) is None     # before train
@@ -70,10 +70,10 @@ def test_purge_none_horizon_not_dropped_here():
 def test_assign_splits_and_summary():
     ts = [_ts(2024, 7, 1), _ts(2026, 2, 1), _ts(2026, 6, 1), _ts(2030, 1, 1)]
     splits = assign_splits(ts)
-    assert splits == ["train", "val", "test", None]
+    assert splits == ["train", "validation", "test", None]
     summary = split_summary(splits)
-    assert summary == {"train": 1, "val": 1, "test": 1, "none": 1}
+    assert summary == {"train": 1, "validation": 1, "test": 1, "none": 1}
 
 
 def test_default_splits_constant_shape():
-    assert set(DEFAULT_SPLITS) == {"train", "val", "test"}
+    assert set(DEFAULT_SPLITS) == {"train", "validation", "test"}
