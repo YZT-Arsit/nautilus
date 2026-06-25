@@ -24,6 +24,9 @@ no-op at this stage (follow-up task).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+from datetime import timezone
 from typing import Any
 
 from strategy_framework.execution.reports import FillRecord
@@ -34,6 +37,116 @@ _INSTRUMENT_FACTORIES = {
     "BTCUSDT.BINANCE": "btcusdt_binance",
     "ETHUSDT.BINANCE": "ethusdt_binance",
 }
+_CFFEX_MULTIPLIERS = {
+    "IF": 300,
+    "IH": 300,
+    "IC": 200,
+    "IM": 200,
+}
+_CFFEX_TICK_SIZE = "0.2"
+_CFFEX_LOT_SIZE = 1
+_CFFEX_CURRENCY = "CNY"
+
+
+@dataclass(frozen=True)
+class InstrumentMapping:
+    instrument_id: str
+    kind: str
+    factory: str | None = None
+    venue: str | None = None
+    symbol: str | None = None
+    exchange: str | None = None
+    asset_class: str | None = None
+    tick_size: str | None = None
+    price_precision: int | None = None
+    lot_size: int | None = None
+    multiplier: int | None = None
+    currency: str | None = None
+    underlying: str | None = None
+    metadata_source: str = "test_kit"
+
+
+def _normalize_instrument_id(instrument_id: str, *, exchange: str | None = None) -> str:
+    if "." in instrument_id:
+        return instrument_id
+    if exchange:
+        return f"{instrument_id}.{exchange}"
+    return instrument_id
+
+
+def _cfffex_symbol_prefix(symbol: str) -> str:
+    return symbol[:2].upper()
+
+
+def _cffex_contract_expiration_ns(symbol: str) -> int:
+    """Approximate index-futures expiration: third Friday of contract month UTC.
+
+    This is an MVP deterministic mapping. It is sufficient for synthetic smoke
+    tests and should be replaced by native ``futures_contract`` catalog metadata
+    once that reader is wired into the backend.
+    """
+    yy = int(symbol[2:4])
+    mm = int(symbol[4:6])
+    year = 2000 + yy
+    first = datetime(year, mm, 1, 7, 0, tzinfo=timezone.utc)
+    friday_offset = (4 - first.weekday()) % 7
+    third_friday = 1 + friday_offset + 14
+    expiry = datetime(year, mm, third_friday, 7, 0, tzinfo=timezone.utc)
+    return int(expiry.timestamp() * 1_000_000_000)
+
+
+def resolve_instrument_mapping(
+    instrument_id: str,
+    *,
+    exchange: str | None = None,
+) -> InstrumentMapping:
+    normalized = _normalize_instrument_id(instrument_id, exchange=exchange)
+    factory = _INSTRUMENT_FACTORIES.get(normalized)
+    if factory is not None:
+        symbol, venue = normalized.split(".", 1)
+        return InstrumentMapping(
+            instrument_id=normalized,
+            kind="test_kit_factory",
+            factory=factory,
+            venue=venue,
+            symbol=symbol,
+            exchange=venue,
+            metadata_source="test_kit",
+        )
+    if "." not in normalized:
+        raise NautilusUnavailableError(_unsupported_instrument_message(normalized))
+    symbol, venue = normalized.split(".", 1)
+    prefix = _cfffex_symbol_prefix(symbol)
+    if venue == "CFFEX" and prefix in _CFFEX_MULTIPLIERS and len(symbol) == 6 and symbol[2:].isdigit():
+        return InstrumentMapping(
+            instrument_id=normalized,
+            kind="cffex_futures_mvp",
+            venue="CFFEX",
+            symbol=symbol,
+            exchange="CFFEX",
+            asset_class="INDEX",
+            tick_size=_CFFEX_TICK_SIZE,
+            price_precision=1,
+            lot_size=_CFFEX_LOT_SIZE,
+            multiplier=_CFFEX_MULTIPLIERS[prefix],
+            currency=_CFFEX_CURRENCY,
+            underlying=prefix,
+            metadata_source="deterministic_mvp",
+        )
+    raise NautilusUnavailableError(_unsupported_instrument_message(normalized))
+
+
+def _supported_instruments_summary() -> list[str]:
+    return [*_INSTRUMENT_FACTORIES, "CFFEX IF/IH/IC/IM YYMM futures (MVP)"]
+
+
+def _unsupported_instrument_message(instrument_id: str) -> str:
+    return (
+        f"native backtest has no instrument mapping for {instrument_id!r}. "
+        f"Supported (MVP): {_supported_instruments_summary()}. Add a mapping in "
+        "strategy_framework/backends/nautilus_native.py or wire futures_contract "
+        "catalog metadata to extend coverage."
+    )
 
 
 class NautilusUnavailableError(RuntimeError):
@@ -152,23 +265,41 @@ def run_native_backtest(
     from nautilus_trader.model.data import BarType  # noqa: PLC0415
     from nautilus_trader.model.enums import (  # noqa: PLC0415
         AccountType,
+        AssetClass,
         OmsType,
         OrderSide,
     )
-    from nautilus_trader.model.identifiers import TraderId  # noqa: PLC0415
-    from nautilus_trader.model.objects import Money  # noqa: PLC0415
+    from nautilus_trader.model.identifiers import InstrumentId, Symbol, TraderId, Venue  # noqa: PLC0415
+    from nautilus_trader.model.instruments import FuturesContract  # noqa: PLC0415
+    from nautilus_trader.model.objects import Currency, Money, Price, Quantity  # noqa: PLC0415
     from nautilus_trader.persistence.wranglers import BarDataWrangler  # noqa: PLC0415
     from nautilus_trader.test_kit.providers import TestInstrumentProvider  # noqa: PLC0415
     from nautilus_trader.trading.strategy import Strategy  # noqa: PLC0415
 
-    factory = _INSTRUMENT_FACTORIES.get(instrument_id)
-    if factory is None:
-        raise NautilusUnavailableError(
-            f"native backtest has no instrument mapping for {instrument_id!r}. "
-            f"Supported (MVP): {sorted(_INSTRUMENT_FACTORIES)}. Add a mapping in "
-            f"strategy_framework/backends/nautilus_native.py to extend coverage."
+    mapping = resolve_instrument_mapping(instrument_id)
+    if mapping.kind == "test_kit_factory":
+        instrument = getattr(TestInstrumentProvider, mapping.factory)()
+    elif mapping.kind == "cffex_futures_mvp":
+        activation_ns = 0
+        expiration_ns = _cffex_contract_expiration_ns(mapping.symbol)
+        instrument = FuturesContract(
+            instrument_id=InstrumentId(symbol=Symbol(mapping.symbol), venue=Venue(mapping.venue)),
+            raw_symbol=Symbol(mapping.symbol),
+            asset_class=AssetClass.INDEX,
+            exchange=mapping.exchange,
+            currency=Currency.from_str(mapping.currency),
+            price_precision=mapping.price_precision,
+            price_increment=Price.from_str(mapping.tick_size),
+            multiplier=Quantity.from_int(mapping.multiplier),
+            lot_size=Quantity.from_int(mapping.lot_size),
+            underlying=mapping.underlying,
+            activation_ns=activation_ns,
+            expiration_ns=expiration_ns,
+            ts_event=activation_ns,
+            ts_init=activation_ns,
         )
-    instrument = getattr(TestInstrumentProvider, factory)()
+    else:  # pragma: no cover - resolver guards this
+        raise NautilusUnavailableError(_unsupported_instrument_message(instrument_id))
     # Wire the config fee_rate into the instrument's maker/taker fee so the
     # backtest charges the configured rate instead of the test instrument's
     # built-in default. slippage_bps is NOT yet wired into the fill price - it
@@ -265,11 +396,12 @@ def run_native_backtest(
             logging=LoggingConfig(log_level=log_level),
         )
     )
+    quote_currency = getattr(instrument, "quote_currency", None) or getattr(instrument, "currency", None)
     engine.add_venue(
         venue=venue,
         oms_type=OmsType.NETTING,
         account_type=account_type,
-        starting_balances=[Money(initial_cash, instrument.quote_currency)],
+        starting_balances=[Money(initial_cash, quote_currency)],
         base_currency=None,
     )
     engine.add_instrument(instrument)
@@ -281,12 +413,19 @@ def run_native_backtest(
         "instrument_id": str(instrument.id),
         "account_type": account_type.name,
         "bars_loaded": len(nautilus_bars),
+        "instrument_mapping": {
+            "kind": mapping.kind,
+            "metadata_source": mapping.metadata_source,
+            "multiplier": mapping.multiplier,
+            "tick_size": mapping.tick_size,
+            "lot_size": mapping.lot_size,
+        },
     }
     try:
         engine.run()
         account = engine.portfolio.account(venue)
         if account is not None:
-            quote = instrument.quote_currency
+            quote = quote_currency
             try:
                 summary["final_balance_quote"] = _to_float(account.balance_total(quote))
                 summary["quote_currency"] = quote.code

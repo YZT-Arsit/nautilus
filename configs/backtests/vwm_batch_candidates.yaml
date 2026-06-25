@@ -1,0 +1,35 @@
+# C1a design config for VWM batch candidates.
+# This file is safe to use with scripts/run_vwm_batch_backtests.py --dry-run.
+
+strategy:
+  name: vwm
+  params:
+    mom_len: 5
+    avg_len: 20
+    atr_len: 5
+    atr_pct: 0.5
+    setup_len: 5
+
+execution:
+  backend: nautilus
+  fill_timing: same_bar
+  fee_rate: 0.0005
+  initial_cash: 100000
+
+data:
+  root: historical_data/market_data
+  bar_type: 1m
+  start: 2026-06-10
+  end: 2026-06-16
+
+universe:
+  include:
+    - exchange: BINANCE
+      venue_type: spot
+      symbol: BTCUSDT
+      bar_type: 1m
+  exclude: []
+
+output:
+  root: outputs/backtests/vwm_batch
+  overwrite: false
