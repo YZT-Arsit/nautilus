@@ -778,10 +778,13 @@ def run_batch_smoke(
     fail_fast: bool = True,
     continue_on_error: bool = False,
     run_job_fn=None,
+    start: str | None = None,
+    end: str | None = None,
+    bar_type: str | None = None,
 ) -> dict[str, Any]:
     out_root = safe_output_root(output_root, purpose="batch smoke")
     _ensure_smoke_output_root(out_root)
-    jobs = build_jobs(cfg, max_symbols=max_symbols)
+    jobs = build_jobs(cfg, max_symbols=max_symbols, start=start, end=end, bar_type=bar_type)
     if not jobs:
         raise ValueError("no smoke jobs selected")
     out_root.mkdir(parents=True, exist_ok=False)
@@ -1175,6 +1178,9 @@ def main(argv: list[str] | None = None) -> int:
             max_symbols=args.max_symbols,
             fail_fast=args.fail_fast and not args.continue_on_error,
             continue_on_error=args.continue_on_error,
+            start=args.start,
+            end=args.end,
+            bar_type=args.bar_type,
         )
         print(json.dumps(result, indent=2))
         return int(result.get("exit_code", 0))

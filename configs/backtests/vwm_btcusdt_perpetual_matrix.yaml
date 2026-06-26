@@ -1,0 +1,65 @@
+# BTCUSDT USD-M perpetual VWM experiment matrix: bar_type x window.
+# One symbol (BTCUSDT), 3 bar_types (5m/15m/1h). Real 5m/15m/1h OHLCV bars from
+# the public read-only Binance Vision archive (data/futures/um/daily/klines).
+#
+# NOTE: run_vwm_batch_backtests applies ONE global window per invocation, so the
+# date window is supplied per run via --start/--end (7d / 30d / 90d) into a
+# per-window output dir (vwm_btcusdt_perpetual_matrix_7d / _30d / _90d). The
+# 3 bar_type include entries below expand to 3 jobs per window = 9 cells total,
+# which scripts/build_crypto_perpetual_matrix_eval_table.py then aggregates.
+#
+# CAVEAT: funding, liquidation, margin, mark/index price NOT modeled.
+
+strategy:
+  name: vwm
+  params:
+    mom_len: 5
+    avg_len: 20
+    atr_len: 5
+    atr_pct: 0.5
+    setup_len: 5
+
+execution:
+  backend: nautilus
+  fill_timing: same_bar
+  fee_rate: 0.0005
+  initial_cash: 100000
+  quantity: 1.0
+  sell_means: short
+  allow_short: true
+  price_field: close
+  slippage_bps: 1.0
+
+data:
+  root: historical_data/market_data
+  start: 2024-06-01
+  end: 2024-08-29
+
+universe:
+  include:
+    - exchange: BINANCE
+      venue_type: futures_um
+      symbol: BTCUSDT
+      instrument_id: BTCUSDT-PERP.BINANCE
+      bar_type: 5m
+    - exchange: BINANCE
+      venue_type: futures_um
+      symbol: BTCUSDT
+      instrument_id: BTCUSDT-PERP.BINANCE
+      bar_type: 15m
+    - exchange: BINANCE
+      venue_type: futures_um
+      symbol: BTCUSDT
+      instrument_id: BTCUSDT-PERP.BINANCE
+      bar_type: 1h
+  exclude: []
+
+output:
+  root: outputs/backtests/vwm_btcusdt_perpetual_matrix
+  overwrite: false
+
+metadata:
+  market_type: crypto_perpetual
+  contract_type: usd_m_perpetual
+  data_source: binance_vision_futures_um_klines
+  caveat: funding_liquidation_margin_mark_index_not_modeled

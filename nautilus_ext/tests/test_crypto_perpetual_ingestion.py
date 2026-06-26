@@ -92,6 +92,22 @@ def test_max_symbols_and_days_guards(tmp_path):
         )
 
 
+def test_max_days_override_enumerates_window(tmp_path):
+    # opt-in multi-day range: default guard stays 1, but a raised max_days
+    # enumerates the full inclusive window (one plan item per day).
+    plan = build_plan(
+        symbols=["BTCUSDT"],
+        bar_type="15m",
+        start="2024-06-01",
+        end="2024-06-03",
+        out_root=tmp_path,
+        max_days=92,
+    )
+    dates = [item.date for item in plan]
+    assert dates == ["2024-06-01", "2024-06-02", "2024-06-03"]
+    assert plan[-1].url.endswith("BTCUSDT-15m-2024-06-03.zip")
+
+
 def test_schema_normalization_adds_trade_bar_fields():
     import polars as pl
 

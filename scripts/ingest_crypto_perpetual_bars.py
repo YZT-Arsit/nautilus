@@ -56,15 +56,17 @@ def _parse_symbols(value: str, *, max_symbols: int = MAX_SYMBOLS) -> list[str]:
     return symbols
 
 
-def _dates(start: str, end: str) -> list[str]:
+def _dates(start: str, end: str, *, max_days: int = MAX_DAYS) -> list[str]:
+    from datetime import timedelta  # noqa: PLC0415
+
     first = datetime.strptime(start, "%Y-%m-%d").date()
     last = datetime.strptime(end, "%Y-%m-%d").date()
     if last < first:
         raise ValueError("end date is before start date")
     days = (last - first).days + 1
-    if days > MAX_DAYS:
-        raise ValueError(f"max-days guard: requested {days}, allowed {MAX_DAYS}")
-    return [(first).isoformat()]
+    if days > max_days:
+        raise ValueError(f"max-days guard: requested {days}, allowed {max_days}")
+    return [(first + timedelta(days=i)).isoformat() for i in range(days)]
 
 
 def _instrument_id(symbol: str) -> str:
@@ -86,11 +88,12 @@ def _output_file(root: Path, *, symbol: str, bar_type: str, date: str) -> Path:
     )
 
 
-def build_plan(*, symbols: list[str], bar_type: str, start: str, end: str, out_root: Path) -> list[IngestPlan]:
+def build_plan(*, symbols: list[str], bar_type: str, start: str, end: str, out_root: Path,
+               max_days: int = MAX_DAYS) -> list[IngestPlan]:
     if len(symbols) > MAX_SYMBOLS:
         raise ValueError(f"max-symbols guard: requested {len(symbols)}, allowed {MAX_SYMBOLS}")
     plans: list[IngestPlan] = []
-    for date in _dates(start, end):
+    for date in _dates(start, end, max_days=max_days):
         for symbol in symbols:
             url = build_binance_vision_kline_url(MARKET, symbol, bar_type, "daily", date)
             out = _output_file(out_root, symbol=symbol, bar_type=bar_type, date=date)
@@ -108,7 +111,7 @@ def build_plan(*, symbols: list[str], bar_type: str, start: str, end: str, out_r
                     status="skipped_existing" if out.exists() else "planned",
                 )
             )
-    if len(plans) > MAX_SYMBOLS * MAX_DAYS:
+    if len(plans) > MAX_SYMBOLS * max_days:
         raise ValueError("download guard exceeded")
     return plans
 
@@ -220,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--plan-only", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--max-symbols", type=int, default=MAX_SYMBOLS)
+    ap.add_argument("--max-days", type=int, default=MAX_DAYS,
+                    help="multi-day range guard (default 1 = smoke; raise to ingest a window)")
     ap.add_argument("--no-overwrite", action="store_true", default=True)
     ap.add_argument("--timeout", type=int, default=30)
     args = ap.parse_args(argv)
@@ -228,7 +233,8 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("only Binance USD-M perpetual smoke is supported")
     symbols = _parse_symbols(args.symbols, max_symbols=args.max_symbols)
     out_root = Path(args.out_root)
-    plan = build_plan(symbols=symbols, bar_type=args.bar_type, start=args.start, end=args.end, out_root=out_root)
+    plan = build_plan(symbols=symbols, bar_type=args.bar_type, start=args.start, end=args.end,
+                      out_root=out_root, max_days=args.max_days)
     print(f"PLAN jobs={len(plan)} exchange={args.exchange} market=futures_um bar_type={args.bar_type}")
     for item in plan:
         print(f"  {item.symbol} {item.date}: {item.url} -> {item.output_path} status={item.status}")
