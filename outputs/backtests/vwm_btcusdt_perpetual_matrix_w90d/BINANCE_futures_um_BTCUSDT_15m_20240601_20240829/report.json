@@ -1,0 +1,53 @@
+{
+  "run_name": "BINANCE_futures_um_BTCUSDT_15m_20240601_20240829",
+  "mode": "nautilus_native",
+  "backend": "nautilus_backtest",
+  "initial_cash": 100000.0,
+  "final_equity": 108841.87235,
+  "total_return": 0.08841872,
+  "max_drawdown": 0.08156335,
+  "realized_pnl": 16322.4,
+  "gross_realized_pnl": 16322.4,
+  "total_commission": 8123.82765,
+  "net_realized_pnl": 8198.57235,
+  "unrealized_pnl": 643.3,
+  "net_pnl": 8841.87235,
+  "trade_count": 128,
+  "win_rate": 0.414062,
+  "gross_win_rate": 0.414062,
+  "win_rate_basis": "gross",
+  "fill_count": 257,
+  "bar_count": 8640,
+  "signal_count": 257,
+  "signal_breakdown": {
+    "HOLD": 8383,
+    "SELL": 129,
+    "BUY": 128
+  },
+  "start_time_ns": 1717200000000000000,
+  "end_time_ns": 1724975100000000000,
+  "start_time": "2024-06-01T00:00:00+00:00",
+  "end_time": "2024-08-29T23:45:00+00:00",
+  "fee_rate": 0.0005,
+  "slippage_bps": 1.0,
+  "fill_timing": "same_bar",
+  "original_intent_count": 257,
+  "executed_intent_count": 257,
+  "dropped_tail_intents": 0,
+  "engine": {
+    "engine": "BacktestEngine",
+    "instrument_id": "BTCUSDT-PERP.BINANCE",
+    "account_type": "MARGIN",
+    "bars_loaded": 8640,
+    "instrument_mapping": {
+      "kind": "test_kit_factory",
+      "metadata_source": "test_kit",
+      "multiplier": null,
+      "tick_size": null,
+      "lot_size": null
+    },
+    "final_balance_quote": 108198.57235,
+    "quote_currency": "USDT",
+    "fills_captured": 257
+  }
+}

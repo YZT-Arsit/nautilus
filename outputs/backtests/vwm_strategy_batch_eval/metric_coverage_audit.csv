@@ -1,0 +1,89 @@
+Metric,Status,Source,Available(BTCUSDT),Note
+Strategy,added,cli,yes,from --strategy
+Market Type,covered,single/matrix builder,yes,pre-existing metric
+Exchange,covered,single/matrix builder,yes,pre-existing metric
+Symbol,covered,single/matrix builder,yes,pre-existing metric
+Contract Type,covered,single/matrix builder,yes,pre-existing metric
+Bar Type,covered,single/matrix builder,yes,pre-existing metric
+Window,covered,single/matrix builder,yes,pre-existing metric
+Start,covered,single/matrix builder,yes,pre-existing metric
+End,covered,single/matrix builder,yes,pre-existing metric
+Days,covered,single/matrix builder,yes,pre-existing metric
+Bars,covered,single/matrix builder,yes,pre-existing metric
+Status,covered,single/matrix builder,yes,pre-existing metric
+Failure Reason,added,derived,no,missing-backtest reason
+Initial Cash,covered,single/matrix builder,yes,pre-existing metric
+Final Equity,covered,single/matrix builder,yes,pre-existing metric
+Net PnL,covered,single/matrix builder,yes,pre-existing metric
+Total Return,covered,single/matrix builder,yes,pre-existing metric
+Annualized Return,added,computed,yes,(1+ret)^(365/days)-1
+Benchmark Return,covered,single/matrix builder,yes,pre-existing metric
+Excess Return,covered,single/matrix builder,yes,pre-existing metric
+Zero Fee Return,covered,single/matrix builder,yes,pre-existing metric
+VIP Fee 20% Return,covered,single/matrix builder,yes,pre-existing metric
+Fee Drag,added,computed,yes,zero-fee return - actual return
+Calmar Ratio,added,computed,yes,annualized return / max drawdown %
+Return / Max Drawdown,added,computed,yes,total return / max drawdown %
+Best Day Return,added,equity_curve,yes,daily resample
+Worst Day Return,added,equity_curve,yes,daily resample
+Max Drawdown,added,equity_curve,yes,absolute peak-trough
+Max Drawdown %,covered,single/matrix builder,yes,pre-existing metric
+Sharpe,covered,single/matrix builder,yes,pre-existing metric
+Sortino,covered,single/matrix builder,yes,pre-existing metric
+Volatility,covered,single/matrix builder,yes,pre-existing metric
+Downside Volatility,added,equity_curve,yes,annualized downside std
+Trade Count,covered,single/matrix builder,yes,pre-existing metric
+Fill Count,covered,single/matrix builder,yes,pre-existing metric
+Long Trades,covered,single/matrix builder,yes,pre-existing metric
+Short Trades,covered,single/matrix builder,yes,pre-existing metric
+Win Rate,covered,single/matrix builder,yes,pre-existing metric
+Profit Factor,covered,single/matrix builder,yes,pre-existing metric
+Payoff Ratio,added,summary,yes,avg win / |avg loss|
+Expectancy,added,summary,yes,win*avgWin + loss*avgLoss
+Avg Trade PnL,covered,single/matrix builder,yes,pre-existing metric
+Avg Win,covered,single/matrix builder,yes,pre-existing metric
+Avg Loss,covered,single/matrix builder,yes,pre-existing metric
+Median Trade PnL,added,trades,yes,median realized pnl
+Best Trade,added,trades,yes,max realized pnl
+Worst Trade,added,trades,yes,min realized pnl
+Max Consecutive Wins,added,trades,yes,by realized-pnl sign
+Max Consecutive Losses,added,trades,yes,by realized-pnl sign
+Exposure %,covered,single/matrix builder,yes,pre-existing metric
+Long Exposure %,covered,single/matrix builder,yes,pre-existing metric
+Short Exposure %,covered,single/matrix builder,yes,pre-existing metric
+Flat %,covered,single/matrix builder,yes,pre-existing metric
+Net Direction Bias,added,computed,yes,long% - short%
+Avg Holding Time,covered,single/matrix builder,yes,pre-existing metric
+Max Holding Time,covered,single/matrix builder,yes,pre-existing metric
+Avg Holding Bars,covered,single/matrix builder,yes,pre-existing metric
+Max Holding Bars,covered,single/matrix builder,yes,pre-existing metric
+Gross PnL,covered,single/matrix builder,yes,pre-existing metric
+Gross Profit,covered,single/matrix builder,yes,pre-existing metric
+Gross Loss,covered,single/matrix builder,yes,pre-existing metric
+Total Commission,covered,single/matrix builder,yes,pre-existing metric
+Commission / Initial Cash,covered,single/matrix builder,yes,pre-existing metric
+Commission / |Gross PnL|,covered,single/matrix builder,yes,pre-existing metric
+Commission / |Net PnL|,covered,single/matrix builder,yes,pre-existing metric
+Avg Commission / Trade,covered,single/matrix builder,yes,pre-existing metric
+Avg Commission / Fill,covered,single/matrix builder,yes,pre-existing metric
+Net / Gross Ratio,added,computed,yes,net pnl / gross pnl
+Break-even Commission,added,computed,yes,gross pnl (fees affordable to break even)
+Break-even Fee Ratio,covered,single/matrix builder,yes,pre-existing metric
+Turnover,covered,single/matrix builder,yes,pre-existing metric
+Positive Return Windows,added,matrix,yes,cells with total return > 0
+Positive Excess Windows,added,matrix,yes,cells with excess > 0
+Positive Excess Ratio,added,matrix,yes,positive-excess cells / cells
+Mean Excess Across Windows,added,matrix,yes,mean excess over cells
+Std Excess Across Windows,added,matrix,yes,std excess over cells
+Best Window,added,matrix,yes,window of max-excess cell
+Worst Window,added,matrix,yes,window of min-excess cell
+Best Bar Type,added,matrix,yes,bar type of max-excess cell
+Worst Bar Type,added,matrix,yes,bar type of min-excess cell
+Funding Modeled,covered,single/matrix builder,yes,pre-existing metric
+Funding Data Available,planned,n/a,yes,funding rate not ingested
+Funding-adjusted Return,planned,n/a,no,funding not in PnL
+Margin Modeled,covered,single/matrix builder,yes,pre-existing metric
+Liquidation Modeled,covered,single/matrix builder,yes,pre-existing metric
+Mark Price Modeled,covered,single/matrix builder,yes,pre-existing metric
+Mark Price Data Available,planned,n/a,yes,mark price not ingested
+Caveat,covered,single/matrix builder,yes,pre-existing metric

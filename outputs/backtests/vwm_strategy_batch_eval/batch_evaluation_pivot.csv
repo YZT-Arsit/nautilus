@@ -1,0 +1,89 @@
+Metric,BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT
+Strategy,VWM,VWM,VWM,VWM
+Market Type,crypto_perpetual,crypto_perpetual,crypto_perpetual,crypto_perpetual
+Exchange,BINANCE,BINANCE,BINANCE,BINANCE
+Symbol,BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT
+Contract Type,USD-M perpetual,USD-M perpetual,USD-M perpetual,USD-M perpetual
+Bar Type,15m,NA,NA,NA
+Window,90d,NA,NA,NA
+Start,2024-06-01,NA,NA,NA
+End,2024-08-29,NA,NA,NA
+Days,90,NA,NA,NA
+Bars,8640,NA,NA,NA
+Status,success,missing_comparable_backtest,missing_comparable_backtest,missing_comparable_backtest
+Failure Reason,,no 15mx90d result yet,no 15mx90d result yet,no 15mx90d result yet
+Initial Cash,100000,NA,NA,NA
+Final Equity,108842,NA,NA,NA
+Net PnL,8841.87,NA,NA,NA
+Total Return,0.0884187,NA,NA,NA
+Annualized Return,0.41003,NA,NA,NA
+Benchmark Return,-0.122614,NA,NA,NA
+Excess Return,0.211033,NA,NA,NA
+Zero Fee Return,0.169657,NA,NA,NA
+VIP Fee 20% Return,0.153409,NA,NA,NA
+Fee Drag,0.0812383,NA,NA,NA
+Calmar Ratio,5.02713,NA,NA,NA
+Return / Max Drawdown,1.08405,NA,NA,NA
+Best Day Return,0.0518411,NA,NA,NA
+Worst Day Return,-0.0209137,NA,NA,NA
+Max Drawdown,8906.83,NA,NA,NA
+Max Drawdown %,0.0815634,NA,NA,NA
+Sharpe,1.71295,NA,NA,NA
+Sortino,1.26975,NA,NA,NA
+Volatility,0.213971,NA,NA,NA
+Downside Volatility,0.288657,NA,NA,NA
+Trade Count,128,NA,NA,NA
+Fill Count,257,NA,NA,NA
+Long Trades,0,NA,NA,NA
+Short Trades,128,NA,NA,NA
+Win Rate,0.414062,NA,NA,NA
+Profit Factor,1.62598,NA,NA,NA
+Payoff Ratio,2.30091,NA,NA,NA
+Expectancy,127.518,NA,NA,NA
+Avg Trade PnL,127.519,NA,NA,NA
+Avg Win,799.953,NA,NA,NA
+Avg Loss,-347.668,NA,NA,NA
+Median Trade PnL,-69.4,NA,NA,NA
+Best Trade,7730.4,NA,NA,NA
+Worst Trade,-1192.1,NA,NA,NA
+Max Consecutive Wins,5,NA,NA,NA
+Max Consecutive Losses,5,NA,NA,NA
+Exposure %,0.44838,NA,NA,NA
+Long Exposure %,0,NA,NA,NA
+Short Exposure %,0.44838,NA,NA,NA
+Flat %,0.55162,NA,NA,NA
+Net Direction Bias,-0.44838,NA,NA,NA
+Avg Holding Time,451.172,NA,NA,NA
+Max Holding Time,2010,NA,NA,NA
+Avg Holding Bars,30.0781,NA,NA,NA
+Max Holding Bars,134,NA,NA,NA
+Gross PnL,16322.4,NA,NA,NA
+Gross Profit,42397.5,NA,NA,NA
+Gross Loss,-26075.1,NA,NA,NA
+Total Commission,8123.83,NA,NA,NA
+Commission / Initial Cash,0.0812383,NA,NA,NA
+Commission / |Gross PnL|,0.49771,NA,NA,NA
+Commission / |Net PnL|,0.91879,NA,NA,NA
+Avg Commission / Trade,63.4674,NA,NA,NA
+Avg Commission / Fill,31.6102,NA,NA,NA
+Net / Gross Ratio,0.541702,NA,NA,NA
+Break-even Commission,16322.4,NA,NA,NA
+Break-even Fee Ratio,2.08839,NA,NA,NA
+Turnover,161.877,NA,NA,NA
+Positive Return Windows,2,NA,NA,NA
+Positive Excess Windows,5,NA,NA,NA
+Positive Excess Ratio,0.555556,NA,NA,NA
+Mean Excess Across Windows,0.0369861,NA,NA,NA
+Std Excess Across Windows,0.0904061,NA,NA,NA
+Best Window,90d,NA,NA,NA
+Worst Window,7d,NA,NA,NA
+Best Bar Type,15m,NA,NA,NA
+Worst Bar Type,5m,NA,NA,NA
+Funding Modeled,No,No,No,No
+Funding Data Available,No,No,No,No
+Funding-adjusted Return,NA,NA,NA,NA
+Margin Modeled,No,No,No,No
+Liquidation Modeled,No,No,No,No
+Mark Price Modeled,No,No,No,No
+Mark Price Data Available,No,No,No,No
+Caveat,funding/liquidation/margin/mark-index not modeled,no comparable backtest for this symbol,no comparable backtest for this symbol,no comparable backtest for this symbol

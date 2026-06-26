@@ -1,0 +1,43 @@
+run_name: BINANCE_futures_um_BTCUSDT_15m_20240601_20240829
+strategy: vwm_short
+params:
+  mom_len: 5
+  avg_len: 20
+  atr_len: 5
+  setup_len: 5
+  atr_pcnt: 0.5
+  instrument_id: BTCUSDT-PERP.BINANCE
+  bar_type: 15m
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 0
+  timestamp_column: ts
+  timestamp_unit: ns
+  open_column: open
+  high_column: high
+  low_column: low
+  close_column: close
+  volume_column: volume
+  filters:
+    exchange: BINANCE
+    venue_type: futures_um
+    symbol: BTCUSDT
+    bar_type: 15m
+  start: '2024-06-01'
+  end: '2024-08-29'
+execution:
+  backend: nautilus_backtest
+  fill_timing: same_bar
+  fee_rate: 0.0005
+  initial_cash: 100000
+  quantity: 1.0
+  sell_means: short
+  allow_short: true
+  price_field: close
+  slippage_bps: 1.0
+  mode: nautilus_native
+output:
+  root: outputs\backtests\vwm_btcusdt_perpetual_matrix_w90d
+  print_table: false

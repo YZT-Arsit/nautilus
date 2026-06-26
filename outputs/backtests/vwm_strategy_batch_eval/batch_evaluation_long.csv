@@ -1,0 +1,353 @@
+Symbol,Metric,Value
+BTCUSDT,Strategy,VWM
+BTCUSDT,Market Type,crypto_perpetual
+BTCUSDT,Exchange,BINANCE
+BTCUSDT,Symbol,BTCUSDT
+BTCUSDT,Contract Type,USD-M perpetual
+BTCUSDT,Bar Type,15m
+BTCUSDT,Window,90d
+BTCUSDT,Start,2024-06-01
+BTCUSDT,End,2024-08-29
+BTCUSDT,Days,90
+BTCUSDT,Bars,8640
+BTCUSDT,Status,success
+BTCUSDT,Failure Reason,
+BTCUSDT,Initial Cash,100000
+BTCUSDT,Final Equity,108842
+BTCUSDT,Net PnL,8841.87
+BTCUSDT,Total Return,0.0884187
+BTCUSDT,Annualized Return,0.41003
+BTCUSDT,Benchmark Return,-0.122614
+BTCUSDT,Excess Return,0.211033
+BTCUSDT,Zero Fee Return,0.169657
+BTCUSDT,VIP Fee 20% Return,0.153409
+BTCUSDT,Fee Drag,0.0812383
+BTCUSDT,Calmar Ratio,5.02713
+BTCUSDT,Return / Max Drawdown,1.08405
+BTCUSDT,Best Day Return,0.0518411
+BTCUSDT,Worst Day Return,-0.0209137
+BTCUSDT,Max Drawdown,8906.83
+BTCUSDT,Max Drawdown %,0.0815634
+BTCUSDT,Sharpe,1.71295
+BTCUSDT,Sortino,1.26975
+BTCUSDT,Volatility,0.213971
+BTCUSDT,Downside Volatility,0.288657
+BTCUSDT,Trade Count,128
+BTCUSDT,Fill Count,257
+BTCUSDT,Long Trades,0
+BTCUSDT,Short Trades,128
+BTCUSDT,Win Rate,0.414062
+BTCUSDT,Profit Factor,1.62598
+BTCUSDT,Payoff Ratio,2.30091
+BTCUSDT,Expectancy,127.518
+BTCUSDT,Avg Trade PnL,127.519
+BTCUSDT,Avg Win,799.953
+BTCUSDT,Avg Loss,-347.668
+BTCUSDT,Median Trade PnL,-69.4
+BTCUSDT,Best Trade,7730.4
+BTCUSDT,Worst Trade,-1192.1
+BTCUSDT,Max Consecutive Wins,5
+BTCUSDT,Max Consecutive Losses,5
+BTCUSDT,Exposure %,0.44838
+BTCUSDT,Long Exposure %,0
+BTCUSDT,Short Exposure %,0.44838
+BTCUSDT,Flat %,0.55162
+BTCUSDT,Net Direction Bias,-0.44838
+BTCUSDT,Avg Holding Time,451.172
+BTCUSDT,Max Holding Time,2010
+BTCUSDT,Avg Holding Bars,30.0781
+BTCUSDT,Max Holding Bars,134
+BTCUSDT,Gross PnL,16322.4
+BTCUSDT,Gross Profit,42397.5
+BTCUSDT,Gross Loss,-26075.1
+BTCUSDT,Total Commission,8123.83
+BTCUSDT,Commission / Initial Cash,0.0812383
+BTCUSDT,Commission / |Gross PnL|,0.49771
+BTCUSDT,Commission / |Net PnL|,0.91879
+BTCUSDT,Avg Commission / Trade,63.4674
+BTCUSDT,Avg Commission / Fill,31.6102
+BTCUSDT,Net / Gross Ratio,0.541702
+BTCUSDT,Break-even Commission,16322.4
+BTCUSDT,Break-even Fee Ratio,2.08839
+BTCUSDT,Turnover,161.877
+BTCUSDT,Positive Return Windows,2
+BTCUSDT,Positive Excess Windows,5
+BTCUSDT,Positive Excess Ratio,0.555556
+BTCUSDT,Mean Excess Across Windows,0.0369861
+BTCUSDT,Std Excess Across Windows,0.0904061
+BTCUSDT,Best Window,90d
+BTCUSDT,Worst Window,7d
+BTCUSDT,Best Bar Type,15m
+BTCUSDT,Worst Bar Type,5m
+BTCUSDT,Funding Modeled,No
+BTCUSDT,Funding Data Available,No
+BTCUSDT,Funding-adjusted Return,NA
+BTCUSDT,Margin Modeled,No
+BTCUSDT,Liquidation Modeled,No
+BTCUSDT,Mark Price Modeled,No
+BTCUSDT,Mark Price Data Available,No
+BTCUSDT,Caveat,funding/liquidation/margin/mark-index not modeled
+ETHUSDT,Strategy,VWM
+ETHUSDT,Market Type,crypto_perpetual
+ETHUSDT,Exchange,BINANCE
+ETHUSDT,Symbol,ETHUSDT
+ETHUSDT,Contract Type,USD-M perpetual
+ETHUSDT,Bar Type,NA
+ETHUSDT,Window,NA
+ETHUSDT,Start,NA
+ETHUSDT,End,NA
+ETHUSDT,Days,NA
+ETHUSDT,Bars,NA
+ETHUSDT,Status,missing_comparable_backtest
+ETHUSDT,Failure Reason,no 15mx90d result yet
+ETHUSDT,Initial Cash,NA
+ETHUSDT,Final Equity,NA
+ETHUSDT,Net PnL,NA
+ETHUSDT,Total Return,NA
+ETHUSDT,Annualized Return,NA
+ETHUSDT,Benchmark Return,NA
+ETHUSDT,Excess Return,NA
+ETHUSDT,Zero Fee Return,NA
+ETHUSDT,VIP Fee 20% Return,NA
+ETHUSDT,Fee Drag,NA
+ETHUSDT,Calmar Ratio,NA
+ETHUSDT,Return / Max Drawdown,NA
+ETHUSDT,Best Day Return,NA
+ETHUSDT,Worst Day Return,NA
+ETHUSDT,Max Drawdown,NA
+ETHUSDT,Max Drawdown %,NA
+ETHUSDT,Sharpe,NA
+ETHUSDT,Sortino,NA
+ETHUSDT,Volatility,NA
+ETHUSDT,Downside Volatility,NA
+ETHUSDT,Trade Count,NA
+ETHUSDT,Fill Count,NA
+ETHUSDT,Long Trades,NA
+ETHUSDT,Short Trades,NA
+ETHUSDT,Win Rate,NA
+ETHUSDT,Profit Factor,NA
+ETHUSDT,Payoff Ratio,NA
+ETHUSDT,Expectancy,NA
+ETHUSDT,Avg Trade PnL,NA
+ETHUSDT,Avg Win,NA
+ETHUSDT,Avg Loss,NA
+ETHUSDT,Median Trade PnL,NA
+ETHUSDT,Best Trade,NA
+ETHUSDT,Worst Trade,NA
+ETHUSDT,Max Consecutive Wins,NA
+ETHUSDT,Max Consecutive Losses,NA
+ETHUSDT,Exposure %,NA
+ETHUSDT,Long Exposure %,NA
+ETHUSDT,Short Exposure %,NA
+ETHUSDT,Flat %,NA
+ETHUSDT,Net Direction Bias,NA
+ETHUSDT,Avg Holding Time,NA
+ETHUSDT,Max Holding Time,NA
+ETHUSDT,Avg Holding Bars,NA
+ETHUSDT,Max Holding Bars,NA
+ETHUSDT,Gross PnL,NA
+ETHUSDT,Gross Profit,NA
+ETHUSDT,Gross Loss,NA
+ETHUSDT,Total Commission,NA
+ETHUSDT,Commission / Initial Cash,NA
+ETHUSDT,Commission / |Gross PnL|,NA
+ETHUSDT,Commission / |Net PnL|,NA
+ETHUSDT,Avg Commission / Trade,NA
+ETHUSDT,Avg Commission / Fill,NA
+ETHUSDT,Net / Gross Ratio,NA
+ETHUSDT,Break-even Commission,NA
+ETHUSDT,Break-even Fee Ratio,NA
+ETHUSDT,Turnover,NA
+ETHUSDT,Positive Return Windows,NA
+ETHUSDT,Positive Excess Windows,NA
+ETHUSDT,Positive Excess Ratio,NA
+ETHUSDT,Mean Excess Across Windows,NA
+ETHUSDT,Std Excess Across Windows,NA
+ETHUSDT,Best Window,NA
+ETHUSDT,Worst Window,NA
+ETHUSDT,Best Bar Type,NA
+ETHUSDT,Worst Bar Type,NA
+ETHUSDT,Funding Modeled,No
+ETHUSDT,Funding Data Available,No
+ETHUSDT,Funding-adjusted Return,NA
+ETHUSDT,Margin Modeled,No
+ETHUSDT,Liquidation Modeled,No
+ETHUSDT,Mark Price Modeled,No
+ETHUSDT,Mark Price Data Available,No
+ETHUSDT,Caveat,no comparable backtest for this symbol
+SOLUSDT,Strategy,VWM
+SOLUSDT,Market Type,crypto_perpetual
+SOLUSDT,Exchange,BINANCE
+SOLUSDT,Symbol,SOLUSDT
+SOLUSDT,Contract Type,USD-M perpetual
+SOLUSDT,Bar Type,NA
+SOLUSDT,Window,NA
+SOLUSDT,Start,NA
+SOLUSDT,End,NA
+SOLUSDT,Days,NA
+SOLUSDT,Bars,NA
+SOLUSDT,Status,missing_comparable_backtest
+SOLUSDT,Failure Reason,no 15mx90d result yet
+SOLUSDT,Initial Cash,NA
+SOLUSDT,Final Equity,NA
+SOLUSDT,Net PnL,NA
+SOLUSDT,Total Return,NA
+SOLUSDT,Annualized Return,NA
+SOLUSDT,Benchmark Return,NA
+SOLUSDT,Excess Return,NA
+SOLUSDT,Zero Fee Return,NA
+SOLUSDT,VIP Fee 20% Return,NA
+SOLUSDT,Fee Drag,NA
+SOLUSDT,Calmar Ratio,NA
+SOLUSDT,Return / Max Drawdown,NA
+SOLUSDT,Best Day Return,NA
+SOLUSDT,Worst Day Return,NA
+SOLUSDT,Max Drawdown,NA
+SOLUSDT,Max Drawdown %,NA
+SOLUSDT,Sharpe,NA
+SOLUSDT,Sortino,NA
+SOLUSDT,Volatility,NA
+SOLUSDT,Downside Volatility,NA
+SOLUSDT,Trade Count,NA
+SOLUSDT,Fill Count,NA
+SOLUSDT,Long Trades,NA
+SOLUSDT,Short Trades,NA
+SOLUSDT,Win Rate,NA
+SOLUSDT,Profit Factor,NA
+SOLUSDT,Payoff Ratio,NA
+SOLUSDT,Expectancy,NA
+SOLUSDT,Avg Trade PnL,NA
+SOLUSDT,Avg Win,NA
+SOLUSDT,Avg Loss,NA
+SOLUSDT,Median Trade PnL,NA
+SOLUSDT,Best Trade,NA
+SOLUSDT,Worst Trade,NA
+SOLUSDT,Max Consecutive Wins,NA
+SOLUSDT,Max Consecutive Losses,NA
+SOLUSDT,Exposure %,NA
+SOLUSDT,Long Exposure %,NA
+SOLUSDT,Short Exposure %,NA
+SOLUSDT,Flat %,NA
+SOLUSDT,Net Direction Bias,NA
+SOLUSDT,Avg Holding Time,NA
+SOLUSDT,Max Holding Time,NA
+SOLUSDT,Avg Holding Bars,NA
+SOLUSDT,Max Holding Bars,NA
+SOLUSDT,Gross PnL,NA
+SOLUSDT,Gross Profit,NA
+SOLUSDT,Gross Loss,NA
+SOLUSDT,Total Commission,NA
+SOLUSDT,Commission / Initial Cash,NA
+SOLUSDT,Commission / |Gross PnL|,NA
+SOLUSDT,Commission / |Net PnL|,NA
+SOLUSDT,Avg Commission / Trade,NA
+SOLUSDT,Avg Commission / Fill,NA
+SOLUSDT,Net / Gross Ratio,NA
+SOLUSDT,Break-even Commission,NA
+SOLUSDT,Break-even Fee Ratio,NA
+SOLUSDT,Turnover,NA
+SOLUSDT,Positive Return Windows,NA
+SOLUSDT,Positive Excess Windows,NA
+SOLUSDT,Positive Excess Ratio,NA
+SOLUSDT,Mean Excess Across Windows,NA
+SOLUSDT,Std Excess Across Windows,NA
+SOLUSDT,Best Window,NA
+SOLUSDT,Worst Window,NA
+SOLUSDT,Best Bar Type,NA
+SOLUSDT,Worst Bar Type,NA
+SOLUSDT,Funding Modeled,No
+SOLUSDT,Funding Data Available,No
+SOLUSDT,Funding-adjusted Return,NA
+SOLUSDT,Margin Modeled,No
+SOLUSDT,Liquidation Modeled,No
+SOLUSDT,Mark Price Modeled,No
+SOLUSDT,Mark Price Data Available,No
+SOLUSDT,Caveat,no comparable backtest for this symbol
+BNBUSDT,Strategy,VWM
+BNBUSDT,Market Type,crypto_perpetual
+BNBUSDT,Exchange,BINANCE
+BNBUSDT,Symbol,BNBUSDT
+BNBUSDT,Contract Type,USD-M perpetual
+BNBUSDT,Bar Type,NA
+BNBUSDT,Window,NA
+BNBUSDT,Start,NA
+BNBUSDT,End,NA
+BNBUSDT,Days,NA
+BNBUSDT,Bars,NA
+BNBUSDT,Status,missing_comparable_backtest
+BNBUSDT,Failure Reason,no 15mx90d result yet
+BNBUSDT,Initial Cash,NA
+BNBUSDT,Final Equity,NA
+BNBUSDT,Net PnL,NA
+BNBUSDT,Total Return,NA
+BNBUSDT,Annualized Return,NA
+BNBUSDT,Benchmark Return,NA
+BNBUSDT,Excess Return,NA
+BNBUSDT,Zero Fee Return,NA
+BNBUSDT,VIP Fee 20% Return,NA
+BNBUSDT,Fee Drag,NA
+BNBUSDT,Calmar Ratio,NA
+BNBUSDT,Return / Max Drawdown,NA
+BNBUSDT,Best Day Return,NA
+BNBUSDT,Worst Day Return,NA
+BNBUSDT,Max Drawdown,NA
+BNBUSDT,Max Drawdown %,NA
+BNBUSDT,Sharpe,NA
+BNBUSDT,Sortino,NA
+BNBUSDT,Volatility,NA
+BNBUSDT,Downside Volatility,NA
+BNBUSDT,Trade Count,NA
+BNBUSDT,Fill Count,NA
+BNBUSDT,Long Trades,NA
+BNBUSDT,Short Trades,NA
+BNBUSDT,Win Rate,NA
+BNBUSDT,Profit Factor,NA
+BNBUSDT,Payoff Ratio,NA
+BNBUSDT,Expectancy,NA
+BNBUSDT,Avg Trade PnL,NA
+BNBUSDT,Avg Win,NA
+BNBUSDT,Avg Loss,NA
+BNBUSDT,Median Trade PnL,NA
+BNBUSDT,Best Trade,NA
+BNBUSDT,Worst Trade,NA
+BNBUSDT,Max Consecutive Wins,NA
+BNBUSDT,Max Consecutive Losses,NA
+BNBUSDT,Exposure %,NA
+BNBUSDT,Long Exposure %,NA
+BNBUSDT,Short Exposure %,NA
+BNBUSDT,Flat %,NA
+BNBUSDT,Net Direction Bias,NA
+BNBUSDT,Avg Holding Time,NA
+BNBUSDT,Max Holding Time,NA
+BNBUSDT,Avg Holding Bars,NA
+BNBUSDT,Max Holding Bars,NA
+BNBUSDT,Gross PnL,NA
+BNBUSDT,Gross Profit,NA
+BNBUSDT,Gross Loss,NA
+BNBUSDT,Total Commission,NA
+BNBUSDT,Commission / Initial Cash,NA
+BNBUSDT,Commission / |Gross PnL|,NA
+BNBUSDT,Commission / |Net PnL|,NA
+BNBUSDT,Avg Commission / Trade,NA
+BNBUSDT,Avg Commission / Fill,NA
+BNBUSDT,Net / Gross Ratio,NA
+BNBUSDT,Break-even Commission,NA
+BNBUSDT,Break-even Fee Ratio,NA
+BNBUSDT,Turnover,NA
+BNBUSDT,Positive Return Windows,NA
+BNBUSDT,Positive Excess Windows,NA
+BNBUSDT,Positive Excess Ratio,NA
+BNBUSDT,Mean Excess Across Windows,NA
+BNBUSDT,Std Excess Across Windows,NA
+BNBUSDT,Best Window,NA
+BNBUSDT,Worst Window,NA
+BNBUSDT,Best Bar Type,NA
+BNBUSDT,Worst Bar Type,NA
+BNBUSDT,Funding Modeled,No
+BNBUSDT,Funding Data Available,No
+BNBUSDT,Funding-adjusted Return,NA
+BNBUSDT,Margin Modeled,No
+BNBUSDT,Liquidation Modeled,No
+BNBUSDT,Mark Price Modeled,No
+BNBUSDT,Mark Price Data Available,No
+BNBUSDT,Caveat,no comparable backtest for this symbol
