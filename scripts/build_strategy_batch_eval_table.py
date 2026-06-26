@@ -114,6 +114,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="optional position_sizing.csv -> adds notional-normalization columns")
     ap.add_argument("--compare-fixed-table", default=None,
                     help="optional fixed-quantity batch_evaluation_table.csv -> writes normalization_comparison.csv")
+    ap.add_argument("--trend-filter-enabled", default=None,
+                    help="optional: adds trend-filter columns to every row (e.g. true/false)")
+    ap.add_argument("--trend-filter-fast-len", default=None)
+    ap.add_argument("--trend-filter-slow-len", default=None)
     ap.add_argument("--no-overwrite", action="store_true",
                     help="refuse to overwrite an existing batch_evaluation_table")
     return ap
@@ -130,6 +134,12 @@ def run(args) -> tuple[list[dict], list[str]]:
     if sizing:
         for r in rows:
             et.attach_sizing(r, sizing.get(str(r.get("Symbol", "")).upper()))
+    if getattr(args, "trend_filter_enabled", None) is not None:
+        info = {"enabled": args.trend_filter_enabled,
+                "fast_len": getattr(args, "trend_filter_fast_len", None) or et.NA,
+                "slow_len": getattr(args, "trend_filter_slow_len", None) or et.NA}
+        for r in rows:
+            et.attach_filter_info(r, info)
     return rows, symbols
 
 
@@ -147,9 +157,12 @@ def main(argv: list[str] | None = None) -> int:
 
     rows, symbols = run(args)
     has_sizing = bool(getattr(args, "sizing_file", None)) and any("Order Quantity" in r for r in rows)
-    csv_cols = et.SYMBOL_METRIC_COLUMNS + (et.SIZING_COLUMNS if has_sizing else [])
+    has_filter = getattr(args, "trend_filter_enabled", None) is not None
+    csv_cols = (et.SYMBOL_METRIC_COLUMNS + (et.SIZING_COLUMNS if has_sizing else [])
+                + (et.FILTER_COLUMNS if has_filter else []))
     md_cols = et.MD_CORE_COLUMNS[:-2] + (["Order Quantity", "Initial Notional", "Realized Vol 15m"]
-                                         if has_sizing else []) + et.MD_CORE_COLUMNS[-2:]
+                                         if has_sizing else []) \
+        + (["Trend Filter Enabled"] if has_filter else []) + et.MD_CORE_COLUMNS[-2:]
     et.write_table_csv(rows, table_csv, csv_cols)
     et.write_table_md(rows, table_md, md_cols)
     cov = et.build_coverage_rows(rows, primary_symbol=symbols[0] if symbols else None, columns=csv_cols)

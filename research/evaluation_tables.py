@@ -89,6 +89,10 @@ SIZING_COLUMNS = ["Sizing Method", "Sizing Status", "Target Notional USDT",
                   "Target Risk USDT / Bar", "Realized Vol 15m", "Raw Order Quantity",
                   "Order Quantity", "Initial Notional"]
 
+# Optional trend-filter columns (appended only when filter info is supplied).
+FILTER_COLUMNS = ["Trend Filter Enabled", "Trend Filter Fast Len", "Trend Filter Slow Len",
+                  "Filtered Entry Count", "Blocked Entry Count", "Filter Block Rate"]
+
 # Structural fields we can always state, even when a symbol has no backtest.
 _STRUCTURAL = {
     "Market Type": "crypto_perpetual", "Exchange": "BINANCE",
@@ -477,6 +481,15 @@ METRIC_AUDIT: dict[str, tuple[str, str, str, str, str, str]] = {
     "Raw Order Quantity": (_C_EXP, "added", "sizing file", "reliable", "pre-cap quantity", "-"),
     "Order Quantity": (_C_EXP, "added", "sizing file", "reliable", "final per-job quantity", "-"),
     "Initial Notional": (_C_EXP, "added", "sizing file", "reliable", "final quantity x initial price", "-"),
+    "Trend Filter Enabled": (_C_RUN, "added", "cli/config", "reliable", "regime gate on/off", "-"),
+    "Trend Filter Fast Len": (_C_RUN, "added", "cli/config", "reliable", "fast SMA length", "NA"),
+    "Trend Filter Slow Len": (_C_RUN, "added", "cli/config", "reliable", "slow SMA length", "NA"),
+    "Filtered Entry Count": (_C_TRADE, "planned", "strategy internal", "unavailable",
+                             "not surfaced to summary", "NA"),
+    "Blocked Entry Count": (_C_TRADE, "planned", "strategy internal", "unavailable",
+                            "not surfaced to summary", "NA"),
+    "Filter Block Rate": (_C_TRADE, "planned", "strategy internal", "unavailable",
+                          "not surfaced to summary", "NA"),
 }
 
 COVERAGE_COLUMNS = ["Metric", "Category", "Status", "Computed From", "Reliability",
@@ -552,6 +565,23 @@ def attach_sizing(row: dict, sizing: dict | None) -> dict:
     row["Raw Order Quantity"] = _sz(s, "raw_order_quantity", "order_quantity")
     row["Order Quantity"] = _sz(s, "final_order_quantity", "order_quantity")
     row["Initial Notional"] = _sz(s, "final_initial_notional", "actual_initial_notional")
+    return row
+
+
+def attach_filter_info(row: dict, info: dict | None) -> dict:
+    """Append the trend-filter columns to a per-symbol row (NA when no info).
+
+    ``info`` carries the config-known fields (enabled / fast_len / slow_len).
+    Entry counts are strategy-internal and not surfaced to summary.json, so they
+    are NA unless explicitly provided (never fabricated).
+    """
+    i = info or {}
+    row["Trend Filter Enabled"] = i.get("enabled", NA)
+    row["Trend Filter Fast Len"] = i.get("fast_len", NA)
+    row["Trend Filter Slow Len"] = i.get("slow_len", NA)
+    row["Filtered Entry Count"] = i.get("filtered_entry_count", NA)
+    row["Blocked Entry Count"] = i.get("blocked_entry_count", NA)
+    row["Filter Block Rate"] = i.get("filter_block_rate", NA)
     return row
 
 
@@ -697,6 +727,89 @@ def write_sizing_mode_comparison_csv(rows: list[dict], path: Path) -> None:
 def write_sizing_mode_comparison_md(rows: list[dict], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cols = SIZING_MODE_COMPARISON_COLUMNS
+    lines = ["| " + " | ".join(cols) + " |", "| " + " | ".join("---" for _ in cols) + " |"]
+    for r in rows:
+        lines.append("| " + " | ".join(_md(r.get(c, NA)) for c in cols) + " |")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# --- baseline (VWM) vs trend-filtered comparison -----------------------------
+
+TREND_FILTER_COMPARISON_COLUMNS = [
+    "symbol", "baseline_total_return", "filtered_total_return", "delta_total_return",
+    "baseline_excess_return", "filtered_excess_return", "delta_excess_return",
+    "baseline_max_drawdown_pct", "filtered_max_drawdown_pct", "delta_max_drawdown_pct",
+    "baseline_trade_count", "filtered_trade_count", "delta_trade_count",
+    "baseline_short_exposure_pct", "filtered_short_exposure_pct", "delta_short_exposure_pct",
+    "baseline_profit_factor", "filtered_profit_factor",
+    "baseline_fee_drag", "filtered_fee_drag", "interpretation",
+]
+
+
+def _gnum(row: dict, key: str) -> float | None:
+    try:
+        return float(row.get(key))
+    except (TypeError, ValueError):
+        return None
+
+
+def _delta(a: float | None, b: float | None) -> Any:
+    return (b - a) if (a is not None and b is not None) else NA
+
+
+def build_trend_filter_comparison(symbols: list[str], baseline_by_symbol: dict[str, dict],
+                                  filtered_by_symbol: dict[str, dict]) -> list[dict]:
+    """One row per symbol: baseline VWM vs trend-filtered VWM + deltas."""
+    out = []
+    for sym in symbols:
+        b = baseline_by_symbol.get(sym, {})
+        f = filtered_by_symbol.get(sym, {})
+        bt, ft = _gnum(b, "Total Return"), _gnum(f, "Total Return")
+        be, fe = _gnum(b, "Excess Return"), _gnum(f, "Excess Return")
+        bd, fd = _gnum(b, "Max Drawdown %"), _gnum(f, "Max Drawdown %")
+        bc, fc = _gnum(b, "Trade Count"), _gnum(f, "Trade Count")
+        bs, fs = _gnum(b, "Short Exposure %"), _gnum(f, "Short Exposure %")
+        d_short = _delta(bs, fs)
+        bits = []
+        if isinstance(d_short, float):
+            bits.append(f"short exposure {bs:.1%}->{fs:.1%}")
+        if isinstance(_delta(bd, fd), float):
+            bits.append(f"maxDD {bd:.2%}->{fd:.2%}")
+        if isinstance(_delta(be, fe), float):
+            bits.append(f"excess {be:.2%}->{fe:.2%}")
+        interp = ("trend filter gates shorts in uptrends: " + ", ".join(bits)) if bits \
+            else "trend filter applied; see metrics"
+        out.append({
+            "symbol": sym,
+            "baseline_total_return": b.get("Total Return", NA), "filtered_total_return": f.get("Total Return", NA),
+            "delta_total_return": _delta(bt, ft),
+            "baseline_excess_return": b.get("Excess Return", NA), "filtered_excess_return": f.get("Excess Return", NA),
+            "delta_excess_return": _delta(be, fe),
+            "baseline_max_drawdown_pct": b.get("Max Drawdown %", NA),
+            "filtered_max_drawdown_pct": f.get("Max Drawdown %", NA), "delta_max_drawdown_pct": _delta(bd, fd),
+            "baseline_trade_count": b.get("Trade Count", NA), "filtered_trade_count": f.get("Trade Count", NA),
+            "delta_trade_count": _delta(bc, fc),
+            "baseline_short_exposure_pct": b.get("Short Exposure %", NA),
+            "filtered_short_exposure_pct": f.get("Short Exposure %", NA), "delta_short_exposure_pct": d_short,
+            "baseline_profit_factor": b.get("Profit Factor", NA), "filtered_profit_factor": f.get("Profit Factor", NA),
+            "baseline_fee_drag": b.get("Fee Drag", NA), "filtered_fee_drag": f.get("Fee Drag", NA),
+            "interpretation": interp,
+        })
+    return out
+
+
+def write_trend_filter_comparison_csv(rows: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=TREND_FILTER_COMPARISON_COLUMNS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({c: r.get(c, NA) for c in TREND_FILTER_COMPARISON_COLUMNS})
+
+
+def write_trend_filter_comparison_md(rows: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cols = TREND_FILTER_COMPARISON_COLUMNS
     lines = ["| " + " | ".join(cols) + " |", "| " + " | ".join("---" for _ in cols) + " |"]
     for r in rows:
         lines.append("| " + " | ".join(_md(r.get(c, NA)) for c in cols) + " |")

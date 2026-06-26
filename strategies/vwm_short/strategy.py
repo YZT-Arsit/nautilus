@@ -47,7 +47,14 @@ _VWM_FEATURE_SET_ID = "vwm_features_v1"
 
 @dataclass(frozen=True)
 class VwmShortConfig:
-    """User-facing parameters for the VWM short strategy."""
+    """User-facing parameters for the VWM short strategy.
+
+    The ``trend_filter_*`` fields add an OPTIONAL, config-gated regime gate on
+    short entries (see :func:`should_block_short_entry`). It is **disabled by
+    default**; with ``enable_trend_filter=False`` the strategy behaves exactly as
+    before. The gate never touches the VWM signal math itself — it only decides
+    whether an already-produced ``enter_short`` is allowed in the current regime.
+    """
 
     mom_len: int = 5
     avg_len: int = 20
@@ -56,6 +63,54 @@ class VwmShortConfig:
     setup_len: int = 5
     instrument_id: str = "BTCUSDT.BINANCE"
     bar_type: str | None = None
+    # optional, default-off trend regime filter (gates short entries only)
+    enable_trend_filter: bool = False
+    trend_filter_fast_len: int = 96
+    trend_filter_slow_len: int = 384
+    trend_filter_mode: str = "short_only_downtrend"
+    trend_filter_source: str = "close"
+
+
+# --- pure trend-filter helpers (unit-testable, no Nautilus) ------------------
+
+def simple_moving_average(values: list[float], length: int) -> float | None:
+    """Mean of the last ``length`` values, or None if too few / bad length."""
+    if length <= 0 or len(values) < length:
+        return None
+    window = values[-length:]
+    return sum(window) / float(length)
+
+
+def trend_gate(closes: list[float], *, fast_len: int, slow_len: int,
+               mode: str = "short_only_downtrend") -> bool | None:
+    """Regime gate for short entries.
+
+    Returns ``True`` (downtrend -> short allowed), ``False`` (uptrend -> block),
+    or ``None`` (insufficient history to decide). ``short_only_downtrend`` allows
+    a short only when ``fast_ma < slow_ma``. Unknown modes do not gate (True).
+    """
+    fast = simple_moving_average(closes, fast_len)
+    slow = simple_moving_average(closes, slow_len)
+    if fast is None or slow is None:
+        return None
+    if mode == "short_only_downtrend":
+        return fast < slow
+    return True
+
+
+def should_block_short_entry(closes: list[float], *, enabled: bool, fast_len: int,
+                             slow_len: int, mode: str = "short_only_downtrend") -> bool:
+    """Whether to block a short entry this bar.
+
+    ``enabled=False`` -> never block (baseline behaviour, bit-for-bit). When
+    enabled, block in an uptrend and, conservatively, during warmup (gate None).
+    """
+    if not enabled:
+        return False
+    gate = trend_gate(closes, fast_len=fast_len, slow_len=slow_len, mode=mode)
+    if gate is None:
+        return True
+    return not gate
 
 
 def build_specs(config: VwmShortConfig) -> list[FeatureSpec]:
@@ -108,6 +163,11 @@ class VwmShortStrategy:
         # engine stays stateless about fills (Mode B with external position).
         self._position = 0
         self._bars_since_entry = 0
+        # rolling source history for the optional trend filter (default off)
+        self._trend_source: list[float] = []
+        # diagnostics: short entries the engine produced, allowed vs blocked
+        self.allowed_entry_count = 0
+        self.blocked_entry_count = 0
 
     def on_snapshot(self, snapshot: FeatureSnapshot) -> str:
         from feature_engine.interfaces import StrategyRuntimeContext
@@ -134,6 +194,11 @@ class VwmShortStrategy:
             bar_type=self._config.bar_type,
         )
 
+        # Track the trend-filter source (default close) for the optional gate.
+        src = {"close": close, "high": high, "low": low, "volume": volume}.get(
+            self._config.trend_filter_source, close)
+        self._trend_source.append(float(src))
+
         # Count bars since entry before the engine evaluates the exit rule.
         if self._position == -1:
             self._bars_since_entry += 1
@@ -148,6 +213,17 @@ class VwmShortStrategy:
         result = self._engine.update(bar, context=context)
 
         if result.reason == "enter_short":
+            # Optional, default-off regime gate: block the short in an uptrend.
+            if should_block_short_entry(
+                self._trend_source,
+                enabled=self._config.enable_trend_filter,
+                fast_len=self._config.trend_filter_fast_len,
+                slow_len=self._config.trend_filter_slow_len,
+                mode=self._config.trend_filter_mode,
+            ):
+                self.blocked_entry_count += 1
+                return HOLD  # entry suppressed; stay flat, engine sees position 0
+            self.allowed_entry_count += 1
             self._position = -1
             self._bars_since_entry = 0
             return SELL  # open short (SignalToOrderPolicy sell_means=short)

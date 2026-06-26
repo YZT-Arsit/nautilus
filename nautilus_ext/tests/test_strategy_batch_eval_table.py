@@ -273,6 +273,51 @@ def test_sizing_mode_comparison_helper(tmp_path):
     assert (out / "c.md").read_text().startswith("| symbol |")
 
 
+def test_trend_filter_columns_appended(tmp_path):
+    root = _batch_root(tmp_path)
+    rc = bx.main(["--backtest-root", str(root), "--data-root", str(root / "none"),
+                  "--out-dir", str(tmp_path / "tf"), "--symbols", "BTCUSDT,ETHUSDT",
+                  "--bar-type", "15m", "--start", "2026-03-01", "--end", "2026-05-31",
+                  "--trend-filter-enabled", "true", "--trend-filter-fast-len", "96",
+                  "--trend-filter-slow-len", "384"])
+    assert rc == 0
+    with (tmp_path / "tf" / "batch_evaluation_table.csv").open() as fh:
+        data = list(csv.reader(fh))
+    assert data[0] == et.SYMBOL_METRIC_COLUMNS + et.FILTER_COLUMNS
+    body = {r[data[0].index("Symbol")]: r for r in data[1:]}
+    assert body["BTCUSDT"][data[0].index("Trend Filter Enabled")] == "true"
+    assert body["BTCUSDT"][data[0].index("Trend Filter Fast Len")] == "96"
+    # entry counts are strategy-internal -> NA, never fabricated
+    assert body["BTCUSDT"][data[0].index("Blocked Entry Count")] == "NA"
+
+
+def test_trend_filter_comparison_helper(tmp_path):
+    symbols = ["BTCUSDT", "ETHUSDT"]
+    baseline = {"BTCUSDT": {"Symbol": "BTCUSDT", "Total Return": "-0.0699", "Excess Return": "-0.171",
+                            "Max Drawdown %": "0.075", "Trade Count": "130", "Short Exposure %": "0.4440",
+                            "Profit Factor": "0.70", "Fee Drag": "0.014"},
+                "ETHUSDT": {"Symbol": "ETHUSDT", "Total Return": "-0.043", "Excess Return": "-0.066",
+                            "Max Drawdown %": "0.055", "Trade Count": "134", "Short Exposure %": "0.4444",
+                            "Profit Factor": "0.86", "Fee Drag": "0.015"}}
+    filtered = {"BTCUSDT": {"Total Return": "-0.01", "Excess Return": "-0.11", "Max Drawdown %": "0.03",
+                            "Trade Count": "40", "Short Exposure %": "0.10", "Profit Factor": "0.9",
+                            "Fee Drag": "0.005"}}
+    rows = et.build_trend_filter_comparison(symbols, baseline, filtered)
+    btc = next(r for r in rows if r["symbol"] == "BTCUSDT")
+    assert btc["delta_trade_count"] == pytest.approx(40 - 130)
+    assert btc["delta_short_exposure_pct"] == pytest.approx(0.10 - 0.4440)
+    assert btc["delta_max_drawdown_pct"] == pytest.approx(0.03 - 0.075)
+    # ETH has no filtered row -> deltas NA, never fabricated
+    eth = next(r for r in rows if r["symbol"] == "ETHUSDT")
+    assert eth["filtered_total_return"] == "NA" and eth["delta_total_return"] == "NA"
+    out = tmp_path / "tfc"
+    et.write_trend_filter_comparison_csv(rows, out / "c.csv")
+    et.write_trend_filter_comparison_md(rows, out / "c.md")
+    with (out / "c.csv").open() as fh:
+        assert next(csv.reader(fh)) == et.TREND_FILTER_COMPARISON_COLUMNS
+    assert (out / "c.md").read_text().startswith("| symbol |")
+
+
 # --- reuse / safety ---------------------------------------------------------
 
 def test_single_and_matrix_builders_still_work():

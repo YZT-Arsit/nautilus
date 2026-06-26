@@ -1,0 +1,77 @@
+# VWM batch, volatility-targeted sizing + trend regime filter ENABLED.
+#
+# Identical to vwm_crypto_perpetual_2026q2_15m_vol_targeted.yaml (same per-symbol
+# vol-targeted quantities) EXCEPT strategy.params turns on the optional, config-
+# gated trend filter: a short entry is only allowed when fast_ma(96) < slow_ma(384)
+# on 15m close (downtrend). The VWM signal math is unchanged; the filter only gates
+# the already-produced enter_short. With enable_trend_filter=false this config would
+# reproduce the baseline exactly.
+#
+# CAVEAT: funding/liquidation/margin/mark-index not modeled; sizing + trend filter
+# fixed at window start (vol estimate not rebalanced).
+
+strategy:
+  name: vwm
+  params:
+    mom_len: 5
+    avg_len: 20
+    atr_len: 5
+    atr_pct: 0.5
+    setup_len: 5
+    enable_trend_filter: true
+    trend_filter_fast_len: 96
+    trend_filter_slow_len: 384
+    trend_filter_mode: short_only_downtrend
+    trend_filter_source: close
+execution:
+  backend: nautilus
+  fill_timing: same_bar
+  fee_rate: 0.0005
+  initial_cash: 100000.0
+  quantity: 1.0
+  sell_means: short
+  allow_short: true
+  price_field: close
+  slippage_bps: 1.0
+data:
+  root: historical_data/market_data
+  start: '2026-03-01'
+  end: '2026-05-31'
+  bar_type: 15m
+universe:
+  include:
+  - exchange: BINANCE
+    venue_type: futures_um
+    symbol: BTCUSDT
+    instrument_id: BTCUSDT-PERP.BINANCE
+    bar_type: 15m
+    quantity: 0.29902786
+  - exchange: BINANCE
+    venue_type: futures_um
+    symbol: ETHUSDT
+    instrument_id: ETHUSDT-PERP.BINANCE
+    bar_type: 15m
+    quantity: 8.80035413
+  - exchange: BINANCE
+    venue_type: futures_um
+    symbol: SOLUSDT
+    instrument_id: SOLUSDT-PERP.BINANCE
+    bar_type: 15m
+    quantity: 194.94175331
+  - exchange: BINANCE
+    venue_type: futures_um
+    symbol: BNBUSDT
+    instrument_id: BNBUSDT-PERP.BINANCE
+    bar_type: 15m
+    quantity: 32.41018328
+  exclude: []
+output:
+  root: outputs/backtests/vwm_crypto_perpetual_2026q2_15m_vol_targeted_trend_filtered
+  overwrite: false
+metadata:
+  market_type: crypto_perpetual
+  contract_type: usd_m_perpetual
+  data_source: binance_vision_futures_um_klines
+  sizing_method: realized_vol_target
+  trend_filter: short_only_downtrend_fast96_slow384
+  caveat: per_symbol_sizing_plus_trend_filter;funding_liquidation_margin_mark_index_not_modeled
