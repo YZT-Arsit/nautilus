@@ -1,83 +1,108 @@
-# 策略评价指标覆盖度审计（Strategy Evaluation Metric Coverage Audit）
+# Strategy Evaluation Metric Coverage Audit
 
-本文审计 VWM 策略评价**指标体系是否全面**（非数据覆盖、非信号覆盖），并标注本阶段
-新增了哪些可从现有 backtest outputs 可靠计算的指标，哪些仍为 planned/NA（不伪造）。
+Audits whether the VWM evaluation **metric system** (not data coverage, not signal
+coverage) is complete enough to support a one-strategy × many-instruments batch
+comparison. The metric system now lives in small modules
+(`research/evaluation_metrics.py` math + `research/evaluation_tables.py` assembly)
+and is rendered as a rows=symbol / cols=metric table by
+`scripts/build_strategy_batch_eval_table.py`.
 
-状态定义：
-- **covered**：单实验/矩阵 builder 已产出（`build_crypto_perpetual_eval_table` / `..._matrix_eval_table`）。
-- **added**：本阶段在 `build_strategy_batch_eval_table` 中新增计算（来自现有 summary/equity_curve/trades/matrix）。
-- **planned/NA**：当前 outputs 不足以可靠计算，填 NA 并说明。
+Per-metric machine-readable status is emitted alongside every run:
 
-数据来源仅限：已有 `summary.json` / `equity_curve.csv` / `trades.csv` / `positions.csv` /
-`matrix_evaluation_table.csv`。**不下载、不联网、不重跑回测。**
+```
+outputs/backtests/<run>/batch_metric_coverage_audit.csv
+outputs/backtests/<run>/batch_metric_coverage_audit.md
+```
 
----
+Each metric carries: **status** (implemented / added / planned), **computed_from**,
+**reliability** (reliable / approximate / unavailable), **reason**, **fallback**,
+**included_in_csv**, **included_in_md**. Totals: **86 metrics = 57 implemented +
+26 added + 3 planned**. Data source is limited to already-written backtest outputs
+(`summary.json` / `equity_curve.csv` / `trades.csv`) plus the local bar parquet for
+the benchmark. Nothing is downloaded, no backtest is re-run, nothing is fabricated.
 
-## A. 基础信息
-covered：Strategy(由 --strategy 注入)、Market Type、Exchange、Symbol、Contract Type、Bar Type、
-Window、Start、End、Days、Bars、Status。**added**：Failure Reason（缺标的/缺优选 cell 时填原因）。
-
-## B. 收益
-covered：Initial Cash、Final Equity、Net PnL、Total Return、Benchmark Return、Excess Return、
-Zero Fee Return、Half Fee Return、VIP Fee Return、Break-even Fee Ratio。
-**added（可从现有数据可靠计算）**：Annualized Return、Gross Return（=Net Without Commission 口径）、
-Fee Drag（= Zero Fee Return − Total Return）、Calmar Ratio（= 年化/MaxDD%）、Return/Max Drawdown、
-Best Day Return、Worst Day Return、Avg Daily Return、Daily Return Std（均由 equity_curve 按 UTC 日重采样）。
-
-## C. 风险
-covered：Max Drawdown %、Sharpe、Sortino、Volatility。
-**added**：Max Drawdown（绝对值，equity 峰谷）、Downside Volatility（年化下行标准差，bar 级）。
-**planned/NA**：VaR 95% / CVaR 95% / Tail Loss（需要更细的收益分布与口径约定）、
-Drawdown Duration / Recovery Time（需要回撤区间标注；后续可从 equity_curve 计算）、
-Max Consecutive Losing/Winning **Trades** → 已在 D 类用 trades 实现。
-
-## D. 交易质量
-covered：Trade Count、Fill Count、Long Trades、Short Trades、Win Rate、Profit Factor、
-Avg Trade PnL、Avg Win、Avg Loss、Gross Profit、Gross Loss、Gross PnL。
-**added**：Payoff Ratio（Avg Win/|Avg Loss|）、Expectancy（WinRate·AvgWin+LossRate·AvgLoss）、
-Median Trade PnL、Best Trade、Worst Trade、Trade PnL（best/worst/median 已含）、
-Max Consecutive Wins、Max Consecutive Losses（按 trades.csv realized_pnl 符号）。
-
-## E. 持仓与暴露
-covered：Exposure %、Long Exposure %、Short Exposure %、Flat %、Avg/Max Holding Time、Avg/Max Holding Bars。
-**added**：Net Direction Bias（Long%−Short%）、Strategy Direction Bias（long/short/neutral）。
-**planned/NA**：Long/Short Trade Ratio、Average/Max Position Size、Average/Max Notional Exposure
-（当前 positions.csv 为空、equity_curve 的 position 为合约数而非稳定名义额，名义额口径不稳定 → NA）。
-
-## F. 成本与换手
-covered：Total Commission、Commission/Initial Cash、Commission/|Gross PnL|、Commission/|Net PnL|、
-Avg Commission/Trade、Avg Commission/Fill、Turnover。
-**added**：Net/Gross Ratio（Net PnL/Gross PnL）、Fee Drag（见 B）、Break-even Commission（=毛 PnL，>0 才有意义）。
-**planned/NA**：Cost per Turnover（依赖稳定换手口径，后续可加）。
-
-## G. 基准与相对表现
-covered：Benchmark Return、Excess Return、Zero Fee Excess Return。
-**added**：Benchmark Direction（up/down/flat）、Strategy Direction Bias。
-**planned/NA**：Beta / Correlation / Information Ratio / Up-market / Down-market performance
-（需要 daily 对齐的策略与基准收益序列做回归；当前 benchmark 仅取窗口首末收盘，未存 daily 基准序列 → NA，
-后续从 equity_curve 的 close 列构造 daily 基准收益即可补齐）。
-
-## H. 稳定性 / 鲁棒性（来自 matrix）
-**added（从 matrix_evaluation_table 计算）**：Number of Windows Tested、Positive Return Windows、
-Positive Excess Windows、Positive Excess Ratio、Mean Excess Across Windows、Std Excess Across Windows、
-Best Window、Worst Window、Best Bar Type、Worst Bar Type。
-说明：上述“windows”按该标的的**全部已测 cell（bar×window）**统计（BTCUSDT=9 格中实际有 equity/trades 的格）。
-**planned**：Stability Score、Rank Consistency（需固定多策略/多标的后定义稳健评分）。
-
-## I. 永续合约机制
-covered：Funding Modeled=No、Margin Modeled=No、Liquidation Modeled=No、Mark Price Modeled=No、
-Index Price Modeled=No。
-**planned/NA（明确标记 No / NA，不伪造）**：Funding Data Available=No、Mark Price Data Available=No、
-Funding-adjusted PnL / Funding-adjusted Return=NA（funding 未进入 PnL）。
+Status definitions:
+- **implemented** — produced by the prior single/matrix builders (pre-existing).
+- **added** — newly computed this phase from existing outputs.
+- **planned** — not reliably computable from current outputs (rendered `NA`).
 
 ---
 
-## 小结
+## 1. Basic information
+implemented: Strategy, Market Type, Exchange, Symbol, Contract Type, Bar Type,
+Start, End, Days. **added:** Failure Reason (failed/missing reason).
 
-- **可从现有 outputs 可靠补齐**的指标已在 `build_strategy_batch_eval_table` 中新增（B/C/D/E/F/G/H 多项），
-  并进入 88 行 pivot 评测表。
-- **依赖稳定 daily 基准序列或名义额口径**的指标（Beta/Correlation/IR、Notional Exposure、VaR/CVaR、
-  Drawdown Duration/Recovery、Funding-adjusted）暂列 **planned/NA**，在 `metric_coverage_audit.csv/md`
-  中逐条标注，待后续补足数据/口径再计算，绝不伪造。
-- 指标体系已覆盖：基础 / 收益 / 风险 / 交易质量 / 持仓暴露 / 成本 / 基准相对 / 矩阵稳定性 / 永续机制，
-  足以支撑“单策略 × 多标的”的批量评价与标的筛选。
+## 2. Returns
+implemented: Initial Cash, Final Equity, Net PnL, Total Return, Zero Fee Return,
+Half Fee Return, VIP Fee 20% Return.
+**added:** Annualized Return, Fee Drag (zero-fee − actual), Calmar Ratio
+(annualized / maxdd%), Return / Max Drawdown, Best/Worst/Avg Daily Return, Daily
+Return Std (all from equity-curve daily resample). Calmar / Return-over-DD are
+**approximate** (NA when maxdd = 0); Annualized is approximate and NA on total loss.
+
+## 3. Benchmark / relative
+implemented: Benchmark Return (close-to-close B&H), Excess Return, Zero Fee Excess
+Return. **added:** Benchmark Direction (up/down/flat), Strategy Direction Bias.
+**planned:** Beta / Correlation / Information Ratio / up-vs-down-market split —
+unavailable until a daily-aligned benchmark series is stored (the benchmark
+currently uses only window first/last close). Listed here, not fabricated.
+
+## 4. Risk
+implemented: Max Drawdown %, Sharpe, Sortino, Volatility (annualized; Sharpe/
+Sortino/Vol fall back to equity_stats — approximate). **added:** Max Drawdown
+(absolute peak-trough), Downside Volatility. **planned:** VaR / CVaR / tail loss,
+Drawdown Duration / Recovery Time — need a richer return distribution / drawdown-
+interval pass; deferred (NA), not fabricated.
+
+## 5. Trade quality
+implemented: Trade Count, Fill Count, Long Trades, Short Trades, Win Rate, Profit
+Factor, Avg Trade PnL, Avg Win, Avg Loss. **added:** Payoff Ratio, Expectancy,
+Median Trade PnL, Best Trade, Worst Trade, Max Consecutive Wins, Max Consecutive
+Losses (from trades.csv realized PnL).
+
+## 6. Exposure / holding
+implemented: Exposure %, Long/Short/Flat %, Avg/Max Holding Time, Avg/Max Holding
+Bars. **added:** Net Direction Bias (long% − short%). **planned:** Average / Max
+Position Size, Average / Max Notional Exposure — positions.csv is empty and the
+equity-curve `position` is a contract count, not a stable notional; NA. *This gap
+matters for cross-symbol comparison* (see report: fixed 1-contract size means BTC
+notional ≫ ETH/SOL/BNB).
+
+## 7. Cost sensitivity
+implemented: Total Commission, Commission / Initial Cash, Commission / |Gross PnL|,
+Commission / |Net PnL|, Avg Commission / Trade, Avg Commission / Fill, Break-even
+Fee Ratio, Turnover (approximate). **added:** Net / Gross Ratio, Break-even
+Commission. Fee scenarios (zero / half / VIP) live under Returns.
+
+## 8. Data quality status
+**added (whole category):** Expected Bars (days × bars/day), Actual Bars, Data
+Quality Status (ok / partial / missing / extra / unknown). These are data-quality
+fields, distinct from metric coverage; kept as auxiliary columns.
+
+## 9. Run status
+implemented: Backtest Status. **added:** Failure Reason. Missing symbols →
+`missing_data`; ran-but-failed → `failed`; never dropped.
+
+## 10. Perpetual mechanism
+implemented (static = No): Funding Modeled, Margin Modeled, Liquidation Modeled,
+Mark Price Modeled. **planned (NA / No, not fabricated):** Funding Data Available,
+Funding-adjusted Return, Mark Price Data Available.
+
+## 11. Caveat
+implemented: Caveat string carrying the perpetual-mechanism gap plus a short-sample
+note when days < 30.
+
+---
+
+## Summary
+
+- **Reliably computable from current outputs** → implemented or added (categories
+  1–9); all 83 such metrics are in the CSV, 20 in the compact MD.
+- **Requires a daily benchmark series or a stable notional definition** (Beta /
+  Correlation / IR, Notional Exposure, VaR / CVaR, Drawdown Duration / Recovery,
+  Funding-adjusted) → **planned / NA**, each annotated in
+  `batch_metric_coverage_audit.csv`, deferred until the data/definition exists.
+- The system covers basic / returns / benchmark / risk / trade-quality / exposure /
+  cost / data-quality / run-status / perpetual-mechanism — sufficient to support a
+  single-strategy × multi-symbol batch screen. The 3 planned items are perpetual-
+  mechanism modelling gaps, deliberately not faked.

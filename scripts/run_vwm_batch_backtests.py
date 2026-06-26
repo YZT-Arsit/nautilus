@@ -219,6 +219,7 @@ def _ensure_smoke_output_root(path: Path) -> None:
         "crypto_perpetual_vwm_smoke",
         "crypto_perpetual_multisymbol_vwm_smoke",
         "vwm_btcusdt_perpetual",
+        "vwm_crypto_perpetual",
     )
     if not path.name.startswith(allowed_names):
         raise ValueError(

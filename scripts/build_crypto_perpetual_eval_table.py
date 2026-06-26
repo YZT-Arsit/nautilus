@@ -9,35 +9,40 @@ for a buy-and-hold benchmark. Emits a stable wide table:
     <out-dir>/evaluation_table.csv   (full column set)
     <out-dir>/evaluation_table.md    (core columns)
 
-It adds, on top of the raw backtest metrics:
-
-* **Benchmark / excess return** — close-to-close buy-and-hold over the window.
-* **Fee scenarios** — actual / zero / half / VIP(illustrative) fee returns plus a
-  break-even fee ratio, so cost pressure is shown as a *sensitivity*, not a
-  single verdict.
-* **Exposure / holding** — long/short/flat time share and holding duration,
-  computed from positions + trades.
-* **Perpetual-mechanism status** — funding / margin / liquidation / mark-price
-  modeled flags (all ``No`` today).
-
-Rows = markets (one per job), so the table extends to ETH/SOL/BNB later. Existing
-summary fields are used as-is; everything else is computed from the per-job
-files. Anything that cannot be computed reliably is left ``NA`` (never
-fabricated). Pure-Python core (stdlib only); pyarrow is imported lazily *only*
-for the optional benchmark read, so the module imports and unit-tests without it.
-No network, no backtest execution.
+Rows = markets (one per job), so the table extends to ETH/SOL/BNB later. This is
+the single-experiment / matrix builder; the rows=symbol *batch* view lives in
+``scripts/build_strategy_batch_eval_table.py``. All metric math is centralized in
+:mod:`research.evaluation_metrics` and re-exported here under the historical
+names so this module's public API (and the matrix builder that reuses it) stays
+stable. Pure-Python core (stdlib only); pyarrow is imported lazily *only* for the
+optional benchmark read. No network, no backtest execution.
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import math
-from datetime import date
 from pathlib import Path
 from typing import Any
 
-NA = "NA"
+from research import evaluation_metrics as em
+
+# Pure metric math lives in research.evaluation_metrics; re-exported here under the
+# historical names this builder, its matrix sibling, and the tests depend on.
+NA = em.NA
+_finite = em.is_finite
+_fmt = em.fmt_na
+_days = em.days_inclusive
+_bar_seconds = em.bar_seconds
+_annualized_return = em.annualized_return
+benchmark_return = em.benchmark_return
+fee_scenarios = em.fee_scenarios
+exposure_from_positions = em.exposure_from_positions
+holding_from_trades = em.holding_from_trades
+gross_from_trades = em.gross_from_trades
+equity_stats = em.equity_stats
+turnover_from_trades = em.turnover_from_trades
+
 SHORT_SAMPLE_DAYS = 30      # below this, annualized/risk ratios are flagged indicative
 
 # venue_type -> (Market Type, Contract Type)
@@ -74,195 +79,6 @@ CORE_COLUMNS = [
     "Max DD %", "Trades", "Win Rate", "Profit Factor", "Commission / Gross PnL",
     "Exposure %", "Short Exposure %", "Status", "Caveat",
 ]
-
-
-# --- small helpers ----------------------------------------------------------
-
-def _finite(x: Any) -> bool:
-    try:
-        return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(float(x))
-    except (TypeError, ValueError):
-        return False
-
-
-def _days(start: str, end: str) -> int | None:
-    try:
-        return (date.fromisoformat(str(end)) - date.fromisoformat(str(start))).days + 1
-    except (TypeError, ValueError):
-        return None
-
-
-def _bar_seconds(bar_type: str) -> int:
-    s = str(bar_type).strip().lower()
-    unit = s[-1]
-    try:
-        n = int(s[:-1])
-    except ValueError:
-        return 300
-    return {"s": 1, "m": 60, "h": 3600, "d": 86400}.get(unit, 60) * n
-
-
-def _fmt(x: Any) -> Any:
-    if x is None or (isinstance(x, float) and not math.isfinite(x)):
-        return NA
-    return x
-
-
-# --- pure metric computations (unit-tested) ---------------------------------
-
-def _annualized_return(total_return: Any, days: int | None) -> float | None:
-    if not _finite(total_return) or not days or days <= 0:
-        return None
-    base = 1.0 + float(total_return)
-    if base <= 0.0:                       # total loss; annualized power undefined
-        return None
-    return base ** (365.0 / days) - 1.0
-
-
-def benchmark_return(first_close: Any, last_close: Any) -> float | None:
-    """Close-to-close buy-and-hold return."""
-    if not _finite(first_close) or not _finite(last_close) or float(first_close) == 0.0:
-        return None
-    return float(last_close) / float(first_close) - 1.0
-
-
-def fee_scenarios(raw_net_pnl: Any, total_commission: Any, initial_cash: Any,
-                  *, half_ratio: float = 0.5, vip_ratio: float = 0.2) -> dict[str, Any]:
-    """Fee sensitivity: returns under actual / zero / half / VIP fees + break-even.
-
-    ``gross = raw_net_pnl + total_commission`` is the pre-commission (gross
-    realized) PnL. Each scenario nets the scaled commission off that gross.
-    """
-    if not _finite(raw_net_pnl) or not _finite(total_commission) or not _finite(initial_cash) \
-            or float(initial_cash) == 0.0:
-        return {}
-    raw_net_pnl = float(raw_net_pnl); total_commission = float(total_commission)
-    initial_cash = float(initial_cash)
-    gross = raw_net_pnl + total_commission
-
-    def scen(comm: float) -> dict[str, float]:
-        npnl = gross - comm
-        return {"net_pnl": npnl, "final_equity": initial_cash + npnl,
-                "total_return": npnl / initial_cash}
-
-    zero = scen(0.0)
-    zero_profitable = zero["net_pnl"] > 0.0
-    # break-even commission = gross; ratio vs current fee. Not meaningful if gross<=0.
-    if gross > 0.0 and total_commission > 0.0:
-        break_even_ratio: float | None = gross / total_commission
-    else:
-        break_even_ratio = 0.0            # cannot tolerate any fee (gross<=0)
-
-    if not zero_profitable:
-        note = ("zero-fee still unprofitable (gross PnL <= 0): likely a "
-                "signal-quality issue, not pure cost")
-    elif raw_net_pnl <= 0.0:
-        note = ("profitable only below the current fee level: strategy is "
-                "highly cost-sensitive")
-    else:
-        note = "profitable even at current fee level"
-
-    return {
-        "gross": gross,
-        "actual": scen(total_commission),
-        "zero": zero,
-        "half": scen(total_commission * half_ratio),
-        "vip": scen(total_commission * vip_ratio),
-        "break_even_fee_ratio_vs_current": break_even_ratio,
-        "zero_fee_profitable": zero_profitable,
-        "net_without_commission": gross,
-        "fee_sensitivity_note": note,
-    }
-
-
-def exposure_from_positions(positions: list[float]) -> dict[str, float | None]:
-    """Time share long / short / flat from per-bar position sizes."""
-    vals = [float(p) for p in positions if _finite(p)]
-    n = len(vals)
-    if n == 0:
-        return {"exposure_pct": None, "long_exposure_pct": None,
-                "short_exposure_pct": None, "flat_pct": None}
-    longs = sum(1 for p in vals if p > 0.0)
-    shorts = sum(1 for p in vals if p < 0.0)
-    flat = n - longs - shorts
-    return {"exposure_pct": (longs + shorts) / n, "long_exposure_pct": longs / n,
-            "short_exposure_pct": shorts / n, "flat_pct": flat / n}
-
-
-def holding_from_trades(trades: list[dict], *, bar_seconds: int) -> dict[str, float | None]:
-    """Average / max holding duration (minutes and bars) from trade timestamps."""
-    durs = []
-    for t in trades:
-        try:
-            ein = float(t["entry_time_ns"]); xin = float(t["exit_time_ns"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if xin >= ein:
-            durs.append((xin - ein) / 1e9)        # seconds
-    if not durs:
-        return {"avg_holding_minutes": None, "avg_holding_bars": None,
-                "max_holding_minutes": None, "max_holding_bars": None}
-    avg_s = sum(durs) / len(durs)
-    max_s = max(durs)
-    return {"avg_holding_minutes": avg_s / 60.0, "avg_holding_bars": avg_s / bar_seconds,
-            "max_holding_minutes": max_s / 60.0, "max_holding_bars": max_s / bar_seconds}
-
-
-def gross_from_trades(trades: list[dict]) -> dict[str, float | None]:
-    """Gross PnL / profit / loss from per-trade realized PnL (pre-commission)."""
-    pnls = []
-    for t in trades:
-        try:
-            pnls.append(float(t["realized_pnl"]))
-        except (KeyError, TypeError, ValueError):
-            continue
-    if not pnls:
-        return {"gross_pnl": None, "gross_profit": None, "gross_loss": None}
-    return {"gross_pnl": sum(pnls),
-            "gross_profit": sum(p for p in pnls if p > 0.0),
-            "gross_loss": sum(p for p in pnls if p < 0.0)}
-
-
-def equity_stats(equity: list[float], *, bars_per_day: int) -> dict[str, float | None]:
-    """Annualized volatility / Sharpe / Sortino + absolute max drawdown."""
-    out: dict[str, float | None] = {"volatility": None, "sharpe": None,
-                                    "sortino": None, "max_drawdown_abs": None}
-    eq = [float(x) for x in equity if _finite(x)]
-    if len(eq) >= 2:
-        peak = eq[0]; max_dd = 0.0
-        for v in eq:
-            peak = max(peak, v)
-            max_dd = max(max_dd, peak - v)
-        out["max_drawdown_abs"] = max_dd
-    rets = [eq[i] / eq[i - 1] - 1.0 for i in range(1, len(eq)) if eq[i - 1] != 0.0]
-    n = len(rets)
-    if n >= 2:
-        mean = sum(rets) / n
-        std = math.sqrt(sum((r - mean) ** 2 for r in rets) / (n - 1))
-        ann = math.sqrt(bars_per_day * 365.0)
-        out["volatility"] = std * ann
-        if std > 0.0:
-            out["sharpe"] = (mean / std) * ann
-        downside = [r for r in rets if r < 0.0]
-        if downside:
-            dstd = math.sqrt(sum(r * r for r in downside) / len(downside))
-            if dstd > 0.0:
-                out["sortino"] = (mean / dstd) * ann
-    return out
-
-
-def turnover_from_trades(trades: list[dict], initial_cash: Any) -> float | None:
-    if not trades or not _finite(initial_cash) or float(initial_cash) == 0.0:
-        return None
-    notional = 0.0; ok = False
-    for t in trades:
-        try:
-            q = abs(float(t["quantity"])); ep = abs(float(t["entry_price"]))
-            xp = abs(float(t["exit_price"]))
-        except (KeyError, TypeError, ValueError):
-            continue
-        notional += q * ep + q * xp; ok = True
-    return notional / float(initial_cash) if ok else None
 
 
 # --- row assembly -----------------------------------------------------------
