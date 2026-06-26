@@ -77,8 +77,12 @@ venv*/
 python/nautilus_trader/_libnautilus.pyi
 
 # Generated outputs (strategy backtest and bar-generation artefacts).
-# Ignoring specific subdirs rather than all of outputs/ so that
-# outputs/qfe_catalog_inventory/ (tracked validation CSV) stays visible.
+# Ignore all of outputs/ — these are large regenerable backtest/report
+# artefacts that must not be committed. A few small validation artefacts
+# (e.g. outputs/backtest_inventory/) were intentionally tracked earlier and
+# stay tracked because git does not un-track already-committed files via
+# .gitignore; new files under outputs/ are ignored going forward.
+outputs/
 outputs/crypto_backtest_outputs/
 outputs/generated_bars/
 outputs/multi_strategy_comparison/

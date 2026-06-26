@@ -1,3 +1,0 @@
-| Market Type | Symbol | Bar Type | Days | Bars | Total Return | Benchmark Return | Excess Return | Zero Fee Return | VIP Fee 20% Return | Max DD % | Trades | Win Rate | Profit Factor | Commission / Gross PnL | Exposure % | Short Exposure % | Status | Caveat |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| crypto_perpetual | BTCUSDT | 5m | 7 | 2016 | -0.040626 | 0.0250678 | -0.0656938 | -0.017677 | -0.0222668 | 0.0618087 | 33 | 0.151515 | 0.499221 | 1.29824 | 0.409722 | 0.409722 | success | funding/liquidation/margin/mark-index not modeled; short sample (7d): annualized/Sharpe/Sortino/vol indicative only |
