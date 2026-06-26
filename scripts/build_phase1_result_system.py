@@ -78,12 +78,12 @@ METRIC_SCHEMA = [
     ("Trade Count", "Trade Count", "count", "integer", None),
 ]
 
-# (eval column, chart filename stem, neutral title, is "lower is better")
+# (eval column, chart filename stem, neutral title, is_percent)
 SUMMARY_CHARTS = [
-    ("Total Return", "summary_total_return_by_symbol", "Total Return by Symbol", False),
-    ("Excess Return", "summary_excess_return_by_symbol", "Excess Return by Symbol", False),
-    ("Max Drawdown %", "summary_max_drawdown_by_symbol", "Max Drawdown by Symbol", True),
-    ("Profit Factor", "summary_profit_factor_by_symbol", "Profit Factor by Symbol", False),
+    ("Total Return", "summary_total_return_by_symbol", "VWM Total Return by Symbol", True),
+    ("Excess Return", "summary_excess_return_by_symbol", "VWM Excess Return by Symbol", True),
+    ("Max Drawdown %", "summary_max_drawdown_by_symbol", "VWM Max Drawdown by Symbol", True),
+    ("Profit Factor", "summary_profit_factor_by_symbol", "VWM Profit Factor by Symbol", False),
 ]
 
 REPORT_FILE_PATTERNS = ("boss_summary.md", "conclusion.md", "strategy_report.md")
@@ -317,21 +317,27 @@ def _render_summary_charts(with_uid: list[dict], charts_dir: Path) -> dict[str, 
         return out
     charts_dir.mkdir(parents=True, exist_ok=True)
     symbols = [r.get("Symbol", "?") for r in succ]
-    for col, stem, title, lower_better in SUMMARY_CHARTS:
+    for col, stem, title, is_pct in SUMMARY_CHARTS:
         vals = [_f(r.get(col)) for r in succ]
         if all(v is None for v in vals):
             continue
         xs = list(range(len(succ)))
-        ys = [(v if v is not None else 0.0) for v in vals]
-        fig = plt.figure(figsize=(8, 4.5))
+        ys = [((v * 100.0 if is_pct else v) if v is not None else 0.0) for v in vals]
+        fig = plt.figure(figsize=(9.5, 5.2))
         ax = fig.add_subplot(111)
-        ax.bar(xs, ys, color="#1f5fae")
-        ax.set_xticks(xs); ax.set_xticklabels(symbols, rotation=0)
-        ax.set_title(title, fontsize=12, fontweight="bold")
-        ax.set_ylabel(col); ax.grid(True, axis="y", alpha=0.3)
+        bars = ax.bar(xs, ys, color="#1f5fae", width=0.6)
+        ax.set_xticks(xs); ax.set_xticklabels(symbols, rotation=0, fontsize=12)
+        ax.set_title(title, fontsize=15, fontweight="bold")
+        ax.set_ylabel(col + (" (%)" if is_pct else ""), fontsize=13)
+        ax.grid(True, axis="y", alpha=0.3)
         ax.axhline(0, color="#888", linewidth=0.8)
+        # value labels above/below each bar
+        for b, v in zip(bars, ys):
+            ax.annotate(f"{v:.2f}{'%' if is_pct else ''}", (b.get_x() + b.get_width() / 2, v),
+                        ha="center", va="bottom" if v >= 0 else "top",
+                        fontsize=11, xytext=(0, 3 if v >= 0 else -3), textcoords="offset points")
         out_path = charts_dir / f"{stem}.png"
-        fig.tight_layout(); fig.savefig(out_path, dpi=120); plt.close(fig)
+        fig.tight_layout(); fig.savefig(out_path, dpi=130); plt.close(fig)
         out[stem] = _repo_rel(out_path)
     return out
 
@@ -419,12 +425,24 @@ def _write_dashboard_html(with_uid: list[dict], dash_index: dict, summary_charts
                 imgs += (f'<figure><figcaption>{_esc(label)}</figcaption>'
                          f'<img loading="lazy" src="{_esc(src)}" alt="{_esc(label)}"></figure>')
         pnl_link = _dash_rel(r.get("pnl_single_path", "NA"), deliver)
+        ts_link = _dash_rel(r.get("pnl_timeseries_path", "NA"), deliver)
+        metric_bits = " &nbsp; ".join(
+            f"{_esc(c)}: <b>{_esc(r.get(c, 'NA'))}</b>"
+            for c in ("Total Return", "Excess Return", "Max Drawdown %", "Sharpe",
+                      "Trade Count", "Profit Factor") if c in r)
         panels += (
             f'<section class="panel" data-symbol="{_esc(sym)}" '
             f'data-sizing="{_esc(r.get("Sizing Method", args.sizing_mode))}">'
-            f'<h2>{_esc(sym)} <small>{_esc(ruid)}</small></h2>'
-            f'<p class="paths">PnL CSV: <a href="{_esc(pnl_link)}">{_esc(pnl_link)}</a><br>'
-            f'Raw run dir: <code>{_esc(r.get("raw_run_dir","NA"))}</code></p>'
+            f'<h2>{_esc(sym)} <small>run_uid: {_esc(ruid)}</small> '
+            f'<span class="status status-{_esc(r.get("artifact_status","NA"))}">'
+            f'{_esc(r.get("artifact_status","NA"))}</span></h2>'
+            f'<p class="metrics">{metric_bits}</p>'
+            f'<table class="pathtbl">'
+            f'<tr><td>run_uid</td><td><code>{_esc(ruid)}</code></td></tr>'
+            f'<tr><td>PnL CSV</td><td><a href="{_esc(pnl_link)}"><code>{_esc(pnl_link)}</code></a></td></tr>'
+            f'<tr><td>PnL timeseries</td><td><a href="{_esc(ts_link)}"><code>{_esc(ts_link)}</code></a></td></tr>'
+            f'<tr><td>Raw run dir</td><td><code>{_esc(r.get("raw_run_dir","NA"))}</code></td></tr>'
+            f'</table>'
             f'<div class="charts">{imgs}</div></section>')
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -440,7 +458,12 @@ def _write_dashboard_html(with_uid: list[dict], dash_index: dict, summary_charts
  .controls{{margin:12px 0}} select{{font-size:14px;padding:4px;margin-right:12px}}
  .charts{{display:flex;flex-wrap:wrap;gap:16px}} figure{{margin:0;background:#fff;border:1px solid #e0e0e0;padding:8px}}
  figure img{{width:520px;max-width:100%;display:block}} figcaption{{font-size:12px;color:#555;margin-bottom:4px}}
- .panel{{margin:18px 0}} .paths{{font-size:12px;color:#444}} code{{background:#eee;padding:1px 4px}}
+ .panel{{margin:18px 0;border-top:2px solid #1f5fae;padding-top:8px}} code{{background:#eee;padding:1px 4px}}
+ .metrics{{font-size:13px;color:#222;margin:4px 0 8px}}
+ .pathtbl{{width:auto;font-size:12px;margin:0 0 10px}} .pathtbl td{{text-align:left;border:1px solid #eee;padding:3px 8px}}
+ .pathtbl td:first-child{{color:#666;white-space:nowrap}}
+ .status{{font-size:11px;font-weight:normal;padding:1px 8px;border-radius:10px;color:#fff}}
+ .status-complete{{background:#2e7d32}} .status-partial{{background:#ef6c00}} .status-NA{{background:#999}}
  .note{{background:#f3f3f3;border:1px solid #ddd;padding:8px;font-size:12px;margin-top:20px}}
 </style></head>
 <body>

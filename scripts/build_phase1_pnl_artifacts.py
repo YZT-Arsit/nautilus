@@ -125,12 +125,42 @@ def write_pnl_csv(rows: list[dict], path: Path) -> None:
 
 # --- charts (matplotlib, guarded) -------------------------------------------
 
+def _chart_x_axis(pnl_rows: list[dict]):
+    """Return (x_values, is_time, xlabel). Prefer a readable timestamp axis parsed
+    from each row's ``ts`` (ISO 8601); fall back to a bar index if any is unparseable."""
+    times = []
+    for r in pnl_rows:
+        try:
+            times.append(datetime.fromisoformat(str(r.get("ts"))))
+        except (TypeError, ValueError):
+            return list(range(len(pnl_rows))), False, "15m bar index"
+    if times:
+        return times, True, "time"
+    return list(range(len(pnl_rows))), False, "15m bar index"
+
+
+# Larger, projection-friendly defaults (no seaborn; matplotlib only).
+_FIGSIZE = (12.5, 5.2)
+_TITLE_FS, _LABEL_FS, _TICK_FS = 15, 13, 11
+_STRAT_COLOR, _BENCH_COLOR = "#1f5fae", "#c0504d"
+
+
+def _style_time_axis(ax, is_time):
+    import matplotlib.dates as mdates  # noqa: PLC0415
+    if is_time:
+        loc = mdates.AutoDateLocator()
+        ax.xaxis.set_major_locator(loc)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
+    ax.tick_params(axis="both", labelsize=_TICK_FS)
+
+
 def render_charts(pnl_rows: list[dict], run_uid: str, symbol: str,
                   charts_dir: Path) -> dict[str, str | None]:
     """One single-figure PNG per chart kind, named ``<run_uid>_<kind>.png``.
 
-    Returns {kind: path|None}; None means no data OR no matplotlib (caller marks
-    status partial). x-axis = 15m bar index.
+    Titles carry only strategy / symbol / metric (run_uid lives in the filename).
+    x-axis is a readable timestamp when ``ts`` parses, else a 15m bar index.
+    Returns {kind: path|None}; None means no data OR no matplotlib.
     """
     keys: dict[str, str | None] = {k: None for k in CHART_KINDS}
     if not pnl_rows:
@@ -142,50 +172,48 @@ def render_charts(pnl_rows: list[dict], run_uid: str, symbol: str,
     except Exception:
         return keys
     charts_dir.mkdir(parents=True, exist_ok=True)
-    x = list(range(len(pnl_rows)))
+    x, is_time, xlabel = _chart_x_axis(pnl_rows)
 
     def series(col):
         return [(_f(r.get(col)) if r.get(col) not in (None, "NA") else None) for r in pnl_rows]
 
-    def line(col, kind, title, ylabel, *, pct=False):
+    def line(col, kind, metric, ylabel, *, pct=False):
         ys = series(col)
         if all(v is None for v in ys):
             return None
         xs = [xi for xi, v in zip(x, ys) if v is not None]
         vs = [(v * 100.0 if pct else v) for v in ys if v is not None]
-        fig = plt.figure(figsize=(11, 4.5))
+        fig = plt.figure(figsize=_FIGSIZE)
         ax = fig.add_subplot(111)
-        ax.plot(xs, vs, linewidth=1.1, color="#1f5fae")
-        ax.set_title(title, fontsize=12, fontweight="bold")
-        ax.set_xlabel("15m bar index"); ax.set_ylabel(ylabel)
+        ax.plot(xs, vs, linewidth=1.4, color=_STRAT_COLOR)
+        ax.set_title(f"VWM  {symbol}  -  {metric}", fontsize=_TITLE_FS, fontweight="bold")
+        ax.set_xlabel(xlabel, fontsize=_LABEL_FS); ax.set_ylabel(ylabel, fontsize=_LABEL_FS)
         ax.grid(True, alpha=0.3)
+        _style_time_axis(ax, is_time)
         out = charts_dir / chart_filename(run_uid, kind)
-        fig.tight_layout(); fig.savefig(out, dpi=120); plt.close(fig)
+        fig.tight_layout(); fig.savefig(out, dpi=130); plt.close(fig)
         return _repo_rel(out)
 
-    keys["equity_curve"] = line("equity", "equity_curve",
-                                f"{symbol} VWM equity curve ({run_uid})", "equity (USDT)")
-    keys["drawdown"] = line("drawdown_pct", "drawdown",
-                            f"{symbol} VWM drawdown ({run_uid})", "drawdown (%)", pct=True)
-    keys["pnl_curve"] = line("cumulative_pnl", "pnl_curve",
-                             f"{symbol} VWM cumulative PnL ({run_uid})", "cumulative PnL (USDT)")
-    keys["position"] = line("position", "position",
-                            f"{symbol} VWM position exposure ({run_uid})", "position (contracts)")
+    keys["equity_curve"] = line("equity", "equity_curve", "Equity Curve", "equity (USDT)")
+    keys["drawdown"] = line("drawdown_pct", "drawdown", "Drawdown", "drawdown (%)", pct=True)
+    keys["pnl_curve"] = line("cumulative_pnl", "pnl_curve", "Cumulative PnL", "cumulative PnL (USDT)")
+    keys["position"] = line("position", "position", "Position Exposure", "position (contracts)")
 
     # benchmark_comparison: strategy equity vs buy&hold benchmark equity, same axes
     eq = series("equity"); be = series("benchmark_equity")
     if not all(v is None for v in be) and not all(v is None for v in eq):
-        fig = plt.figure(figsize=(11, 4.5))
+        fig = plt.figure(figsize=_FIGSIZE)
         ax = fig.add_subplot(111)
         ax.plot(x, [v if v is not None else float("nan") for v in eq],
-                linewidth=1.1, color="#1f5fae", label="VWM strategy equity")
+                linewidth=1.4, color=_STRAT_COLOR, label="VWM strategy equity")
         ax.plot(x, [v if v is not None else float("nan") for v in be],
-                linewidth=1.1, color="#c0504d", label="buy & hold benchmark")
-        ax.set_title(f"{symbol} VWM vs benchmark ({run_uid})", fontsize=12, fontweight="bold")
-        ax.set_xlabel("15m bar index"); ax.set_ylabel("equity (USDT)")
-        ax.grid(True, alpha=0.3); ax.legend(loc="best", fontsize=9)
+                linewidth=1.4, color=_BENCH_COLOR, label="buy & hold benchmark")
+        ax.set_title(f"VWM  {symbol}  -  Strategy vs Benchmark", fontsize=_TITLE_FS, fontweight="bold")
+        ax.set_xlabel(xlabel, fontsize=_LABEL_FS); ax.set_ylabel("equity (USDT)", fontsize=_LABEL_FS)
+        ax.grid(True, alpha=0.3); ax.legend(loc="best", fontsize=11)
+        _style_time_axis(ax, is_time)
         out = charts_dir / chart_filename(run_uid, "benchmark_comparison")
-        fig.tight_layout(); fig.savefig(out, dpi=120); plt.close(fig)
+        fig.tight_layout(); fig.savefig(out, dpi=130); plt.close(fig)
         keys["benchmark_comparison"] = _repo_rel(out)
     return keys
 
