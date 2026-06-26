@@ -21,7 +21,9 @@ params still get distinct ids.
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 UNKNOWN = "unknown"
 
@@ -195,6 +197,57 @@ def chart_filename(run_uid: str, kind: str) -> str:
 CHART_KINDS = ("equity_curve", "drawdown", "pnl_curve", "position", "benchmark_comparison")
 
 
-def rel_path(path) -> str:
+def normalize_path(path) -> str:
     """Posix-normalized string (stable across Windows/Unix in the manifests)."""
     return str(path).replace("\\", "/")
+
+
+# Back-compat alias (earlier code imported ``rel_path``).
+rel_path = normalize_path
+
+
+def safe_relative_path(path, base) -> str:
+    """``path`` relative to ``base`` (posix). Falls back to the normalized path
+    if it cannot be expressed relatively (e.g. different drive)."""
+    try:
+        return normalize_path(os.path.relpath(str(path), str(base)))
+    except (ValueError, TypeError):
+        return normalize_path(path)
+
+
+# logical name -> on-disk filename inside a raw run directory
+KNOWN_RUN_FILES = {
+    "equity_curve": "equity_curve.csv",
+    "positions": "positions.csv",
+    "trades": "trades.csv",
+    "fills": "fills.csv",
+    "report_json": "report.json",
+    "run_metadata": "run_metadata.json",
+    "config_resolved": "config_resolved.yaml",
+}
+
+
+def discover_run_files(run_dir) -> dict[str, Path | None]:
+    """Map each known logical file to its Path if present in ``run_dir``, else None.
+    Never fabricates: a missing file is ``None`` so callers can mark it NA."""
+    rd = Path(run_dir)
+    return {key: (rd / name if (rd / name).is_file() else None)
+            for key, name in KNOWN_RUN_FILES.items()}
+
+
+def build_artifact_record(run_uid: str, artifact_type: str, artifact_path: str,
+                          source_data_path: str, source_run_dir: str, status: str,
+                          created_at: str, notes: str = "") -> dict:
+    """One artifact_manifest row (8 fields), in canonical column order."""
+    return {
+        "run_uid": run_uid, "artifact_type": artifact_type,
+        "artifact_path": artifact_path, "source_data_path": source_data_path,
+        "source_run_dir": source_run_dir, "status": status,
+        "created_at": created_at, "notes": notes,
+    }
+
+
+ARTIFACT_MANIFEST_COLUMNS = [
+    "run_uid", "artifact_type", "artifact_path", "source_data_path",
+    "source_run_dir", "status", "created_at", "notes",
+]

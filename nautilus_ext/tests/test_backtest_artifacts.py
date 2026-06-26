@@ -103,6 +103,28 @@ def test_path_helpers():
     assert ba.pnl_filename("RU") == "RU_pnl.csv"
     assert ba.chart_filename("RU", "drawdown") == "RU_drawdown.png"
     assert ba.rel_path("a\\b\\c") == "a/b/c"
+    assert ba.normalize_path("a\\b\\c") == "a/b/c"
+
+
+def test_safe_relative_path():
+    assert ba.safe_relative_path("/x/y/z/file.csv", "/x/y") == "z/file.csv"
+    # un-relatable input falls back to the normalized path, never raises
+    assert ba.safe_relative_path("a\\b", "a") in ("b", "a/b")
+
+
+def test_build_artifact_record():
+    rec = ba.build_artifact_record("RU", "pnl_single_csv", "pnl/RU_pnl.csv",
+                                   "raw/equity_curve.csv", "raw", "ok", "2026-06-26T00:00:00+00:00")
+    assert list(rec.keys()) == ba.ARTIFACT_MANIFEST_COLUMNS
+    assert rec["run_uid"] == "RU" and rec["status"] == "ok"
+
+
+def test_discover_run_files(tmp_path):
+    (tmp_path / "equity_curve.csv").write_text("equity\n1\n")
+    (tmp_path / "trades.csv").write_text("x\n")
+    found = ba.discover_run_files(tmp_path)
+    assert found["equity_curve"] is not None and found["trades"] is not None
+    assert found["fills"] is None and found["report_json"] is None
 
 
 def test_no_network_or_time_dependency():
