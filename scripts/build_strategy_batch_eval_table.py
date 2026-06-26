@@ -29,11 +29,20 @@ Outputs under ``--out-dir``:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 from typing import Any
 
 from research import evaluation_tables as et
+
+
+def _load_sizing(path: Path | None) -> dict[str, dict]:
+    """position_sizing.csv -> {SYMBOL: row}. Empty when no file."""
+    if not path or not path.is_file():
+        return {}
+    with path.open(encoding="utf-8") as fh:
+        return {str(r.get("symbol", "")).upper(): r for r in csv.DictReader(fh)}
 
 
 def _load_summaries(backtest_root: Path) -> list[dict]:
@@ -101,6 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--end", required=True)
     ap.add_argument("--vip-fee-ratio", type=float, default=0.2)
     ap.add_argument("--half-fee-ratio", type=float, default=0.5)
+    ap.add_argument("--sizing-file", default=None,
+                    help="optional position_sizing.csv -> adds notional-normalization columns")
+    ap.add_argument("--compare-fixed-table", default=None,
+                    help="optional fixed-quantity batch_evaluation_table.csv -> writes normalization_comparison.csv")
     ap.add_argument("--no-overwrite", action="store_true",
                     help="refuse to overwrite an existing batch_evaluation_table")
     return ap
@@ -113,6 +126,10 @@ def run(args) -> tuple[list[dict], list[str]]:
         bar_type=args.bar_type, start=args.start, end=args.end,
         data_root=Path(args.data_root) if args.data_root else None,
         half_ratio=args.half_fee_ratio, vip_ratio=args.vip_fee_ratio)
+    sizing = _load_sizing(Path(args.sizing_file) if getattr(args, "sizing_file", None) else None)
+    if sizing:
+        for r in rows:
+            et.attach_sizing(r, sizing.get(str(r.get("Symbol", "")).upper()))
     return rows, symbols
 
 
@@ -129,11 +146,22 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     rows, symbols = run(args)
-    et.write_table_csv(rows, table_csv)
-    et.write_table_md(rows, table_md)
-    cov = et.build_coverage_rows(rows, primary_symbol=symbols[0] if symbols else None)
+    has_sizing = bool(getattr(args, "sizing_file", None)) and any("Order Quantity" in r for r in rows)
+    csv_cols = et.SYMBOL_METRIC_COLUMNS + (et.SIZING_COLUMNS if has_sizing else [])
+    md_cols = et.MD_CORE_COLUMNS[:-2] + (["Order Quantity", "Actual Initial Notional"] if has_sizing else []) \
+        + et.MD_CORE_COLUMNS[-2:]
+    et.write_table_csv(rows, table_csv, csv_cols)
+    et.write_table_md(rows, table_md, md_cols)
+    cov = et.build_coverage_rows(rows, primary_symbol=symbols[0] if symbols else None, columns=csv_cols)
     et.write_coverage_csv(cov, cov_csv)
     et.write_coverage_md(cov, cov_md)
+
+    if getattr(args, "compare_fixed_table", None):
+        fixed = et.read_table_csv(Path(args.compare_fixed_table))
+        comp = et.build_comparison_rows(rows, fixed)
+        comp_path = out / "normalization_comparison.csv"
+        et.write_comparison_csv(comp, comp_path)
+        print(f"COMPARISON_CSV {comp_path}")
 
     print(f"BATCH_TABLE_CSV {table_csv}")
     print(f"BATCH_TABLE_MD {table_md}")

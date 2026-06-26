@@ -176,6 +176,68 @@ def test_full_main_writes_all_outputs(tmp_path):
     assert [r["Symbol"] for r in body] == ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
 
 
+# --- notional-normalization sizing columns + comparison ---------------------
+
+def _write_sizing(tmp_path):
+    p = tmp_path / "position_sizing.csv"
+    with p.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["symbol", "initial_price", "target_notional_usdt", "order_quantity",
+                    "actual_initial_notional", "sizing_method", "status", "caveat"])
+        w.writerow(["BTCUSDT", "60000", "10000", "0.16666667", "10000.0", "initial_close_target_notional", "ok", "c"])
+        w.writerow(["ETHUSDT", "3000", "10000", "3.33333333", "10000.0", "initial_close_target_notional", "ok", "c"])
+    return p
+
+
+def test_sizing_file_appends_columns(tmp_path):
+    root = _batch_root(tmp_path)
+    sp = _write_sizing(tmp_path)
+    rc = bx.main(["--backtest-root", str(root), "--data-root", str(root / "none"),
+                  "--out-dir", str(tmp_path / "n"), "--symbols", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT",
+                  "--bar-type", "15m", "--start", "2026-03-01", "--end", "2026-05-31",
+                  "--sizing-file", str(sp)])
+    assert rc == 0
+    with (tmp_path / "n" / "batch_evaluation_table.csv").open() as fh:
+        data = list(csv.reader(fh))
+    assert data[0] == et.SYMBOL_METRIC_COLUMNS + et.SIZING_COLUMNS    # appended, not replaced
+    body = {r[data[0].index("Symbol")]: r for r in data[1:]}
+    assert body["BTCUSDT"][data[0].index("Order Quantity")] == "0.16666667"
+    # coverage audit also covers the sizing columns
+    with (tmp_path / "n" / "batch_metric_coverage_audit.csv").open() as fh:
+        metrics = {r["Metric"] for r in csv.DictReader(fh)}
+    assert "Order Quantity" in metrics and "Sizing Method" in metrics
+
+
+def test_backward_compatible_without_sizing(tmp_path):
+    root = _batch_root(tmp_path)
+    rc = bx.main(["--backtest-root", str(root), "--data-root", str(root / "none"),
+                  "--out-dir", str(tmp_path / "f"), "--symbols", "BTCUSDT,ETHUSDT",
+                  "--bar-type", "15m", "--start", "2026-03-01", "--end", "2026-05-31"])
+    assert rc == 0
+    with (tmp_path / "f" / "batch_evaluation_table.csv").open() as fh:
+        header = next(csv.reader(fh))
+    assert header == et.SYMBOL_METRIC_COLUMNS          # no sizing columns when no sizing file
+
+
+def test_normalization_comparison(tmp_path):
+    root = _batch_root(tmp_path)
+    # a fixed-quantity table to compare against
+    fixed = tmp_path / "fixed_table.csv"
+    et.write_table_csv(bx.run(_args(tmp_path, root))[0], fixed)
+    rc = bx.main(["--backtest-root", str(root), "--data-root", str(root / "none"),
+                  "--out-dir", str(tmp_path / "n2"), "--symbols", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT",
+                  "--bar-type", "15m", "--start", "2026-03-01", "--end", "2026-05-31",
+                  "--sizing-file", str(_write_sizing(tmp_path)),
+                  "--compare-fixed-table", str(fixed)])
+    assert rc == 0
+    comp = tmp_path / "n2" / "normalization_comparison.csv"
+    assert comp.is_file()
+    with comp.open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert [r["symbol"] for r in rows] == ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
+    assert {"fixed_quantity_total_return", "normalized_total_return", "interpretation"} <= set(rows[0])
+
+
 # --- reuse / safety ---------------------------------------------------------
 
 def test_single_and_matrix_builders_still_work():

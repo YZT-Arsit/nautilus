@@ -83,6 +83,9 @@ MD_CORE_COLUMNS = [
     "Short Exposure %", "Commission / |Gross PnL|", "Fee Drag", "Backtest Status", "Caveat",
 ]
 
+# Optional notional-normalization columns (appended only when a sizing file is supplied).
+SIZING_COLUMNS = ["Sizing Method", "Target Notional USDT", "Order Quantity", "Actual Initial Notional"]
+
 # Structural fields we can always state, even when a symbol has no backtest.
 _STRUCTURAL = {
     "Market Type": "crypto_perpetual", "Exchange": "BINANCE",
@@ -463,21 +466,27 @@ METRIC_AUDIT: dict[str, tuple[str, str, str, str, str, str]] = {
     "Mark Price Modeled": (_C_PERP, "implemented", "static", "reliable", "not modeled (No)", "-"),
     "Mark Price Data Available": (_C_PERP, "planned", "n/a", "unavailable", "mark price not ingested", "No"),
     "Caveat": (_C_RUN, "implemented", "computed", "reliable", "perp + short-sample notes", "-"),
+    "Sizing Method": (_C_EXP, "added", "sizing file", "reliable", "initial-close target notional", "-"),
+    "Target Notional USDT": (_C_EXP, "added", "sizing file", "reliable", "normalization target", "-"),
+    "Order Quantity": (_C_EXP, "added", "sizing file", "reliable", "target / initial price", "-"),
+    "Actual Initial Notional": (_C_EXP, "added", "sizing file", "reliable", "quantity x initial price", "-"),
 }
 
 COVERAGE_COLUMNS = ["Metric", "Category", "Status", "Computed From", "Reliability",
                     "Reason", "Fallback", "Included In CSV", "Included In MD", "Available"]
 
 
-def build_coverage_rows(rows: list[dict], *, primary_symbol: str | None = None) -> list[dict]:
+def build_coverage_rows(rows: list[dict], *, primary_symbol: str | None = None,
+                        columns: list[str] | None = None) -> list[dict]:
     """Per-metric coverage audit. ``Available`` = primary symbol has a non-NA value."""
+    columns = columns or SYMBOL_METRIC_COLUMNS
     primary = None
     if primary_symbol is not None:
         primary = next((r for r in rows if r.get("Symbol") == primary_symbol), None)
     if primary is None:
         primary = next((r for r in rows if r.get("Backtest Status") == "success"), rows[0] if rows else {})
     out = []
-    for m in SYMBOL_METRIC_COLUMNS:
+    for m in columns:
         cat, status, src, rel, reason, fb = METRIC_AUDIT.get(
             m, (_C_BASIC, "implemented", "summary", "reliable", "pre-existing metric", "-"))
         val = primary.get(m, NA)
@@ -506,3 +515,81 @@ def write_coverage_md(cov_rows: list[dict], path: Path) -> None:
     for r in cov_rows:
         lines.append("| " + " | ".join(_md(r[c]) for c in COVERAGE_COLUMNS) + " |")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# --- notional-normalization sizing + fixed-vs-normalized comparison ----------
+
+def attach_sizing(row: dict, sizing: dict | None) -> dict:
+    """Append the four sizing columns to a per-symbol row (NA when no sizing)."""
+    row["Sizing Method"] = (sizing or {}).get("sizing_method", NA) or NA
+    row["Target Notional USDT"] = (sizing or {}).get("target_notional_usdt", NA)
+    row["Order Quantity"] = (sizing or {}).get("order_quantity", NA)
+    row["Actual Initial Notional"] = (sizing or {}).get("actual_initial_notional", NA)
+    return row
+
+
+COMPARISON_COLUMNS = [
+    "symbol", "fixed_quantity_total_return", "normalized_total_return",
+    "fixed_quantity_max_drawdown_pct", "normalized_max_drawdown_pct",
+    "fixed_quantity_excess_return", "normalized_excess_return",
+    "fixed_quantity_total_commission", "normalized_total_commission",
+    "fixed_quantity_commission_to_abs_gross_pnl", "normalized_commission_to_abs_gross_pnl",
+    "interpretation",
+]
+
+
+def read_table_csv(path: Path) -> dict[str, dict]:
+    """Read a rows=symbol batch_evaluation_table.csv keyed by Symbol."""
+    if not path.is_file():
+        return {}
+    with path.open(encoding="utf-8") as fh:
+        return {r.get("Symbol", ""): r for r in csv.DictReader(fh)}
+
+
+def _g(row: dict, key: str) -> str:
+    v = row.get(key, NA)
+    return NA if v in (None, "") else str(v)
+
+
+def build_comparison_rows(normalized_rows: list[dict], fixed_by_symbol: dict[str, dict]) -> list[dict]:
+    """One row per symbol comparing fixed-quantity vs notional-normalized metrics."""
+    out = []
+    for nr in normalized_rows:
+        sym = nr.get("Symbol")
+        fx = fixed_by_symbol.get(sym, {})
+
+        def num(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+        f_dd, n_dd = num(_g(fx, "Max Drawdown %")), num(nr.get("Max Drawdown %"))
+        if f_dd is not None and n_dd is not None:
+            interp = (f"fixed maxDD {f_dd:.2%} vs normalized {n_dd:.2%}; normalized notional "
+                      "is comparable across symbols (fixed 1-contract over-weights high-price symbols)")
+        else:
+            interp = "normalized initial notional comparable across symbols; fixed 1-contract is not"
+        out.append({
+            "symbol": sym,
+            "fixed_quantity_total_return": _g(fx, "Total Return"),
+            "normalized_total_return": _g(nr, "Total Return"),
+            "fixed_quantity_max_drawdown_pct": _g(fx, "Max Drawdown %"),
+            "normalized_max_drawdown_pct": _g(nr, "Max Drawdown %"),
+            "fixed_quantity_excess_return": _g(fx, "Excess Return"),
+            "normalized_excess_return": _g(nr, "Excess Return"),
+            "fixed_quantity_total_commission": _g(fx, "Total Commission"),
+            "normalized_total_commission": _g(nr, "Total Commission"),
+            "fixed_quantity_commission_to_abs_gross_pnl": _g(fx, "Commission / |Gross PnL|"),
+            "normalized_commission_to_abs_gross_pnl": _g(nr, "Commission / |Gross PnL|"),
+            "interpretation": interp,
+        })
+    return out
+
+
+def write_comparison_csv(rows: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=COMPARISON_COLUMNS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({c: r.get(c, NA) for c in COMPARISON_COLUMNS})

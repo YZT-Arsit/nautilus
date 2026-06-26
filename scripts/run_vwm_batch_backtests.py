@@ -167,6 +167,7 @@ class BatchJob:
     strategy: str
     params_hash: str
     instrument_id: str | None = None
+    quantity: float | None = None
 
 
 @dataclass(frozen=True)
@@ -515,6 +516,16 @@ def _candidate_from_inventory(row: InventoryRow) -> dict[str, str]:
     }
 
 
+def _opt_float(value: Any) -> float | None:
+    """Coerce an optional per-job quantity to float; None when absent/blank."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def build_jobs(
     cfg: dict[str, Any],
     *,
@@ -560,6 +571,7 @@ def build_jobs(
                 strategy=strategy,
                 params_hash=phash,
                 instrument_id=item.get("instrument_id"),
+                quantity=_opt_float(item.get("quantity", item.get("order_quantity"))),
             )
         )
         if max_symbols is not None and len(jobs) >= max_symbols:
@@ -626,6 +638,8 @@ def _resolved_strategy_config(cfg: dict[str, Any], job: BatchJob, output_root: P
     execution.setdefault("fee_rate", 0.0005)
     execution.setdefault("slippage_bps", 1.0)
     execution.setdefault("fill_timing", "same_bar")
+    if job.quantity is not None:                     # per-job notional-normalized size
+        execution["quantity"] = job.quantity
     data = dict(cfg.get("data") or {})
     instrument_id = job.instrument_id or f"{job.symbol}.{job.exchange}"
     return {
