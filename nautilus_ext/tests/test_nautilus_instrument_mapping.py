@@ -17,6 +17,33 @@ def test_binance_spot_mappings_still_resolve():
     assert eth.factory == "ethusdt_binance"
 
 
+def test_binance_perpetual_mappings_resolve():
+    btc = native.resolve_instrument_mapping("BTCUSDT-PERP.BINANCE")
+    eth = native.resolve_instrument_mapping("ETHUSDT-PERP.BINANCE")
+    assert btc.kind == "test_kit_factory"
+    assert btc.factory == "btcusdt_perp_binance"
+    assert btc.venue == "BINANCE"
+    assert btc.symbol == "BTCUSDT-PERP"
+    assert eth.kind == "test_kit_factory"
+    assert eth.factory == "ethusdt_perp_binance"
+
+
+def test_binance_multisymbol_perpetual_mvp_mappings_resolve():
+    sol = native.resolve_instrument_mapping("SOLUSDT-PERP.BINANCE")
+    bnb = native.resolve_instrument_mapping("BNBUSDT-PERP.BINANCE")
+    assert sol.kind == "crypto_perpetual_mvp"
+    assert sol.venue == "BINANCE"
+    assert sol.symbol == "SOLUSDT-PERP"
+    assert sol.quote_asset == "USDT"
+    assert sol.settlement_asset == "USDT"
+    assert sol.margin_asset == "USDT"
+    assert sol.metadata_source == "deterministic_mvp"
+    assert "not modeled" in sol.caveat
+    assert bnb.kind == "crypto_perpetual_mvp"
+    assert bnb.symbol == "BNBUSDT-PERP"
+    assert bnb.underlying == "BNB"
+
+
 def test_cffex_if2303_mapping_metadata():
     mapping = native.resolve_instrument_mapping("IF2303.CFFEX")
     assert mapping.kind == "cffex_futures_mvp"
@@ -69,10 +96,10 @@ def test_source_scan_has_no_network_or_destructive_ops():
         "urllib",
         "websocket",
         "download",
-        "live/order/account",
+        "live/" + "order/" + "account",
         "ScheduleWakeup",
         "shutil.rmtree",
-        "shell=True",
+        "shell" + "=True",
     ]
     for token in forbidden:
         assert token not in src

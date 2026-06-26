@@ -1,0 +1,61 @@
+# E4 REAL smoke config: Binance USD-M perpetual multi-symbol bars, 1 day, 5m.
+# These are real traded OHLCV bars from public read-only Binance Vision archive.
+# Funding, liquidation, margin, and mark/index price effects are not modeled.
+
+strategy:
+  name: vwm
+  params:
+    mom_len: 5
+    avg_len: 20
+    atr_len: 5
+    atr_pct: 0.5
+    setup_len: 5
+
+execution:
+  backend: nautilus
+  fill_timing: same_bar
+  fee_rate: 0.0005
+  initial_cash: 100000
+  quantity: 1.0
+  sell_means: short
+  allow_short: true
+  price_field: close
+  slippage_bps: 1.0
+
+data:
+  root: historical_data/market_data
+  start: 2024-06-01
+  end: 2024-06-01
+
+universe:
+  include:
+    - exchange: BINANCE
+      venue_type: futures_um
+      symbol: BTCUSDT
+      instrument_id: BTCUSDT-PERP.BINANCE
+      bar_type: 5m
+    - exchange: BINANCE
+      venue_type: futures_um
+      symbol: ETHUSDT
+      instrument_id: ETHUSDT-PERP.BINANCE
+      bar_type: 5m
+    - exchange: BINANCE
+      venue_type: futures_um
+      symbol: SOLUSDT
+      instrument_id: SOLUSDT-PERP.BINANCE
+      bar_type: 5m
+    - exchange: BINANCE
+      venue_type: futures_um
+      symbol: BNBUSDT
+      instrument_id: BNBUSDT-PERP.BINANCE
+      bar_type: 5m
+  exclude: []
+
+output:
+  root: outputs/backtests/crypto_perpetual_multisymbol_vwm_smoke
+  overwrite: false
+
+metadata:
+  market_type: crypto_perpetual
+  data_source: binance_vision_futures_um_klines
+  caveat: funding_liquidation_margin_mark_index_not_modeled

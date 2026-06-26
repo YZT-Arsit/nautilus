@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
+from decimal import Decimal
 from typing import Any
 
 from strategy_framework.execution.reports import FillRecord
@@ -36,6 +37,8 @@ from strategy_framework.execution.reports import FillRecord
 _INSTRUMENT_FACTORIES = {
     "BTCUSDT.BINANCE": "btcusdt_binance",
     "ETHUSDT.BINANCE": "ethusdt_binance",
+    "BTCUSDT-PERP.BINANCE": "btcusdt_perp_binance",
+    "ETHUSDT-PERP.BINANCE": "ethusdt_perp_binance",
 }
 _CFFEX_MULTIPLIERS = {
     "IF": 300,
@@ -46,6 +49,32 @@ _CFFEX_MULTIPLIERS = {
 _CFFEX_TICK_SIZE = "0.2"
 _CFFEX_LOT_SIZE = 1
 _CFFEX_CURRENCY = "CNY"
+_CRYPTO_PERP_MVP_SPECS = {
+    "SOLUSDT-PERP.BINANCE": {
+        "symbol": "SOLUSDT-PERP",
+        "raw_symbol": "SOLUSDT",
+        "base": "SOL",
+        "tick_size": "0.001",
+        "price_precision": 3,
+        "lot_size": "0.1",
+        "size_precision": 1,
+        "max_quantity": "100000.0",
+        "max_price": "10000.000",
+        "min_price": "0.001",
+    },
+    "BNBUSDT-PERP.BINANCE": {
+        "symbol": "BNBUSDT-PERP",
+        "raw_symbol": "BNBUSDT",
+        "base": "BNB",
+        "tick_size": "0.01",
+        "price_precision": 2,
+        "lot_size": "0.01",
+        "size_precision": 2,
+        "max_quantity": "100000.00",
+        "max_price": "100000.00",
+        "min_price": "0.01",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -63,6 +92,10 @@ class InstrumentMapping:
     multiplier: int | None = None
     currency: str | None = None
     underlying: str | None = None
+    quote_asset: str | None = None
+    settlement_asset: str | None = None
+    margin_asset: str | None = None
+    caveat: str | None = None
     metadata_source: str = "test_kit"
 
 
@@ -133,11 +166,31 @@ def resolve_instrument_mapping(
             underlying=prefix,
             metadata_source="deterministic_mvp",
         )
+    spec = _CRYPTO_PERP_MVP_SPECS.get(normalized)
+    if spec is not None:
+        return InstrumentMapping(
+            instrument_id=normalized,
+            kind="crypto_perpetual_mvp",
+            venue="BINANCE",
+            symbol=spec["symbol"],
+            exchange="BINANCE",
+            asset_class="CRYPTO_PERPETUAL",
+            tick_size=spec["tick_size"],
+            price_precision=int(spec["price_precision"]),
+            lot_size=1,
+            currency="USDT",
+            underlying=spec["base"],
+            quote_asset="USDT",
+            settlement_asset="USDT",
+            margin_asset="USDT",
+            caveat="deterministic MVP perpetual mapping; funding, margin, liquidation, and mark/index effects are not modeled",
+            metadata_source="deterministic_mvp",
+        )
     raise NautilusUnavailableError(_unsupported_instrument_message(normalized))
 
 
 def _supported_instruments_summary() -> list[str]:
-    return [*_INSTRUMENT_FACTORIES, "CFFEX IF/IH/IC/IM YYMM futures (MVP)"]
+    return [*_INSTRUMENT_FACTORIES, *_CRYPTO_PERP_MVP_SPECS, "CFFEX IF/IH/IC/IM YYMM futures (MVP)"]
 
 
 def _unsupported_instrument_message(instrument_id: str) -> str:
@@ -270,7 +323,7 @@ def run_native_backtest(
         OrderSide,
     )
     from nautilus_trader.model.identifiers import InstrumentId, Symbol, TraderId, Venue  # noqa: PLC0415
-    from nautilus_trader.model.instruments import FuturesContract  # noqa: PLC0415
+    from nautilus_trader.model.instruments import CryptoPerpetual, FuturesContract  # noqa: PLC0415
     from nautilus_trader.model.objects import Currency, Money, Price, Quantity  # noqa: PLC0415
     from nautilus_trader.persistence.wranglers import BarDataWrangler  # noqa: PLC0415
     from nautilus_trader.test_kit.providers import TestInstrumentProvider  # noqa: PLC0415
@@ -297,6 +350,33 @@ def run_native_backtest(
             expiration_ns=expiration_ns,
             ts_event=activation_ns,
             ts_init=activation_ns,
+        )
+    elif mapping.kind == "crypto_perpetual_mvp":
+        spec = _CRYPTO_PERP_MVP_SPECS[mapping.instrument_id]
+        ts_ns = 0
+        instrument = CryptoPerpetual(
+            instrument_id=InstrumentId(symbol=Symbol(spec["symbol"]), venue=Venue("BINANCE")),
+            raw_symbol=Symbol(spec["raw_symbol"]),
+            base_currency=Currency.from_str(spec["base"]),
+            quote_currency=Currency.from_str("USDT"),
+            settlement_currency=Currency.from_str("USDT"),
+            is_inverse=False,
+            price_precision=int(spec["price_precision"]),
+            price_increment=Price.from_str(spec["tick_size"]),
+            size_precision=int(spec["size_precision"]),
+            size_increment=Quantity.from_str(spec["lot_size"]),
+            max_quantity=Quantity.from_str(spec["max_quantity"]),
+            min_quantity=Quantity.from_str(spec["lot_size"]),
+            max_notional=None,
+            min_notional=Money(10.00, Currency.from_str("USDT")),
+            max_price=Price.from_str(spec["max_price"]),
+            min_price=Price.from_str(spec["min_price"]),
+            margin_init=Decimal("1.00"),
+            margin_maint=Decimal("0.35"),
+            maker_fee=Decimal("0.0002"),
+            taker_fee=Decimal("0.0004"),
+            ts_event=ts_ns,
+            ts_init=ts_ns,
         )
     else:  # pragma: no cover - resolver guards this
         raise NautilusUnavailableError(_unsupported_instrument_message(instrument_id))

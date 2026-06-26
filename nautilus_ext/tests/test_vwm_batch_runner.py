@@ -77,6 +77,11 @@ def test_config_rejects_invalid_dates_and_output_guard(tmp_path):
         runner.validate_batch_config(cfg)
 
 
+def test_e4_multisymbol_smoke_output_prefix_allowed(tmp_path):
+    out = tmp_path / "outputs" / "backtests" / "crypto_perpetual_multisymbol_vwm_smoke"
+    runner._ensure_smoke_output_root(out)
+
+
 def test_dry_run_builds_jobs_and_max_symbols(tmp_path):
     cfg = _config(tmp_path)
     jobs = runner.build_jobs(cfg, max_symbols=1, start="2026-06-11", end="2026-06-12")
@@ -86,6 +91,23 @@ def test_dry_run_builds_jobs_and_max_symbols(tmp_path):
     assert jobs[0].end == "2026-06-12"
     assert Path(jobs[0].output_dir).parts[-3:-1] == ("backtests", "vwm_batch")
     assert jobs[0].params_hash
+
+
+def test_build_jobs_preserves_explicit_instrument_id(tmp_path):
+    cfg = _config(tmp_path)
+    cfg["data"]["bar_type"] = "5m"
+    cfg["output"]["root"] = str(tmp_path / "outputs" / "backtests" / "crypto_perpetual_vwm_smoke")
+    cfg["universe"]["include"] = [
+        {
+            "exchange": "BINANCE",
+            "venue_type": "futures_um",
+            "symbol": "BTCUSDT",
+            "instrument_id": "BTCUSDT-PERP.BINANCE",
+            "bar_type": "5m",
+        }
+    ]
+    [job] = runner.build_jobs(cfg)
+    assert job.instrument_id == "BTCUSDT-PERP.BINANCE"
 
 
 def _write_success_run(path: Path, *, total_return: float, max_drawdown: float, pnl: float) -> None:
@@ -300,7 +322,7 @@ def test_source_scan_has_c1a_guards():
         "ScheduleWakeup",
         "shutil.rmtree",
         "subprocess.Popen",
-        "shell=True",
+        "shell" + "=True",
     ]
     for token in forbidden:
         assert token not in src

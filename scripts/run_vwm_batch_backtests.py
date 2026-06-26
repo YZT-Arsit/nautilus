@@ -166,6 +166,7 @@ class BatchJob:
     output_dir: str
     strategy: str
     params_hash: str
+    instrument_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -212,7 +213,12 @@ def safe_output_root(path: str | Path, *, purpose: str) -> Path:
 
 
 def _ensure_smoke_output_root(path: Path) -> None:
-    allowed_names = ("vwm_batch_smoke", "cffex_vwm_midbar_smoke")
+    allowed_names = (
+        "vwm_batch_smoke",
+        "cffex_vwm_midbar_smoke",
+        "crypto_perpetual_vwm_smoke",
+        "crypto_perpetual_multisymbol_vwm_smoke",
+    )
     if not path.name.startswith(allowed_names):
         raise ValueError(
             "real smoke execution is restricted to approved smoke output roots"
@@ -551,6 +557,7 @@ def build_jobs(
                 output_dir=str(output_root / stem),
                 strategy=strategy,
                 params_hash=phash,
+                instrument_id=item.get("instrument_id"),
             )
         )
         if max_symbols is not None and len(jobs) >= max_symbols:
@@ -600,7 +607,7 @@ def _strategy_params_for_run(cfg: dict[str, Any], job: BatchJob) -> dict[str, An
     params = dict((cfg.get("strategy") or {}).get("params") or {})
     if "atr_pct" in params and "atr_pcnt" not in params:
         params["atr_pcnt"] = params.pop("atr_pct")
-    params.setdefault("instrument_id", f"{job.symbol}.{job.exchange}")
+    params.setdefault("instrument_id", job.instrument_id or f"{job.symbol}.{job.exchange}")
     params["bar_type"] = job.bar_type
     return params
 
@@ -618,6 +625,7 @@ def _resolved_strategy_config(cfg: dict[str, Any], job: BatchJob, output_root: P
     execution.setdefault("slippage_bps", 1.0)
     execution.setdefault("fill_timing", "same_bar")
     data = dict(cfg.get("data") or {})
+    instrument_id = job.instrument_id or f"{job.symbol}.{job.exchange}"
     return {
         "run_name": Path(job.output_dir).name,
         "strategy": "vwm_short",
@@ -625,7 +633,7 @@ def _resolved_strategy_config(cfg: dict[str, Any], job: BatchJob, output_root: P
         "data": {
             "mode": "hive_parquet_bars",
             "root": data.get("root", "historical_data/market_data"),
-            "instrument_id": f"{job.symbol}.{job.exchange}",
+            "instrument_id": instrument_id,
             "warmup_bars": 0,
             "timestamp_column": data.get("timestamp_column", "ts"),
             "timestamp_unit": data.get("timestamp_unit", "ns"),
