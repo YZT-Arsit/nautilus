@@ -238,6 +238,41 @@ def test_normalization_comparison(tmp_path):
     assert {"fixed_quantity_total_return", "normalized_total_return", "interpretation"} <= set(rows[0])
 
 
+def test_sizing_mode_comparison_helper(tmp_path):
+    symbols = ["BTCUSDT", "ETHUSDT"]
+    fixed_tbl = {"BTCUSDT": {"Symbol": "BTCUSDT", "Total Return": "-0.2338", "Max Drawdown %": "0.2509",
+                             "Backtest Status": "success"},
+                 "ETHUSDT": {"Symbol": "ETHUSDT", "Total Return": "-0.005", "Max Drawdown %": "0.006",
+                             "Backtest Status": "success"}}
+    notional_tbl = {"BTCUSDT": {"Total Return": "-0.0351", "Max Drawdown %": "0.0376", "Backtest Status": "success"}}
+    vol_tbl = {"BTCUSDT": {"Total Return": "-0.02", "Max Drawdown %": "0.03", "Backtest Status": "success"}}
+    notional_sz = {"BTCUSDT": {"order_quantity": "0.1495", "actual_initial_notional": "10000"}}
+    vol_sz = {"BTCUSDT": {"final_order_quantity": "0.1", "final_initial_notional": "6700",
+                          "realized_vol_15m": "0.005", "target_risk_usdt_per_bar": "50"}}
+    specs = [
+        {"mode": "fixed_quantity", "table": fixed_tbl, "sizing": {}},
+        {"mode": "notional_normalized", "table": notional_tbl, "sizing": notional_sz},
+        {"mode": "vol_targeted", "table": vol_tbl, "sizing": vol_sz},
+    ]
+    rows = et.build_sizing_mode_comparison(symbols, specs,
+                                           vol_by_symbol={"BTCUSDT": "0.005", "ETHUSDT": "0.004"},
+                                           price_by_symbol={"BTCUSDT": 66883.4, "ETHUSDT": 1961.34})
+    assert len(rows) == 2 * 3
+    btc = {r["sizing_mode"]: r for r in rows if r["symbol"] == "BTCUSDT"}
+    assert btc["fixed_quantity"]["order_quantity"] == 1.0
+    assert btc["fixed_quantity"]["initial_notional"] == pytest.approx(66883.4)   # price * 1.0
+    assert btc["notional_normalized"]["order_quantity"] == "0.1495"
+    assert btc["vol_targeted"]["order_quantity"] == "0.1"
+    assert btc["vol_targeted"]["realized_vol_15m"] == "0.005"
+    assert btc["vol_targeted"]["target_risk_usdt_per_bar"] == "50"
+    out = tmp_path / "cmp"
+    et.write_sizing_mode_comparison_csv(rows, out / "c.csv")
+    et.write_sizing_mode_comparison_md(rows, out / "c.md")
+    with (out / "c.csv").open() as fh:
+        assert next(csv.reader(fh)) == et.SIZING_MODE_COMPARISON_COLUMNS
+    assert (out / "c.md").read_text().startswith("| symbol |")
+
+
 # --- reuse / safety ---------------------------------------------------------
 
 def test_single_and_matrix_builders_still_work():

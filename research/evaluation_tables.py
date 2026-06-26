@@ -83,8 +83,11 @@ MD_CORE_COLUMNS = [
     "Short Exposure %", "Commission / |Gross PnL|", "Fee Drag", "Backtest Status", "Caveat",
 ]
 
-# Optional notional-normalization columns (appended only when a sizing file is supplied).
-SIZING_COLUMNS = ["Sizing Method", "Target Notional USDT", "Order Quantity", "Actual Initial Notional"]
+# Optional sizing columns (appended only when a sizing file is supplied). Unified
+# across sizing modes (notional / realized_vol); fields absent for a mode are NA.
+SIZING_COLUMNS = ["Sizing Method", "Sizing Status", "Target Notional USDT",
+                  "Target Risk USDT / Bar", "Realized Vol 15m", "Raw Order Quantity",
+                  "Order Quantity", "Initial Notional"]
 
 # Structural fields we can always state, even when a symbol has no backtest.
 _STRUCTURAL = {
@@ -466,10 +469,14 @@ METRIC_AUDIT: dict[str, tuple[str, str, str, str, str, str]] = {
     "Mark Price Modeled": (_C_PERP, "implemented", "static", "reliable", "not modeled (No)", "-"),
     "Mark Price Data Available": (_C_PERP, "planned", "n/a", "unavailable", "mark price not ingested", "No"),
     "Caveat": (_C_RUN, "implemented", "computed", "reliable", "perp + short-sample notes", "-"),
-    "Sizing Method": (_C_EXP, "added", "sizing file", "reliable", "initial-close target notional", "-"),
-    "Target Notional USDT": (_C_EXP, "added", "sizing file", "reliable", "normalization target", "-"),
-    "Order Quantity": (_C_EXP, "added", "sizing file", "reliable", "target / initial price", "-"),
-    "Actual Initial Notional": (_C_EXP, "added", "sizing file", "reliable", "quantity x initial price", "-"),
+    "Sizing Method": (_C_EXP, "added", "sizing file", "reliable", "notional or realized_vol", "-"),
+    "Sizing Status": (_C_EXP, "added", "sizing file", "reliable", "ok/capped/below_min/...", "-"),
+    "Target Notional USDT": (_C_EXP, "added", "sizing file", "reliable", "notional-mode target", "NA"),
+    "Target Risk USDT / Bar": (_C_EXP, "added", "sizing file", "reliable", "vol-mode per-bar risk", "NA"),
+    "Realized Vol 15m": (_C_EXP, "added", "sizing file", "reliable", "std of 15m log returns", "NA"),
+    "Raw Order Quantity": (_C_EXP, "added", "sizing file", "reliable", "pre-cap quantity", "-"),
+    "Order Quantity": (_C_EXP, "added", "sizing file", "reliable", "final per-job quantity", "-"),
+    "Initial Notional": (_C_EXP, "added", "sizing file", "reliable", "final quantity x initial price", "-"),
 }
 
 COVERAGE_COLUMNS = ["Metric", "Category", "Status", "Computed From", "Reliability",
@@ -519,12 +526,32 @@ def write_coverage_md(cov_rows: list[dict], path: Path) -> None:
 
 # --- notional-normalization sizing + fixed-vs-normalized comparison ----------
 
+def _sz(sizing: dict, *keys: str) -> Any:
+    """First present, non-empty value among ``keys`` in a sizing row, else NA."""
+    for k in keys:
+        v = sizing.get(k)
+        if v not in (None, ""):
+            return v
+    return NA
+
+
 def attach_sizing(row: dict, sizing: dict | None) -> dict:
-    """Append the four sizing columns to a per-symbol row (NA when no sizing)."""
-    row["Sizing Method"] = (sizing or {}).get("sizing_method", NA) or NA
-    row["Target Notional USDT"] = (sizing or {}).get("target_notional_usdt", NA)
-    row["Order Quantity"] = (sizing or {}).get("order_quantity", NA)
-    row["Actual Initial Notional"] = (sizing or {}).get("actual_initial_notional", NA)
+    """Append the unified sizing columns to a per-symbol row (NA when no sizing).
+
+    Tolerant of both sizing-file schemas: the notional generator
+    (``order_quantity`` / ``actual_initial_notional`` / ``status``) and the
+    realized-vol generator (``final_order_quantity`` / ``raw_order_quantity`` /
+    ``final_initial_notional`` / ``realized_vol_15m`` / ``sizing_status``).
+    """
+    s = sizing or {}
+    row["Sizing Method"] = _sz(s, "sizing_method")
+    row["Sizing Status"] = _sz(s, "sizing_status", "status")
+    row["Target Notional USDT"] = _sz(s, "target_notional_usdt")
+    row["Target Risk USDT / Bar"] = _sz(s, "target_risk_usdt_per_bar")
+    row["Realized Vol 15m"] = _sz(s, "realized_vol_15m")
+    row["Raw Order Quantity"] = _sz(s, "raw_order_quantity", "order_quantity")
+    row["Order Quantity"] = _sz(s, "final_order_quantity", "order_quantity")
+    row["Initial Notional"] = _sz(s, "final_initial_notional", "actual_initial_notional")
     return row
 
 
@@ -593,3 +620,84 @@ def write_comparison_csv(rows: list[dict], path: Path) -> None:
         w.writeheader()
         for r in rows:
             w.writerow({c: r.get(c, NA) for c in COMPARISON_COLUMNS})
+
+
+# --- three-way sizing-mode comparison (fixed / notional / vol-targeted) -------
+
+SIZING_MODE_COMPARISON_COLUMNS = [
+    "symbol", "sizing_mode", "order_quantity", "initial_notional", "realized_vol_15m",
+    "target_risk_usdt_per_bar", "total_return", "benchmark_return", "excess_return",
+    "zero_fee_return", "max_drawdown_pct", "sharpe", "win_rate", "profit_factor",
+    "trade_count", "total_commission", "commission_to_abs_gross_pnl", "exposure_pct",
+    "short_exposure_pct", "status", "interpretation",
+]
+
+_MODE_INTERP = {
+    "fixed_quantity": "fixed 1 contract; initial notional differs by price -> not comparable",
+    "notional_normalized": "equal initial notional -> magnitudes comparable across symbols",
+    "vol_targeted": "equal per-bar risk budget -> risk-comparable across symbols",
+}
+
+
+def build_sizing_mode_comparison(symbols: list[str], mode_specs: list[dict], *,
+                                 vol_by_symbol: dict[str, Any] | None = None,
+                                 price_by_symbol: dict[str, Any] | None = None) -> list[dict]:
+    """Rows = symbol x sizing_mode. ``mode_specs`` is an ordered list of
+    ``{"mode": name, "table": {sym: metric_row}, "sizing": {sym: sizing_row}}``.
+    ``fixed_quantity`` needs no sizing file (qty=1.0, notional=price*1.0).
+    """
+    vol_by_symbol = vol_by_symbol or {}
+    price_by_symbol = price_by_symbol or {}
+    out = []
+    for sym in symbols:
+        for spec in mode_specs:
+            mode = spec["mode"]
+            tbl = spec.get("table", {}).get(sym, {})
+            sz = spec.get("sizing", {}).get(sym, {})
+            if mode == "fixed_quantity" and not sz:
+                oq: Any = 1.0
+                price = price_by_symbol.get(sym)
+                inot: Any = (float(price) * 1.0) if isinstance(price, (int, float)) else NA
+            else:
+                oq = _sz(sz, "final_order_quantity", "order_quantity")
+                inot = _sz(sz, "final_initial_notional", "actual_initial_notional")
+            out.append({
+                "symbol": sym, "sizing_mode": mode, "order_quantity": oq,
+                "initial_notional": inot,
+                "realized_vol_15m": _sz(sz, "realized_vol_15m") if sz else vol_by_symbol.get(sym, NA),
+                "target_risk_usdt_per_bar": _sz(sz, "target_risk_usdt_per_bar"),
+                "total_return": tbl.get("Total Return", NA),
+                "benchmark_return": tbl.get("Benchmark Return", NA),
+                "excess_return": tbl.get("Excess Return", NA),
+                "zero_fee_return": tbl.get("Zero Fee Return", NA),
+                "max_drawdown_pct": tbl.get("Max Drawdown %", NA),
+                "sharpe": tbl.get("Sharpe", NA),
+                "win_rate": tbl.get("Win Rate", NA),
+                "profit_factor": tbl.get("Profit Factor", NA),
+                "trade_count": tbl.get("Trade Count", NA),
+                "total_commission": tbl.get("Total Commission", NA),
+                "commission_to_abs_gross_pnl": tbl.get("Commission / |Gross PnL|", NA),
+                "exposure_pct": tbl.get("Exposure %", NA),
+                "short_exposure_pct": tbl.get("Short Exposure %", NA),
+                "status": tbl.get("Backtest Status", NA),
+                "interpretation": _MODE_INTERP.get(mode, ""),
+            })
+    return out
+
+
+def write_sizing_mode_comparison_csv(rows: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=SIZING_MODE_COMPARISON_COLUMNS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({c: r.get(c, NA) for c in SIZING_MODE_COMPARISON_COLUMNS})
+
+
+def write_sizing_mode_comparison_md(rows: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cols = SIZING_MODE_COMPARISON_COLUMNS
+    lines = ["| " + " | ".join(cols) + " |", "| " + " | ".join("---" for _ in cols) + " |"]
+    for r in rows:
+        lines.append("| " + " | ".join(_md(r.get(c, NA)) for c in cols) + " |")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")

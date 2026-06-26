@@ -148,8 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     rows, symbols = run(args)
     has_sizing = bool(getattr(args, "sizing_file", None)) and any("Order Quantity" in r for r in rows)
     csv_cols = et.SYMBOL_METRIC_COLUMNS + (et.SIZING_COLUMNS if has_sizing else [])
-    md_cols = et.MD_CORE_COLUMNS[:-2] + (["Order Quantity", "Actual Initial Notional"] if has_sizing else []) \
-        + et.MD_CORE_COLUMNS[-2:]
+    md_cols = et.MD_CORE_COLUMNS[:-2] + (["Order Quantity", "Initial Notional", "Realized Vol 15m"]
+                                         if has_sizing else []) + et.MD_CORE_COLUMNS[-2:]
     et.write_table_csv(rows, table_csv, csv_cols)
     et.write_table_md(rows, table_md, md_cols)
     cov = et.build_coverage_rows(rows, primary_symbol=symbols[0] if symbols else None, columns=csv_cols)
