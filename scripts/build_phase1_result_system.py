@@ -236,9 +236,14 @@ def run(args) -> dict:
     _write_run_manifest(registry, deliver / "manifest.json", args, now_iso, missing)
     _write_readme(deliver / "README.md", args)
     archived = archive_reports(deliver, Path(args.reports_archive_root), now_iso=now_iso)
+    superseded = []
+    if getattr(args, "archive_superseded", True):
+        sup_root = getattr(args, "superseded_archive_root",
+                           "outputs/archive/phase1_deliverable_superseded")
+        superseded = archive_superseded_deliverable(deliver, Path(sup_root), now_iso=now_iso)
     return {"with_uid": with_uid, "registry": registry, "manifest": manifest,
             "missing": missing, "deliver": deliver, "archived": archived,
-            "summary_charts": summary_charts,
+            "superseded": superseded, "summary_charts": summary_charts,
             "pnl_timeseries_path": _repo_rel(pnl_ts_path)}
 
 
@@ -608,13 +613,93 @@ def archive_reports(deliver: Path, archive_root: Path, *, now_iso: str) -> list[
                       "reason": "report/conclusion file removed from deliverable root",
                       "moved_at": now_iso, "reversible": "yes",
                       "moved": "no" if note else "yes", "notes": note})
-    man = archive_root / "archive_manifest.csv"
-    cols = ["old_path", "new_path", "reason", "moved_at", "reversible", "moved", "notes"]
-    with man.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols)
+    _write_archive_manifest(moved, archive_root / "archive_manifest.csv")
+    return moved
+
+
+_ARCHIVE_MANIFEST_COLS = ["old_path", "new_path", "reason", "moved_at", "reversible", "moved", "notes"]
+
+
+def _write_archive_manifest(moved: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=_ARCHIVE_MANIFEST_COLS)
         w.writeheader()
         for r in moved:
             w.writerow(r)
+
+
+# files superseded by the Phase-1.5+ structure (relative to the deliverable root)
+SUPERSEDED_DELIVERABLE_FILES = [
+    "dashboard.html",                              # -> dashboard/index.html
+    "tables/artifact_index.csv",                   # -> tables/artifact_manifest.csv
+    "tables/artifact_index.md",
+    "tables/batch_evaluation_table.csv",           # -> tables/evaluation_table*.csv
+    "tables/batch_evaluation_table.md",
+    "tables/batch_evaluation_table_with_uid.csv",  # -> tables/evaluation_table_with_uid.csv
+    "tables/batch_evaluation_table_with_uid.md",
+    "raw_refs/run_paths.md",                       # -> tables/run_registry.csv
+]
+
+
+def _superseded_pnl_files(deliver: Path) -> list[Path]:
+    """Old per-symbol PnL CSVs (e.g. ``BTCUSDT_pnl.csv``) superseded by run_uid-named
+    ones. run_uid files contain ``_BINANCE_`` in the stem; legacy ones do not."""
+    pnl = deliver / "pnl"
+    if not pnl.is_dir():
+        return []
+    return [p for p in sorted(pnl.iterdir())
+            if p.is_file() and p.name.endswith("_pnl.csv") and "_BINANCE_" not in p.name]
+
+
+def _superseded_chart_files(deliver: Path) -> list[Path]:
+    """Old per-symbol charts (e.g. ``BTCUSDT_equity_curve.png``) superseded by
+    run_uid-named ones. Keep run_uid charts (contain ``_BINANCE_``) and cross-run
+    ``summary_*`` charts; everything else under charts/ is legacy."""
+    cdir = deliver / "charts"
+    if not cdir.is_dir():
+        return []
+    return [p for p in sorted(cdir.iterdir())
+            if p.is_file() and p.suffix == ".png"
+            and "_BINANCE_" not in p.name and not p.name.startswith("summary_")]
+
+
+def archive_superseded_deliverable(deliver: Path, archive_root: Path, *, now_iso: str) -> list[dict]:
+    """Move known-superseded deliverable files (old dashboard.html / artifact_index /
+    batch_evaluation_table* / legacy per-symbol PnL / raw_refs) into an archive root,
+    preserving their relative subpath. MOVE only, never delete; dst-exists is skipped.
+    Only files in the explicit superseded set are touched -- unknowns stay (manual_review).
+    ``dashboard.html`` is archived only once ``dashboard/index.html`` exists.
+    """
+    moved: list[dict] = []
+    if not deliver.is_dir():
+        return moved
+    targets = [deliver / rel for rel in SUPERSEDED_DELIVERABLE_FILES]
+    targets += _superseded_pnl_files(deliver)
+    targets += _superseded_chart_files(deliver)
+    for src in targets:
+        if not src.is_file():
+            continue
+        if src.name == "dashboard.html" and not (deliver / "dashboard" / "index.html").is_file():
+            continue                                   # keep until the replacement exists
+        rel = src.relative_to(deliver)
+        dst = archive_root / rel
+        note = ""
+        if dst.exists():
+            note = "destination exists, skipped (no overwrite)"
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+        moved.append({"old_path": normalize_path(src), "new_path": normalize_path(dst),
+                      "reason": "superseded by Phase-1.5+ result structure",
+                      "moved_at": now_iso, "reversible": "yes",
+                      "moved": "no" if note else "yes", "notes": note})
+    # drop now-empty legacy dirs (reversible: regenerated on demand; no data loss)
+    raw_refs = deliver / "raw_refs"
+    if raw_refs.is_dir() and not any(raw_refs.iterdir()):
+        raw_refs.rmdir()
+    if moved:
+        _write_archive_manifest(moved, archive_root / "archive_manifest.csv")
     return moved
 
 
@@ -634,6 +719,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--sizing-comparison-dir",
                     default="outputs/backtests/vwm_crypto_perpetual_2026q2_sizing_comparison")
     ap.add_argument("--reports-archive-root", default="outputs/archive/phase1_reports_removed")
+    ap.add_argument("--superseded-archive-root", default="outputs/archive/phase1_deliverable_superseded")
+    ap.add_argument("--archive-superseded", dest="archive_superseded", action="store_true", default=True,
+                    help="move superseded legacy deliverable files into the archive (default on)")
+    ap.add_argument("--no-archive-superseded", dest="archive_superseded", action="store_false")
     ap.add_argument("--now", default=None, help="ISO timestamp for created_at (default: now)")
     return ap
 
@@ -653,6 +742,9 @@ def main(argv: list[str] | None = None) -> int:
           f"manifest_rows={len(res['manifest'])} summary_charts={len(res['summary_charts'])}")
     print(f"REPORTS_ARCHIVED {len(res['archived'])} "
           + " ".join(Path(a['old_path']).name for a in res['archived']))
+    sup = res.get("superseded", [])
+    print(f"SUPERSEDED_ARCHIVED {sum(1 for s in sup if s['moved'] == 'yes')} "
+          + " ".join(Path(s['old_path']).name for s in sup if s['moved'] == 'yes'))
     for r in res["registry"]:
         print(f"  {r['run_uid']}: params_hash={r['params_hash']}({r['params_hash_source']}) "
               f"raw_run_dir={r['raw_run_dir']}")

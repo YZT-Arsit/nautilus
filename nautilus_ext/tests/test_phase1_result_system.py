@@ -87,6 +87,8 @@ def _args(tmp_path):
         data_version="binance_vision_2026q2", backtest_engine="nautilus_backtest",
         sizing_comparison_dir=str(tmp_path / "nope"),
         reports_archive_root=str(tmp_path / "archive" / "phase1_reports_removed"),
+        archive_superseded=True,
+        superseded_archive_root=str(tmp_path / "archive" / "phase1_deliverable_superseded"),
         now="2026-06-26T00:00:00+00:00")
 
 
@@ -209,6 +211,72 @@ def test_missing_position_handled_as_na(tmp_path):
     per = Path(args.deliverable_root) / "pnl" / f"{_expected_uid()}_pnl.csv"
     rows = _read(per)
     assert all(r["position"] == "NA" for r in rows)
+
+
+def test_archive_superseded_deliverable_moves_not_deletes(tmp_path):
+    d = tmp_path / "deliver"
+    (d / "tables").mkdir(parents=True)
+    (d / "dashboard").mkdir(parents=True)
+    (d / "pnl").mkdir(parents=True)
+    (d / "raw_refs").mkdir(parents=True)
+    # replacement must exist for dashboard.html to be archived
+    (d / "dashboard" / "index.html").write_text("<html></html>")
+    # superseded legacy files
+    (d / "dashboard.html").write_text("old")
+    (d / "tables" / "artifact_index.csv").write_text("x")
+    (d / "tables" / "batch_evaluation_table.csv").write_text("x")
+    (d / "tables" / "batch_evaluation_table_with_uid.csv").write_text("x")
+    (d / "raw_refs" / "run_paths.md").write_text("x")
+    (d / "pnl" / "BTCUSDT_pnl.csv").write_text("x")                      # legacy per-symbol
+    (d / "charts").mkdir()
+    (d / "charts" / "BTCUSDT_equity_curve.png").write_bytes(b"old")       # legacy per-symbol chart
+    # current artifacts that must NOT be touched
+    (d / "README.md").write_text("readme")
+    (d / "tables" / "evaluation_table_with_uid.csv").write_text("keep")
+    keep_uid_pnl = d / "pnl" / "VWM_BTCUSDT_BINANCE_futures_um_15m_x_vol_targeted_9ddd04_pnl.csv"
+    keep_uid_pnl.write_text("keep")
+    keep_uid_chart = d / "charts" / "VWM_BTCUSDT_BINANCE_futures_um_15m_x_vol_targeted_9ddd04_equity_curve.png"
+    keep_uid_chart.write_bytes(b"keep")
+    keep_summary = d / "charts" / "summary_total_return_by_symbol.png"
+    keep_summary.write_bytes(b"keep")
+
+    arch = tmp_path / "archive" / "phase1_deliverable_superseded"
+    moved = rs.archive_superseded_deliverable(d, arch, now_iso="2026-06-26T00:00:00+00:00")
+    moved_names = {Path(m["old_path"]).name for m in moved if m["moved"] == "yes"}
+    assert {"dashboard.html", "artifact_index.csv", "batch_evaluation_table.csv",
+            "batch_evaluation_table_with_uid.csv", "run_paths.md", "BTCUSDT_pnl.csv",
+            "BTCUSDT_equity_curve.png"} <= moved_names
+    # originals gone from deliverable, present in archive (move, not delete)
+    assert not (d / "dashboard.html").exists()
+    assert not (d / "tables" / "artifact_index.csv").exists()
+    assert not (d / "pnl" / "BTCUSDT_pnl.csv").exists()
+    assert not (d / "charts" / "BTCUSDT_equity_curve.png").exists()
+    assert (arch / "dashboard.html").is_file()
+    assert (arch / "tables" / "artifact_index.csv").is_file()
+    assert (arch / "pnl" / "BTCUSDT_pnl.csv").is_file()
+    assert (arch / "charts" / "BTCUSDT_equity_curve.png").is_file()
+    assert (arch / "archive_manifest.csv").is_file()
+    # current artifacts untouched
+    assert (d / "README.md").is_file()
+    assert (d / "tables" / "evaluation_table_with_uid.csv").is_file()
+    assert keep_uid_pnl.is_file()
+    assert keep_uid_chart.is_file() and keep_summary.is_file()           # run_uid + summary charts kept
+    # empty legacy dir removed
+    assert not (d / "raw_refs").exists()
+    # manifest fields
+    with (arch / "archive_manifest.csv").open() as fh:
+        cols = set(next(csv.reader(fh)))
+    assert {"old_path", "new_path", "reason", "moved_at", "reversible"} <= cols
+    assert all(m["reversible"] == "yes" for m in moved)
+
+
+def test_archive_superseded_keeps_dashboard_html_without_replacement(tmp_path):
+    d = tmp_path / "deliver"
+    d.mkdir()
+    (d / "dashboard.html").write_text("old")          # no dashboard/index.html present
+    moved = rs.archive_superseded_deliverable(d, tmp_path / "arch", now_iso="t")
+    assert moved == []
+    assert (d / "dashboard.html").is_file()            # kept until replacement exists
 
 
 def test_archive_reports_moves_not_deletes(tmp_path):

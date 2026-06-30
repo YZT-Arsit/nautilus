@@ -78,7 +78,9 @@ def deliver(tmp_path):
         strategy="VWM", strategy_version="v1", sizing_mode="vol_targeted", bar_type="15m",
         start="2026-03-01", end="2026-05-31", data_version="binance_vision_2026q2",
         backtest_engine="nautilus_backtest", sizing_comparison_dir=str(tmp_path / "nope"),
-        reports_archive_root=str(tmp_path / "archive"), now="2026-06-26T00:00:00+00:00")
+        reports_archive_root=str(tmp_path / "archive"), archive_superseded=True,
+        superseded_archive_root=str(tmp_path / "archive" / "superseded"),
+        now="2026-06-26T00:00:00+00:00")
     rs.run(args)
     return d
 
