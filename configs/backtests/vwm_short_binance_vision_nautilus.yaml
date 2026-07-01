@@ -50,10 +50,12 @@ data:
   volume_column: volume
   # Partition pruning: read only BTCUSDT 5m spot.
   filters:
+    asset_class: crypto
     exchange: BINANCE
     venue_type: spot
     symbol: BTCUSDT
-    bar_type: 5m
+    data_type: bar
+    freq: 5m
 
 execution:
   backend: nautilus_backtest

@@ -72,21 +72,22 @@ historical_data/
   market_data/                          # 行情数据（历史+实盘落盘）
     asset_class=<crypto|future|stock>/
       exchange=<BINANCE|CFFEX|...>/
-        symbol=<BTCUSDT|IH2303|...>/
-          data_type=<bar|trade|quote>/
-            freq=<1m|5m|1h|tick>/
-              date=<YYYY-MM-DD>/
-                part-*.parquet
+        venue_type=<spot|futures_um|futures_cm|...>/
+          symbol=<BTCUSDT|IH2303|...>/
+            data_type=<bar|trade|quote>/
+              freq=<1m|5m|1h|tick>/
+                date=<YYYY-MM-DD>/
+                  part-*.parquet
   feature_data/                         # 特征数据（与 market_data 平级，同属「数据」）
-    feature_set=<technical|order_flow|...>/
-      asset_class=.../ exchange=.../ symbol=.../
+    feature_group=<technical|order_flow|...>/
+      asset_class=.../ exchange=.../ venue_type=.../ symbol=.../
         freq=<...>/ date=<YYYY-MM-DD>/
           part-*.parquet
   instruments/                          # 合约元数据快照
-    exchange=<...>/ asof=<YYYY-MM-DD>/ part-*.parquet
+    exchange=<...>/ as_of_date=<YYYY-MM-DD>/ part-*.parquet
   manifests/                            # 可追溯 + 防重算
     dataset_manifest/ ...               # 行情落盘记录
-    feature_manifest/  ...              # 特征计算记录 (feature_set, params_hash, version)
+    feature_manifest/  ...              # 特征计算记录 (feature_group, params_hash, version)
 ```
 
 设计要点（对齐真实量化公司标准）：
@@ -100,14 +101,13 @@ historical_data/
 
 路径构造/解析集中在 `feature_engine/storage/layout.py`（读写共用，保证一致）。
 
-> **实现状态（2026-07）**：上面是**目标锁定布局**。当前代码已实现「market_data /
-> feature_data 平级」这一核心（`layout.py` + `MarketDataReader` / `FeatureDataReader`
-> / `offline.write_feature_data`），当前分区列命名为
-> `asset_class/exchange/frequency/trading_date/instrument_id`（`instrument_id` 即
-> symbol）。把列改名为 `symbol/freq/date` 并新增一等 `data_type` 维度，会波及
-> `data_engine.transforms` 的列名与**服务器上已有数据**，属于一次「数据迁移」，将在
-> 平台自有 ingest 重新落盘时统一切换（回测读取走 `data_engine/sources/parquet_bars`，
-> 该路径由 config 的 `filters` 驱动、与布局解耦，两种布局都能读）。
+> **实现状态（2026-07，已落地）**：上述锁定布局已在代码中实现——`layout.py`、
+> `MarketDataReader` / `FeatureDataReader`、`offline.write_feature_data`、
+> `MinuteBarBuilder`、`ingest_binance_vision.py` 均按 `asset_class/exchange/
+> venue_type/symbol/data_type/freq/date` 写读。服务器上原有 Binance Vision 数据
+> （旧 `exchange/venue_type/symbol/bar_type/date`）用 `scripts/migrate_market_data_layout.py`
+> 原地重排为锁定布局（parquet 体不含分区列，纯目录移动，无需重写）。回测读取走
+> `data_engine/sources/parquet_bars`，由 config 的 `filters`（新键）驱动。
 
 ---
 

@@ -88,17 +88,17 @@ class FeatureDataReader:
     def scan_features(
         self,
         *,
-        trading_date: str | None = None,
-        instrument_id: str | None = None,
-        frequency: str | None = None,
+        date: str | None = None,
+        symbol: str | None = None,
+        freq: str | None = None,
         feature_group: str | None = None,
         columns: list[str] | None = None,
     ) -> pl.DataFrame:
         """读取历史特征数据，返回一个干净的特征矩阵。
 
-        ``trading_date`` / ``frequency`` / ``feature_group`` 做分区裁剪，
-        ``instrument_id`` 做分区/列级过滤（按可用列匹配），``columns``
-        做列投影。不指定 ``feature_group`` 时跨 group 合并成一行/(symbol, ts_event)。
+        ``date`` / ``freq`` / ``feature_group`` 做分区裁剪，``symbol`` 做分区/
+        列级过滤（按可用列匹配），``columns`` 做列投影。不指定 ``feature_group``
+        时跨 group 合并成一行/(symbol, ts_event)。
         """
         if "feature_group" in self.partition_cols:
             groups = (
@@ -106,15 +106,15 @@ class FeatureDataReader:
                 if feature_group is not None
                 else self._discover_feature_groups()
             )
-            df = self._scan_groups(groups, frequency, trading_date)
+            df = self._scan_groups(groups, freq, date)
         else:
-            df = self._scan_single(feature_group, frequency, trading_date)
+            df = self._scan_single(feature_group, freq, date)
 
         if df.is_empty():
             return df
 
-        if instrument_id is not None:
-            df = self._filter_instrument(df, instrument_id)
+        if symbol is not None:
+            df = self._filter_instrument(df, symbol)
 
         # 跨 feature_group 的 null 补齐行 -> 一行/(symbol, ts_event)。
         df = self._merge_feature_groups(df)
@@ -136,8 +136,8 @@ class FeatureDataReader:
     def _scan_groups(
         self,
         groups: list[str],
-        frequency: str | None,
-        trading_date: str | None,
+        freq: str | None,
+        date: str | None,
     ) -> pl.DataFrame:
         """逐个 feature_group 扫描其子根目录（schema 同构），vertical_relaxed 合并。"""
         frames: list[pl.DataFrame] = []
@@ -147,19 +147,19 @@ class FeatureDataReader:
                 continue
             sub_store = ParquetStore(sub_root, self._sub_partition_cols)
             active = {}
-            if trading_date is not None and "trading_date" in self._sub_partition_cols:
-                active["trading_date"] = trading_date
-            if frequency is not None and "frequency" in self._sub_partition_cols:
-                active["frequency"] = frequency
+            if date is not None and "date" in self._sub_partition_cols:
+                active["date"] = date
+            if freq is not None and "freq" in self._sub_partition_cols:
+                active["freq"] = freq
             f = sub_store.scan(filters=active or None, drop_partition_cols=False)
             if f.is_empty():
                 continue
             # 重新挂回被窄化剥离的分区信息，保证跨 group 列一致、可被 merge 识别。
             f = f.with_columns(pl.lit(group).alias("feature_group"))
-            if frequency is not None and "frequency" not in f.columns:
-                f = f.with_columns(pl.lit(frequency).alias("frequency"))
-            if trading_date is not None and "trading_date" not in f.columns:
-                f = f.with_columns(pl.lit(trading_date).alias("trading_date"))
+            if freq is not None and "freq" not in f.columns:
+                f = f.with_columns(pl.lit(freq).alias("freq"))
+            if date is not None and "date" not in f.columns:
+                f = f.with_columns(pl.lit(date).alias("date"))
             frames.append(f)
 
         if not frames:
@@ -171,14 +171,14 @@ class FeatureDataReader:
     def _scan_single(
         self,
         feature_group: str | None,
-        frequency: str | None,
-        trading_date: str | None,
+        freq: str | None,
+        date: str | None,
     ) -> pl.DataFrame:
         """无 feature_group 维度的布局：直接按分区过滤扫描。"""
         wanted = {
             "feature_group": feature_group,
-            "frequency": frequency,
-            "trading_date": trading_date,
+            "freq": freq,
+            "date": date,
         }
         active = {
             k: v
@@ -234,9 +234,9 @@ class FeatureDataReader:
     def available_features(
         self,
         *,
-        trading_date: str | None = None,
-        instrument_id: str | None = None,
-        frequency: str | None = None,
+        date: str | None = None,
+        symbol: str | None = None,
+        freq: str | None = None,
     ) -> pl.DataFrame:
         """返回某个分区下可用的特征清单。
 
@@ -250,26 +250,22 @@ class FeatureDataReader:
         if self._manifest is not None:
             mdf = self._manifest.read()
             if not mdf.is_empty():
-                if trading_date is not None:
+                if date is not None:
                     mdf = mdf.filter(
                         pl.col("partition_key").str.contains(
-                            f"trading_date={trading_date}", literal=True
+                            f"date={date}", literal=True
                         )
                     )
-                if frequency is not None:
+                if freq is not None:
                     mdf = mdf.filter(
                         pl.col("partition_key").str.contains(
-                            f"frequency={frequency}", literal=True
+                            f"freq={freq}", literal=True
                         )
                     )
                 return mdf
 
         # 退化路径：从数据列名推断特征名。
-        data = self.scan_features(
-            trading_date=trading_date,
-            instrument_id=instrument_id,
-            frequency=frequency,
-        )
+        data = self.scan_features(date=date, symbol=symbol, freq=freq)
         feats = [
             c
             for c in data.columns

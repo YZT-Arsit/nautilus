@@ -43,10 +43,12 @@ data:
   close_column: close
   volume_column: volume
   filters:
+    asset_class: crypto
     exchange: BINANCE
     venue_type: spot
     symbol: BTCUSDT
-    bar_type: 1m
+    data_type: bar
+    freq: 1m
   # STRICT 3-day window - fragment-level date pruning (2026-06-14..16 inclusive).
   start: 2026-06-14
   end: 2026-06-16
@@ -59,7 +61,9 @@ execution:
   sell_means: short         # SELL opens a short; BUY closes it (NETTING)
   allow_short: true         # MARGIN account so shorts are permitted
   price_field: close
-  fee_rate: 0.0005
+  # With/without-fee comparison: paired runs write to <run_name>/nofee and
+  # <run_name>/fee_5bps so fee impact is a single command (see PLATFORM §4.3).
+  fee_scenarios: [0.0, 0.0005]
   slippage_bps: 1.0
 
 output:

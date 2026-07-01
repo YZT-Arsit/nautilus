@@ -26,7 +26,7 @@ def test_write_feature_data_roundtrip(tmp_path):
     df = builder.build_from_events(bars)
     written = builder.write_feature_data(
         df, feature_root=str(tmp_path / "feature_data"),
-        asset_class="crypto", exchange="BINANCE", frequency="1m",
-        trading_date="2026-05-26", instrument_id="BTCUSDT",
+        asset_class="crypto", exchange="BINANCE", venue_type="spot",
+        symbol="BTCUSDT", freq="1m", date="2026-05-26",
     )
     assert written and all(p.suffix == ".parquet" for p in written)

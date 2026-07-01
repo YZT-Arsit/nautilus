@@ -89,14 +89,15 @@ def _check_hive_parquet() -> str:
     ]
     with tempfile.TemporaryDirectory() as d:
         root = Path(d) / "market_data"
-        builder = MinuteBarBuilder(asset_class="future", exchange="CFFEX")
+        builder = MinuteBarBuilder(asset_class="future", exchange="CFFEX", venue_type="futures")
         result, paths = builder.build_and_write(
             ticks, instrument_id="IH2303.CFFEX", market_root=root,
             frequency="1m", trading_date="2026-05-26",
         )
         assert paths, "no parquet written"
-        df = MarketDataReader(root).scan(frequency="1m", trading_date="2026-05-26",
-                                         instrument_id="IH2303.CFFEX")
+        df = MarketDataReader(root).scan(freq="1m", date="2026-05-26",
+                                         venue_type="futures", data_type="bar",
+                                         symbol="IH2303.CFFEX")
         assert df.height == len(result.bars)
     return _PASS
 

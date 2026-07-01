@@ -66,11 +66,12 @@ def parse_partition_path(path: Path | str) -> dict[str, str]:
 # 统一历史数据体系（historical_data）—— market_data 与 feature_data 平级
 # ---------------------------------------------------------------------------
 #
-# 见 docs/HISTORICAL_DATA_LAYOUT.md。三类数据资产 + manifests 同根并列：
+# 锁定布局（见 docs/PLATFORM_ARCHITECTURE.md §2.3）。data_type / symbol / freq
+# 均为一等分区维度，venue_type 保留（区分 spot / futures_um / futures_cm）：
 #
 #   historical_data/
-#       market_data/  asset_class/exchange/frequency/trading_date/instrument_id/
-#       feature_data/ feature_group/asset_class/exchange/frequency/trading_date/instrument_id/
+#       market_data/  asset_class/exchange/venue_type/symbol/data_type/freq/date/
+#       feature_data/ feature_group/asset_class/exchange/venue_type/symbol/freq/date/
 #       instruments/  exchange/as_of_date/
 #       manifests/    dataset_manifest/ , feature_manifest/
 #
@@ -79,26 +80,26 @@ def parse_partition_path(path: Path | str) -> dict[str, str]:
 MARKET_DATA_PARTITION_COLS = (
     "asset_class",
     "exchange",
-    "frequency",
-    "trading_date",
-    "instrument_id",
+    "venue_type",
+    "symbol",
+    "data_type",
+    "freq",
+    "date",
 )
 
-# 新版 feature_data 分区：把 instrument 提升为分区维度，与 market_data 平级。
+# feature_data 镜像 market_data（特征即数据）。feature_group 为逻辑分组顶层维度；
+# 无 data_type（特征本身就是产物），其余维度与 market_data 对齐。
 FEATURE_DATA_PARTITION_COLS = (
     "feature_group",
     "asset_class",
     "exchange",
-    "frequency",
-    "trading_date",
-    "instrument_id",
+    "venue_type",
+    "symbol",
+    "freq",
+    "date",
 )
 
 INSTRUMENTS_PARTITION_COLS = ("exchange", "as_of_date")
-
-# 旧版（legacy）feature_data 分区：instrument 不在路径里，作为 symbol 列存在。
-# 仍可读取；新写入默认用上面的新分区。见 HISTORICAL_DATA_LAYOUT.md。
-LEGACY_FEATURE_PARTITION_COLS = ("feature_group", "frequency", "trading_date")
 
 # historical_data 根下的子目录名。
 MARKET_DATA_SUBDIR = "market_data"
@@ -112,18 +113,22 @@ def market_data_path(
     *,
     asset_class: str,
     exchange: str,
-    frequency: str,
-    trading_date: str,
-    instrument_id: str,
+    venue_type: str,
+    symbol: str,
+    data_type: str,
+    freq: str,
+    date: str,
 ) -> Path:
-    """构造一条 market_data Hive 分区目录。"""
+    """构造一条 market_data Hive 分区目录（锁定布局）。"""
     key = PartitionKey.from_dict(
         {
             "asset_class": asset_class,
             "exchange": exchange,
-            "frequency": frequency,
-            "trading_date": trading_date,
-            "instrument_id": instrument_id,
+            "venue_type": venue_type,
+            "symbol": symbol,
+            "data_type": data_type,
+            "freq": freq,
+            "date": date,
         },
         MARKET_DATA_PARTITION_COLS,
     )
@@ -136,19 +141,21 @@ def feature_data_path(
     feature_group: str,
     asset_class: str,
     exchange: str,
-    frequency: str,
-    trading_date: str,
-    instrument_id: str,
+    venue_type: str,
+    symbol: str,
+    freq: str,
+    date: str,
 ) -> Path:
-    """构造一条（新版）feature_data Hive 分区目录。"""
+    """构造一条 feature_data Hive 分区目录（锁定布局）。"""
     key = PartitionKey.from_dict(
         {
             "feature_group": feature_group,
             "asset_class": asset_class,
             "exchange": exchange,
-            "frequency": frequency,
-            "trading_date": trading_date,
-            "instrument_id": instrument_id,
+            "venue_type": venue_type,
+            "symbol": symbol,
+            "freq": freq,
+            "date": date,
         },
         FEATURE_DATA_PARTITION_COLS,
     )

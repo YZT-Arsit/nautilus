@@ -44,10 +44,12 @@ data:
   close_column: close
   volume_column: volume
   filters:
+    asset_class: crypto
     exchange: BINANCE
     venue_type: spot
     symbol: BTCUSDT
-    bar_type: 1m
+    data_type: bar
+    freq: 1m
   # 7-day window - fragment-level date pruning (2026-06-10..16 inclusive).
   start: 2026-06-10
   end: 2026-06-16

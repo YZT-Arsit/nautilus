@@ -14,7 +14,9 @@ from typing import Any, Iterable
 from data_engine.transforms import aggregate_ticks_to_bars
 from data_engine.transforms.tick_to_bar import MinuteBarResult
 
-# 落盘时写入文件体的列（分区列由路径承载，pyarrow 会从 body 移除）。
+# 落盘的列 = 数据列 + 分区列（分区列由路径承载，pyarrow 从 body 移除）。
+# 分区列须与 MARKET_DATA_PARTITION_COLS 对齐：
+#   asset_class, exchange, venue_type, symbol, data_type, freq, date
 _MARKET_COLUMNS = (
     "instrument_id",
     "symbol",
@@ -25,20 +27,30 @@ _MARKET_COLUMNS = (
     "close",
     "volume",
     "turnover",
-    "trading_date",
-    "frequency",
     "volume_is_synthetic",
+    # partition columns
     "asset_class",
     "exchange",
+    "venue_type",
+    "data_type",
+    "freq",
+    "date",
 )
 
 
 class MinuteBarBuilder:
     """把 tick/quote/bar 聚合成分钟线并（可选）落入 market_data。"""
 
-    def __init__(self, *, asset_class: str = "future", exchange: str = "UNKNOWN") -> None:
+    def __init__(
+        self,
+        *,
+        asset_class: str = "future",
+        exchange: str = "UNKNOWN",
+        venue_type: str = "unknown",
+    ) -> None:
         self.asset_class = asset_class
         self.exchange = exchange
+        self.venue_type = venue_type
 
     # ---------------------------------------------------------------- build
 
@@ -94,9 +106,18 @@ class MinuteBarBuilder:
         # 懒加载分区列：让纯聚合路径（build_*）无需触达 storage（polars）。
         from feature_engine.storage.layout import MARKET_DATA_PARTITION_COLS  # noqa: PLC0415
 
-        # 补上分区所需的 asset_class / exchange 列。
+        # 补上分区列：asset_class / exchange / venue_type / data_type，并把
+        # tick_to_bar 的 trading_date / frequency 映射到锁定布局的 date / freq。
         enriched = [
-            {**row, "asset_class": self.asset_class, "exchange": self.exchange}
+            {
+                **row,
+                "asset_class": self.asset_class,
+                "exchange": self.exchange,
+                "venue_type": self.venue_type,
+                "data_type": "bar",
+                "freq": row.get("frequency"),
+                "date": row.get("trading_date"),
+            }
             for row in result.rows
         ]
         table = pa.Table.from_pylist([

@@ -79,11 +79,13 @@ class HistoricalFeatureBuilder:
         self,
         market_root: str | Path,
         *,
-        instrument_id: str,
-        frequency: str,
-        trading_date: str | list[str],
+        symbol: str,
+        freq: str,
+        date: str | list[str],
         asset_class: str | None = None,
         exchange: str | None = None,
+        venue_type: str | None = None,
+        data_type: str = "bar",
     ) -> "pl.DataFrame":
         """Read bars from a ``market_data`` dataset and compute features."""
         from feature_engine.storage.market_reader import MarketDataReader  # noqa: PLC0415
@@ -91,9 +93,11 @@ class HistoricalFeatureBuilder:
         bars = MarketDataReader(market_root).read_bars(
             asset_class=asset_class,
             exchange=exchange,
-            frequency=frequency,
-            trading_date=trading_date,
-            instrument_id=instrument_id,
+            venue_type=venue_type,
+            symbol=symbol,
+            data_type=data_type,
+            freq=freq,
+            date=date,
         )
         return self.build_from_events(bars)
 
@@ -106,9 +110,10 @@ class HistoricalFeatureBuilder:
         feature_root: str | Path,
         asset_class: str,
         exchange: str,
-        frequency: str,
-        trading_date: str,
-        instrument_id: str,
+        venue_type: str,
+        symbol: str,
+        freq: str,
+        date: str,
         manifest_root: str | Path | None = None,
         mode: Literal["error", "append", "overwrite"] = "overwrite",
     ) -> list[Path]:
@@ -129,9 +134,10 @@ class HistoricalFeatureBuilder:
             "feature_group": self.feature_group,
             "asset_class": asset_class,
             "exchange": exchange,
-            "frequency": frequency,
-            "trading_date": trading_date,
-            "instrument_id": instrument_id,
+            "venue_type": venue_type,
+            "symbol": symbol,
+            "freq": freq,
+            "date": date,
         }
         target_dir = feature_data_path(feature_root, **partition_values)
         _prepare_partition(target_dir, mode)
@@ -152,17 +158,14 @@ class HistoricalFeatureBuilder:
 
     @staticmethod
     def _append_manifest(manifest_root, *, partition_values, feature_names, row_count) -> None:
-        from feature_engine.storage.layout import PartitionKey  # noqa: PLC0415
+        from feature_engine.storage.layout import (  # noqa: PLC0415
+            FEATURE_DATA_PARTITION_COLS,
+            PartitionKey,
+        )
         from feature_engine.storage.metadata import Manifest, params_hash  # noqa: PLC0415
 
         manifest = Manifest(Path(manifest_root) / "feature_manifest")
-        key = PartitionKey.from_dict(
-            partition_values,
-            (
-                "feature_group", "asset_class", "exchange",
-                "frequency", "trading_date", "instrument_id",
-            ),
-        ).to_str()
+        key = PartitionKey.from_dict(partition_values, FEATURE_DATA_PARTITION_COLS).to_str()
         manifest.append(
             [
                 {

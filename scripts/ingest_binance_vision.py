@@ -209,18 +209,27 @@ def main(argv: list[str] | None = None) -> int:
         output_root = Path(args.output)
         output_root.mkdir(parents=True, exist_ok=True)
 
-        # Extract the date partition column from the timestamp.
+        # Locked layout: asset_class/exchange/venue_type/symbol/data_type/freq/date
+        # (see docs/PLATFORM_ARCHITECTURE.md §2.3). data_type + freq are explicit;
+        # asset_class=crypto for Binance.
         df_with_date = df.with_columns([
-            pl.col("ts").dt.strftime("%Y-%m-%d").alias("date")
+            pl.col("ts").dt.strftime("%Y-%m-%d").alias("date"),
+            pl.lit("crypto").alias("asset_class"),
         ])
         if is_trades:
-            # Trade data has no bar_type; partition by data_type instead.
-            df_with_date = df_with_date.with_columns(
-                pl.lit("aggTrades").alias("data_type")
-            )
-            partitioning_cols = ["exchange", "venue_type", "symbol", "data_type", "date"]
+            df_with_date = df_with_date.with_columns([
+                pl.lit("trade").alias("data_type"),
+                pl.lit("tick").alias("freq"),
+            ])
         else:
-            partitioning_cols = ["exchange", "venue_type", "symbol", "bar_type", "date"]
+            # bar_type (e.g. "1m") becomes the freq dimension; data_type=bar.
+            df_with_date = df_with_date.with_columns([
+                pl.lit("bar").alias("data_type"),
+                pl.col("bar_type").alias("freq"),
+            ])
+        partitioning_cols = [
+            "asset_class", "exchange", "venue_type", "symbol", "data_type", "freq", "date",
+        ]
 
         # Convert to PyArrow table
         table = pa.table({

@@ -473,7 +473,10 @@ def run_native_backtest(
     engine = BacktestEngine(
         config=BacktestEngineConfig(
             trader_id=TraderId(trader_id),
-            logging=LoggingConfig(log_level=log_level),
+            # bypass=True: skip Nautilus's global (Rust) logger init. Required so
+            # multiple native backtests can run in ONE process (fee_scenarios,
+            # native batch) — re-initializing the logger otherwise panics.
+            logging=LoggingConfig(bypass_logging=True),
         )
     )
     quote_currency = getattr(instrument, "quote_currency", None) or getattr(instrument, "currency", None)

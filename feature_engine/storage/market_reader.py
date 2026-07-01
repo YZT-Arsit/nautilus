@@ -45,12 +45,14 @@ class MarketDataReader:
         *,
         asset_class: str | None = None,
         exchange: str | None = None,
-        frequency: str | None = None,
-        trading_date: str | list[str] | None = None,
-        instrument_id: str | None = None,
+        venue_type: str | None = None,
+        symbol: str | None = None,
+        data_type: str | None = "bar",
+        freq: str | None = None,
+        date: str | list[str] | None = None,
         columns: list[str] | None = None,
     ) -> "pl.DataFrame":
-        """按分区裁剪读取行情，返回 Polars ``DataFrame``。"""
+        """按分区裁剪读取行情，返回 Polars ``DataFrame``（锁定布局）。"""
         _require("pyarrow")
         _require("polars")
         import pyarrow.dataset as _ds  # noqa: PLC0415
@@ -63,15 +65,17 @@ class MarketDataReader:
             _ds,
             asset_class=asset_class,
             exchange=exchange,
-            frequency=frequency,
-            trading_date=trading_date,
-            instrument_id=instrument_id,
+            venue_type=venue_type,
+            symbol=symbol,
+            data_type=data_type,
+            freq=freq,
+            date=date,
         )
         table = dataset.to_table(filter=filt, columns=columns)
         df = pl.from_arrow(table)
-        # 分区列在 hive 数据集里通过路径恢复；确保 symbol/instrument_id 可用。
-        if "symbol" not in df.columns and "instrument_id" in df.columns:
-            df = df.with_columns(pl.col("instrument_id").alias("symbol"))
+        # 分区列在 hive 数据集里通过路径恢复；确保 instrument_id 可用（回落到 symbol）。
+        if "instrument_id" not in df.columns and "symbol" in df.columns:
+            df = df.with_columns(pl.col("symbol").alias("instrument_id"))
         return df
 
     def read_bars(self, **kwargs: Any) -> list["BarEvent"]:
@@ -87,26 +91,30 @@ class MarketDataReader:
         *,
         asset_class: str | None,
         exchange: str | None,
-        frequency: str | None,
-        trading_date: str | list[str] | None,
-        instrument_id: str | None,
+        venue_type: str | None,
+        symbol: str | None,
+        data_type: str | None,
+        freq: str | None,
+        date: str | list[str] | None,
     ):
         conds = []
         eq = {
             "asset_class": asset_class,
             "exchange": exchange,
-            "frequency": frequency,
-            "instrument_id": instrument_id,
+            "venue_type": venue_type,
+            "symbol": symbol,
+            "data_type": data_type,
+            "freq": freq,
         }
         for col in MARKET_DATA_PARTITION_COLS:
             val = eq.get(col)
             if val is not None:
                 conds.append(_ds.field(col) == val)
-        if trading_date is not None:
-            if isinstance(trading_date, (list, tuple, set)):
-                conds.append(_ds.field("trading_date").isin(list(trading_date)))
+        if date is not None:
+            if isinstance(date, (list, tuple, set)):
+                conds.append(_ds.field("date").isin(list(date)))
             else:
-                conds.append(_ds.field("trading_date") == trading_date)
+                conds.append(_ds.field("date") == date)
         if not conds:
             return None
         expr = conds[0]
