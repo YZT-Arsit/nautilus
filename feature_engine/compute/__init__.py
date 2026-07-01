@@ -44,7 +44,6 @@ Backend / registry:
 
 Engines:
     SpecFeatureEngine       — standalone spec-driven engine; returns FeatureSnapshot
-    SpecDrivenFeatureEngine — adapter implementing FeatureEngineBase for FeaturePipeline
     LateEventError          — raised by late_event_policy='raise'
     input_type_for_event    — canonical input_type from a market event (stable routing)
 
@@ -87,7 +86,6 @@ from feature_engine.compute.backend import (
 from feature_engine.compute.clock import Clock, ManualClock, SystemClock
 from feature_engine.compute.engine import (
     LateEventError,
-    SpecDrivenFeatureEngine,
     SpecFeatureEngine,
     input_type_for_event,
 )
@@ -150,7 +148,6 @@ __all__ = [
     "build_default_registry",
     # Engines
     "SpecFeatureEngine",
-    "SpecDrivenFeatureEngine",
     "LateEventError",
     "input_type_for_event",
 ]

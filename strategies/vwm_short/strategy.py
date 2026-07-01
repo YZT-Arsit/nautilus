@@ -1,20 +1,18 @@
-"""VWM short strategy plugin (Mode B, feature-externalised).
+"""VWM short strategy plugin (self-contained, Mode A).
 
-This adapts the existing ``VolumeWeightedMomentumShortSignalEngine`` (in
-``nautilus_ext``) to the shared ``StrategyPlugin`` contract used by
-``run_strategy.py``. It runs the engine in **Mode B**: VWM features are produced
-by the registered ``vwm_features_v1`` feature engine, fed through a
-``FeaturePipeline``, and handed to the signal engine via a
-``StrategyRuntimeContext`` (the engine reads ``context.get_feature_values``).
+Adapts the self-contained ``VolumeWeightedMomentumShortSignalEngine`` (now under
+``strategies/vwm_short/``) to the shared ``StrategyPlugin`` contract used by
+``run_strategy.py``. The signal engine computes its VWM features internally
+(Mode A); there is no dependency on the removed ``nautilus_ext`` layer or the
+legacy ``feature_engine`` VWM adapter/pipeline.
 
 Bridging notes
 --------------
 * ``run_strategy`` only hands the strategy a :class:`FeatureSnapshot`. To
   reconstruct the bar the engine needs, ``build_specs`` declares four identity
   passthrough specs (rolling mean over a window of 1 == the raw value) for
-  ``close/high/low/volume``. This keeps the FeatureSpec / BackendRegistry /
-  PythonBackend dispatch actively in the live chain; the VWM features
-  themselves come from the Mode-B pipeline, not from these specs.
+  ``close/high/low/volume``, keeping the spec-driven feature engine in the live
+  chain. The VWM maths themselves are computed inside the signal engine.
 * The engine's entry is a ``stop_market`` at a trigger price. The native
   backend replays market orders, so we emit the short entry on the bar where
   the engine's trigger fires (``reason == "enter_short"``): a real Nautilus
@@ -23,9 +21,9 @@ Bridging notes
   ``SignalToOrderPolicy`` (config ``sell_means: short``). SELL opens the short,
   BUY closes it.
 
-This module imports no ``nautilus_trader`` symbols. The VWM feature engine it
-uses internally wraps Nautilus indicators (a pre-existing dependency); those are
-imported lazily when a strategy instance is built, not at module import.
+This module imports no ``nautilus_trader`` symbols at import time. The VWM
+feature engine wraps Nautilus indicators (a pre-existing dependency); those are
+imported lazily when a strategy instance is built.
 """
 from __future__ import annotations
 
@@ -135,21 +133,12 @@ class VwmShortStrategy:
     def __init__(self, config: VwmShortConfig) -> None:
         # Lazy imports: the VWM feature engine wraps Nautilus indicators, so
         # only touch it when a strategy is actually built (not at import time).
-        from feature_engine.feature_pipeline import FeaturePipeline
-        from feature_engine.vwm_adapter import VwmBarFeatureEngine
-        from feature_engine.vwm_features import VwmFeatureConfig
-        from nautilus_ext.strategies.vwm_short_components import VwmShortSignalConfig
-        from nautilus_ext.strategies.vwm_short_signals import (
+        from strategies.vwm_short.signals import (
             VolumeWeightedMomentumShortSignalEngine,
+            VwmShortSignalConfig,
         )
 
         self._config = config
-        feature_config = VwmFeatureConfig(
-            mom_len=config.mom_len,
-            avg_len=config.avg_len,
-            atr_len=config.atr_len,
-        )
-        self._pipeline = FeaturePipeline([VwmBarFeatureEngine(feature_config)])
         self._engine = VolumeWeightedMomentumShortSignalEngine(
             VwmShortSignalConfig(
                 mom_len=config.mom_len,
@@ -170,8 +159,7 @@ class VwmShortStrategy:
         self.blocked_entry_count = 0
 
     def on_snapshot(self, snapshot: FeatureSnapshot) -> str:
-        from feature_engine.interfaces import StrategyRuntimeContext
-        from nautilus_ext.strategies.signal_types import BarInput
+        from strategies.vwm_short.signal_types import BarInput
 
         close = snapshot.value(_CLOSE)
         high = snapshot.value(_HIGH)
@@ -203,14 +191,11 @@ class VwmShortStrategy:
         if self._position == -1:
             self._bars_since_entry += 1
 
-        feature_events = self._pipeline.update(bar)
-        context = StrategyRuntimeContext(
-            event=bar,
-            features={fe.feature_set_id: fe for fe in feature_events},
+        result = self._engine.update(
+            bar,
             position=self._position,
             bars_since_entry=self._bars_since_entry,
         )
-        result = self._engine.update(bar, context=context)
 
         if result.reason == "enter_short":
             # Optional, default-off regime gate: block the short in an uptrend.

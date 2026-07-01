@@ -1,3 +1,0 @@
-exchange,venue_type,symbol,bar_type,first_date,last_date,num_days,num_partitions,estimated_rows,file_size_mb,required_columns_present,status,notes
-BINANCE,spot,BTCUSDT,1m,2024-06-17,2026-06-16,730,730,1051200,78.911757,True,usable,
-BINANCE,spot,BTCUSDT,5m,2024-06-01,2026-06-16,733,733,211104,18.645855,True,incomplete,"date gaps: expected 746 days, found 733"

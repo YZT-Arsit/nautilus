@@ -1,0 +1,20 @@
+# Synthetic batch smoke: multi-symbol × fee-scenario, no data catalog needed.
+#   python run_batch.py --config configs/backtests/batch_smoke_synthetic.yaml
+batch_name: smoke_synth
+strategy: ma_crossover
+symbols: [SYNTH_A, SYNTH_B]
+params: {fast_window: 5, slow_window: 20}
+param_grid: {slow_window: [20, 30]}
+data:
+  mode: synthetic
+  instrument_id: "{symbol}"
+  warmup_bars: 20
+  live_bars: 80
+execution:
+  backend: nautilus_backtest
+  mode: simulated
+  initial_cash: 100000
+  quantity: 1.0
+  fee_scenarios: [0.0, 0.0005]
+output:
+  root: outputs/batches

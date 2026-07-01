@@ -51,7 +51,7 @@ def _load_config(args: argparse.Namespace) -> dict[str, Any]:
         plugin = get_entry(args.strategy)
         config_path = plugin.default_config_path
     if config_path:
-        cfg = yaml.safe_load(_resolve(config_path).read_text()) or {}
+        cfg = yaml.safe_load(_resolve(config_path).read_text(encoding="utf-8")) or {}
     if args.strategy:
         cfg["strategy"] = args.strategy  # --strategy overrides cfg["strategy"]
     return cfg
@@ -63,19 +63,25 @@ def _build_config_obj(config_cls: type, params: dict[str, Any]):
     return config_cls(**{k: v for k, v in params.items() if k in allowed})
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Run a registered feature strategy")
-    parser.add_argument("--config", type=str, help="path to a strategy YAML config")
-    parser.add_argument("--strategy", type=str, help="registered strategy name (overrides config)")
-    args = parser.parse_args(argv)
+def _fee_label(fee: float) -> str:
+    """Stable directory label for a fee rate: 0 -> 'nofee', 0.0005 -> 'fee_5bps'."""
+    f = float(fee)
+    if f == 0:
+        return "nofee"
+    bps = f * 10_000
+    return f"fee_{int(bps)}bps" if bps == int(bps) else f"fee_{bps:g}bps".replace(".", "p")
 
-    if not args.config and not args.strategy:
-        parser.error("provide --strategy NAME and/or --config PATH")
 
-    cfg = _load_config(args)
+def run_config(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Run one resolved config end-to-end. Returns one summary per fee scenario.
+
+    Shared by the CLI (``main``) and the batch runner (``run_batch.py``) so both
+    take the exact same data -> features -> signals -> backend path. Each returned
+    dict has ``run_name`` / ``fee`` / ``output_dir`` for downstream aggregation.
+    """
     name = cfg.get("strategy")
     if not name:
-        parser.error("no strategy given: pass --strategy NAME or a --config with a 'strategy:' key")
+        raise ValueError("config has no 'strategy' key")
 
     plugin = get_entry(name)
     config_obj = _build_config_obj(plugin.config_cls, cfg.get("params", {}))
@@ -96,32 +102,69 @@ def main(argv: list[str] | None = None) -> None:
     output_cfg = cfg.get("output", {})
     print_table = output_cfg.get("print_table", True)
     recorder = SignalRecorder(spec_names) if output_cfg.get("record_signals", False) else None
-    # Optional execution backend (see strategy_framework/backends/). None keeps
-    # the legacy print/record-only behaviour. ``context`` carries run/output
-    # metadata so an artifact-emitting backend can write its report directory.
-    backend_context = {
-        "run_name": cfg.get("run_name") or name,
-        "output": output_cfg,
-        "data": data_cfg,
-        "config": cfg,
-        "repo_root": str(_REPO_ROOT),
-    }
-    backend = build_backend(cfg.get("execution", {}), spec_names, backend_context)
 
+    # Fee scenarios (first-class with/without-fee comparison). ``fee_scenarios``
+    # lists the fee rates to backtest; each produces its own report directory so a
+    # no-fee vs with-fee comparison is a single command. ``fee_rate`` (scalar) is
+    # the single-scenario shorthand. With no execution backend, neither applies.
+    exec_cfg = dict(cfg.get("execution", {}))
+    fee_scenarios = exec_cfg.get("fee_scenarios")
+    if fee_scenarios is None:
+        fee_scenarios = [exec_cfg.get("fee_rate", 0.0)] if exec_cfg.get("backend") else []
+    multi = len(fee_scenarios) > 1
+    base_run = cfg.get("run_name") or name
+
+    # The signal loop is deterministic, so run it ONCE and replay the recorded
+    # stream into each fee scenario's backend (no recompute, identical signals).
     if print_table:
         output.print_event_table_header(spec_names)
+    records: list[tuple[Any, Any, str]] = []
     for event, snapshot, signal in runner.run(live_events):
         if print_table:
             output.print_event_row(event, snapshot, signal, spec_names)
         if recorder is not None:
             recorder.record(event, snapshot, signal)
-        if backend is not None:
-            backend.on_signal(event, snapshot, signal)
-
+        records.append((event, snapshot, signal))
     if recorder is not None:
         output.print_signal_summary(recorder.signal_counts())
-    if backend is not None:
-        backend.close()
+
+    results: list[dict[str, Any]] = []
+    for fee in fee_scenarios:
+        per_exec = {k: v for k, v in exec_cfg.items() if k != "fee_scenarios"}
+        per_exec["fee_rate"] = float(fee)
+        run_name = f"{base_run}/{_fee_label(fee)}" if multi else base_run
+        per_ctx = {
+            "run_name": run_name,
+            "output": output_cfg,
+            "data": data_cfg,
+            "config": cfg,
+            "repo_root": str(_REPO_ROOT),
+        }
+        backend = build_backend(per_exec, spec_names, per_ctx)
+        output_dir = None
+        if output_cfg.get("root"):
+            output_dir = str(_resolve(output_cfg["root"]) / run_name)
+        if backend is not None:
+            for event, snapshot, signal in records:
+                backend.on_signal(event, snapshot, signal)
+            backend.close()
+        results.append({"run_name": run_name, "fee": float(fee), "output_dir": output_dir})
+    return results
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Run a registered feature strategy")
+    parser.add_argument("--config", type=str, help="path to a strategy YAML config")
+    parser.add_argument("--strategy", type=str, help="registered strategy name (overrides config)")
+    args = parser.parse_args(argv)
+
+    if not args.config and not args.strategy:
+        parser.error("provide --strategy NAME and/or --config PATH")
+
+    cfg = _load_config(args)
+    if not cfg.get("strategy"):
+        parser.error("no strategy given: pass --strategy NAME or a --config with a 'strategy:' key")
+    run_config(cfg)
 
 
 if __name__ == "__main__":

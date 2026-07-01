@@ -75,7 +75,7 @@ class CsvBarSource:
         )
 
     def _load_sorted(self) -> list[BarEvent]:
-        with open(self._path, newline="") as fh:
+        with open(self._path, newline="", encoding="utf-8") as fh:
             bars = [self._row_to_bar(row, i) for i, row in enumerate(csv.DictReader(fh))]
         bars.sort(key=lambda b: b.event_time_ns)
         return bars

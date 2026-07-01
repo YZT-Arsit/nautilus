@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from feature_engine.examples.synthetic_bars import ONE_SECOND_NS
+from data_engine.time import ONE_SECOND_NS
 
 
 def _fmt_value(value: float | None, width: int = 10) -> str:
