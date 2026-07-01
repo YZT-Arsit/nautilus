@@ -42,6 +42,16 @@ from scripts.build_phase1_pnl_artifacts import (
     PNL_COLUMNS, _f, _repo_rel, read_csv_rows, render_charts, pnl_timeseries_rows,
     write_pnl_csv,
 )
+import research.fee_frequency_metrics as fm
+
+# fee columns appended to each PnL timeseries row (Target D). equity_gross/gross
+# fields are NA when fills lack commission timestamps (never fabricated).
+PNL_FEE_COLUMNS = [
+    "equity_net", "equity_gross", "cumulative_pnl_net", "cumulative_pnl_gross",
+    "cumulative_commission", "per_bar_commission", "drawdown_net", "drawdown_gross",
+    "source",
+]
+EXTENDED_PNL_COLUMNS = PNL_COLUMNS + PNL_FEE_COLUMNS
 
 
 # --- run_registry -----------------------------------------------------------
@@ -53,18 +63,29 @@ RUN_REGISTRY_COLUMNS = [
     "raw_run_dir", "status", "created_at", "notes",
 ]
 
+# derived trade-frequency + selected fee columns appended to the main table
+# (snake_case, genuinely new -- the fee-before/after values already exist under the
+# eval table's display column names, so those are reused, not duplicated).
+FREQ_APPEND_COLUMNS = list(fm.TRADE_FREQUENCY_FIELDS)
+FEE_APPEND_COLUMNS = ["gross_return", "net_return", "zero_fee_return", "fee_drag_return",
+                      "net_excess_return", "zero_fee_excess_return", "total_commission"]
+
 # eval-table-with-uid: the original metric columns + these traceability columns
 WITH_UID_EXTRA = [
     "run_uid", "raw_run_dir", "pnl_timeseries_path", "pnl_single_path", "chart_dir",
     "equity_curve_chart_path", "drawdown_chart_path", "pnl_chart_path",
-    "position_chart_path", "benchmark_chart_path", "trades_path", "fills_path",
-    "report_json_path", "run_metadata_path", "artifact_status",
-]
+    "position_chart_path", "benchmark_chart_path", "net_vs_zero_fee_chart_path",
+    "cumulative_commission_chart_path", "monthly_trade_count_chart_path",
+    "trades_path", "fills_path", "report_json_path", "run_metadata_path",
+    "artifact_status",
+] + FREQ_APPEND_COLUMNS + FEE_APPEND_COLUMNS
 
 # core columns surfaced in evaluation_table.csv + the dashboard
 CORE_METRIC_COLUMNS = [
     "Symbol", "Total Return", "Excess Return", "Max Drawdown %", "Sharpe",
     "Trade Count", "Win Rate", "Profit Factor", "Order Quantity", "Initial Notional",
+    "trades_per_day", "trades_per_month", "net_return", "zero_fee_return",
+    "fee_drag_return", "total_commission",
 ]
 
 # (column in eval table, display, unit, type, higher_is_better)
@@ -76,6 +97,39 @@ METRIC_SCHEMA = [
     ("Profit Factor", "Profit Factor", "ratio", "number", True),
     ("Win Rate", "Win Rate", "ratio", "number", True),
     ("Trade Count", "Trade Count", "count", "integer", None),
+]
+
+# Target H: trade-frequency + fee metrics schema (metric_name, display, unit, type,
+# higher_is_better, source_table, availability, notes).
+def _sch(name, disp, unit, typ, hib, src="fee_impact_table.csv", avail="available", notes=""):
+    return {"metric_name": name, "display_name": disp, "unit": unit, "type": typ,
+            "higher_is_better": hib, "source_table": src, "availability": avail, "notes": notes}
+
+
+FEE_FREQ_SCHEMA = [
+    _sch("trade_count", "Trade Count", "count", "integer", None),
+    _sch("fill_count", "Fill Count", "count", "integer", None),
+    _sch("trades_per_day", "Trades / Day", "count/day", "number", None),
+    _sch("trades_per_month", "Trades / Month", "count/month", "number", None),
+    _sch("avg_minutes_between_trades", "Avg Minutes Between Trades", "minutes", "number", None),
+    _sch("avg_holding_minutes", "Avg Holding Minutes", "minutes", "number", None),
+    _sch("turnover", "Turnover", "ratio", "number", None, notes="NA if notional turnover unavailable"),
+    _sch("turnover_per_day", "Turnover / Day", "ratio/day", "number", None),
+    _sch("gross_return", "Gross (Zero-Fee) Return", "ratio", "number", True),
+    _sch("net_return", "Net Return", "ratio", "number", True),
+    _sch("zero_fee_return", "Zero-Fee Return", "ratio", "number", True),
+    _sch("fee_drag_return", "Fee Drag (zero_fee - net)", "ratio", "number", False),
+    _sch("total_commission", "Total Commission", "USDT", "number", False),
+    _sch("commission_to_initial_cash", "Commission / Initial Cash", "ratio", "number", False),
+    _sch("commission_to_abs_gross_pnl", "Commission / |Gross PnL|", "ratio", "number", False),
+    _sch("avg_commission_per_trade", "Avg Commission / Trade", "USDT", "number", False),
+    _sch("avg_commission_per_fill", "Avg Commission / Fill", "USDT", "number", False),
+    _sch("net_excess_return", "Net Excess Return", "ratio", "number", True),
+    _sch("zero_fee_excess_return", "Zero-Fee Excess Return", "ratio", "number", True),
+    _sch("entry_count", "Entry Count", "count", "integer", None,
+         notes="from trades.csv round-trips; NA if trades.csv absent"),
+    _sch("exit_count", "Exit Count", "count", "integer", None,
+         notes="from trades.csv round-trips; NA if trades.csv absent"),
 ]
 
 # (eval column, chart filename stem, neutral title, is_percent)
@@ -117,6 +171,8 @@ def run(args) -> dict:
     manifest: list[dict] = []
     with_uid: list[dict] = []
     dash_index: dict[str, dict] = {}
+    fee_table_rows: list[dict] = []
+    fee_summary: list[dict] = []
     missing: list[str] = []
 
     for row in eval_rows:
@@ -149,15 +205,31 @@ def run(args) -> dict:
 
         eq_csv = files["equity_curve"]
         pos_csv = files["positions"]
+        equity_rows = read_csv_rows(eq_csv) if eq_csv else []
         pnl_rows = pnl_timeseries_rows(
-            read_csv_rows(eq_csv) if eq_csv else [], identity,
+            equity_rows, identity,
             equity_curve_path=_repo_rel(eq_csv) if eq_csv else "NA",
             positions_path=_repo_rel(pos_csv) if pos_csv else "NA")
+
+        # --- trade-frequency + fee-impact metrics + per-bar commission -------
+        trades_rows = fm.read_trades(jd / "trades.csv")
+        fills_rows = fm.read_fills(jd / "fills.csv")
+        freq = fm.trade_frequency(summary=s, eval_row=row, bar_type=bar_type, trades_rows=trades_rows)
+        fee = fm.fee_impact(summary=s, eval_row=row)
+        initial_cash = fm._num(s.get("initial_cash")) or fm._num(row.get("Initial Cash")) or 100000.0
+        bar_ns = [fm._num(r.get("event_time_ns")) for r in equity_rows]
+        cumcom = None
+        if bar_ns and all(x is not None for x in bar_ns) and len(bar_ns) == len(pnl_rows):
+            cumcom = fm.cumulative_commission_by_ns(fills_rows, [int(x) for x in bar_ns])
+        _augment_pnl_fee(pnl_rows, cumcom, initial_cash)
+
         single_pnl = deliver / "pnl" / f"{run_uid}_pnl.csv"
-        write_pnl_csv(pnl_rows, single_pnl)
+        _write_extended_pnl(pnl_rows, single_pnl)
         combined_pnl.extend(pnl_rows)
 
         charts = render_charts(pnl_rows, run_uid, symbol, deliver / "charts")
+        monthly = fm.monthly_trade_counts(trades_rows)
+        fee_charts = _render_fee_charts(pnl_rows, monthly, run_uid, symbol, deliver / "charts")
         chart_ok = all(charts.get(k) for k in ("equity_curve", "drawdown", "pnl_curve"))
         artifact_status = "complete" if chart_ok else "partial"
 
@@ -184,18 +256,40 @@ def run(args) -> dict:
             "position_chart_path": charts.get("position") or "NA",
             "benchmark_chart_path": charts.get("benchmark_comparison") or "NA",
         }
+        fee_chart_paths = {
+            "net_vs_zero_fee_chart_path": fee_charts.get("net_vs_zero_fee_equity") or "NA",
+            "cumulative_commission_chart_path": fee_charts.get("cumulative_commission") or "NA",
+            "monthly_trade_count_chart_path": fee_charts.get("monthly_trade_count") or "NA",
+        }
         er["run_uid"] = run_uid
         er["raw_run_dir"] = _repo_rel(jd)
         er["pnl_timeseries_path"] = _repo_rel(pnl_ts_path)
         er["pnl_single_path"] = _repo_rel(single_pnl)
         er["chart_dir"] = _repo_rel(deliver / "charts")
         er.update(chart_paths)
+        er.update(fee_chart_paths)
         er["trades_path"] = _exists_or_na(jd / "trades.csv")
         er["fills_path"] = _exists_or_na(jd / "fills.csv")
         er["report_json_path"] = _exists_or_na(jd / "report.json")
         er["run_metadata_path"] = _exists_or_na(jd / "run_metadata.json")
         er["artifact_status"] = artifact_status
+        # append derived trade-frequency + selected fee fields (snake_case)
+        for k in FREQ_APPEND_COLUMNS:
+            er[k] = freq.get(k, "NA")
+        for k in FEE_APPEND_COLUMNS:
+            er[k] = fee.get(k, "NA")
         with_uid.append(er)
+
+        # fee_impact_table row (Target C) + cross-run summary data
+        fee_table_rows.append(fm.fee_impact_table_row(
+            identity_fields={"run_uid": run_uid, "strategy_name": identity.strategy_name,
+                             "symbol": symbol, "bar_type": bar_type, "start": identity.start,
+                             "end": identity.end, "sizing_mode": identity.sizing_mode},
+            freq=freq, fee=fee, eval_row=row, artifact_status=artifact_status))
+        fee_summary.append({"symbol": symbol, "trades_per_day": freq["trades_per_day"],
+                            "fee_drag_return": fee["fee_drag_return"],
+                            "commission_to_initial_cash": fee["commission_to_initial_cash"],
+                            "net_return": fee["net_return"], "zero_fee_return": fee["zero_fee_return"]})
 
         # manifest rows
         def _add(atype, path, src_data, status_):
@@ -216,27 +310,54 @@ def run(args) -> dict:
             present = (jd / fn).is_file()
             _add(atype, _exists_or_na(jd / fn), _exists_or_na(jd / fn), "ok" if present else "missing")
         _add("raw_run_dir", _repo_rel(jd), _repo_rel(jd), "ok")
+        # fee/frequency artifacts
+        for kind, atype, src in (
+                ("net_vs_zero_fee_equity", "net_vs_zero_fee_equity_chart", _repo_rel(single_pnl)),
+                ("cumulative_commission", "cumulative_commission_chart", _repo_rel(jd / "fills.csv")),
+                ("monthly_trade_count", "monthly_trade_count_chart", _repo_rel(jd / "trades.csv"))):
+            p = fee_charts.get(kind)
+            _add(atype, p or "NA", src, "ok" if p else "partial")
 
         dash_index[run_uid] = {
             "run_uid": run_uid, "symbol": symbol, "sizing_mode": identity.sizing_mode,
             "strategy_name": identity.strategy_name, "bar_type": identity.bar_type,
             "start": identity.start, "end": identity.end, "status": "success",
             "artifact_status": artifact_status,
-            "metrics": {c: row.get(c, "NA") for c in CORE_METRIC_COLUMNS if c in row},
+            "metrics": {c: (er.get(c, row.get(c, "NA"))) for c in CORE_METRIC_COLUMNS},
+            "trade_frequency": {k: freq.get(k, "NA") for k in fm.TRADE_FREQUENCY_FIELDS},
+            "fee_impact": {k: fee.get(k, "NA") for k in fm.FEE_IMPACT_FIELDS},
             "pnl_single_path": _repo_rel(single_pnl), "pnl_timeseries_path": _repo_rel(pnl_ts_path),
-            "chart_paths": chart_paths, "raw_run_dir": _repo_rel(jd),
+            "chart_paths": {**chart_paths, **fee_chart_paths}, "raw_run_dir": _repo_rel(jd),
             "manifest_records": [m for m in manifest if m["run_uid"] == run_uid],
         }
 
-    write_pnl_csv(combined_pnl, pnl_ts_path)
+    _write_extended_pnl(combined_pnl, pnl_ts_path)
     _write_registry(registry, deliver / "tables" / "run_registry.csv")
     _write_with_uid(with_uid, eval_rows, deliver / "tables" / "evaluation_table_with_uid.csv",
                     deliver / "tables" / "evaluation_table_with_uid.md")
     _write_core_eval(with_uid, deliver / "tables" / "evaluation_table.csv")
+    # fee_impact_table (Target C) -- compact fee-before/after + frequency view
+    _write_fee_impact_table(fee_table_rows, deliver / "tables" / "fee_impact_table.csv",
+                            deliver / "tables" / "fee_impact_table.md")
+    summary_charts = _render_summary_charts(with_uid, deliver / "charts")
+    fee_summary_charts = _render_fee_summary_charts(fee_summary, deliver / "charts")
+    summary_charts = {**summary_charts, **fee_summary_charts}
+    # GLOBAL artifacts (fee_impact_table + cross-run summary charts)
+    if fee_table_rows:
+        manifest.append(build_artifact_record(
+            "GLOBAL", "fee_impact_table", _repo_rel(deliver / "tables" / "fee_impact_table.csv"),
+            _repo_rel(deliver / "tables" / "evaluation_table_with_uid.csv"), "GLOBAL", "ok", now_iso))
+    for stem, atype in (("summary_trades_per_day_by_symbol", "summary_trade_frequency_chart"),
+                        ("summary_fee_drag_by_symbol", "summary_fee_drag_chart"),
+                        ("summary_commission_to_initial_by_symbol", "summary_fee_drag_chart"),
+                        ("summary_net_vs_zero_fee_return_by_symbol", "summary_net_vs_zero_fee_chart")):
+        p = fee_summary_charts.get(stem)
+        manifest.append(build_artifact_record(
+            "GLOBAL", atype, p or "NA", _repo_rel(deliver / "tables" / "fee_impact_table.csv"),
+            "GLOBAL", "ok" if p else "partial", now_iso))
     _write_manifest(manifest, deliver / "tables" / "artifact_manifest.csv",
                     deliver / "tables" / "artifact_manifest.md")
     _copy_companions(backtest_root, args.sizing_comparison_dir, deliver / "tables")
-    summary_charts = _render_summary_charts(with_uid, deliver / "charts")
     _write_dashboard_data(with_uid, registry, dash_index, summary_charts,
                           deliver / "dashboard_data", args)
     _write_dashboard_html(with_uid, dash_index, summary_charts, deliver, args)
@@ -251,7 +372,198 @@ def run(args) -> dict:
     return {"with_uid": with_uid, "registry": registry, "manifest": manifest,
             "missing": missing, "deliver": deliver, "archived": archived,
             "superseded": superseded, "summary_charts": summary_charts,
+            "fee_table_rows": fee_table_rows, "fee_summary_charts": fee_summary_charts,
             "pnl_timeseries_path": _repo_rel(pnl_ts_path)}
+
+
+# --- fee/frequency: PnL augmentation, fee charts, fee_impact_table -----------
+
+def _augment_pnl_fee(pnl_rows: list[dict], cumcom: list[float] | None, initial_cash: float) -> None:
+    """Add net/gross + commission columns to each PnL row in place. When per-bar
+    cumulative commission is unavailable (no fill timestamps), gross fields are NA
+    and ``source`` records that -- never fabricated."""
+    peak_gross = None
+    prev_cum = 0.0
+    for i, r in enumerate(pnl_rows):
+        eq = _f(r.get("equity"))
+        r["equity_net"] = eq if eq is not None else "NA"
+        r["cumulative_pnl_net"] = r.get("cumulative_pnl", "NA")
+        r["drawdown_net"] = r.get("drawdown", "NA")
+        if cumcom is not None and i < len(cumcom) and eq is not None:
+            cc = cumcom[i]
+            gross = eq + cc                                  # add fees back
+            peak_gross = gross if peak_gross is None else max(peak_gross, gross)
+            r["cumulative_commission"] = round(cc, 8)
+            r["per_bar_commission"] = round(cc - prev_cum, 8)
+            r["equity_gross"] = round(gross, 6)
+            r["cumulative_pnl_gross"] = round(gross - initial_cash, 6)
+            r["drawdown_gross"] = round(gross - peak_gross, 6)
+            r["source"] = "gross_equity_reconstructed_from_commission"
+            prev_cum = cc
+        else:
+            for k in ("cumulative_commission", "per_bar_commission", "equity_gross",
+                      "cumulative_pnl_gross", "drawdown_gross"):
+                r[k] = "NA"
+            r["source"] = "net_only_commission_timestamps_unavailable"
+
+
+def _write_extended_pnl(rows: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=EXTENDED_PNL_COLUMNS)
+        w.writeheader()
+        for r in rows:
+            w.writerow({c: r.get(c, "NA") for c in EXTENDED_PNL_COLUMNS})
+
+
+def _render_fee_charts(pnl_rows: list[dict], monthly: list, run_uid: str, symbol: str,
+                       charts_dir: Path) -> dict[str, str | None]:
+    """Per-run fee charts: net-vs-zero-fee equity, cumulative commission, monthly
+    trade count. Returns {kind: path|None} (None if no data / no matplotlib)."""
+    out: dict[str, str | None] = {"net_vs_zero_fee_equity": None,
+                                  "cumulative_commission": None, "monthly_trade_count": None}
+    try:
+        import matplotlib  # noqa: PLC0415
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+        import matplotlib.dates as mdates  # noqa: PLC0415
+    except Exception:
+        return out
+    charts_dir.mkdir(parents=True, exist_ok=True)
+
+    def _times():
+        from datetime import datetime as _dt  # noqa: PLC0415
+        ts = []
+        for r in pnl_rows:
+            try:
+                ts.append(_dt.fromisoformat(str(r.get("ts"))))
+            except (TypeError, ValueError):
+                return None
+        return ts or None
+
+    def _col(c):
+        return [(_f(r.get(c)) if r.get(c) not in (None, "NA") else None) for r in pnl_rows]
+
+    times = _times()
+    x = times if times is not None else list(range(len(pnl_rows)))
+    xlabel = "time" if times is not None else "1m bar index"
+
+    def _finish(ax, fig, stem, title, ylabel):
+        ax.set_title(title, fontsize=15, fontweight="bold")
+        ax.set_xlabel(xlabel, fontsize=13); ax.set_ylabel(ylabel, fontsize=13)
+        ax.grid(True, alpha=0.3)
+        if times is not None:
+            loc = mdates.AutoDateLocator(); ax.xaxis.set_major_locator(loc)
+            ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
+        p = charts_dir / f"{run_uid}_{stem}.png"
+        fig.tight_layout(); fig.savefig(p, dpi=130); plt.close(fig)
+        return _repo_rel(p)
+
+    net = _col("equity_net"); gross = _col("equity_gross")
+    if not all(v is None for v in net) and not all(v is None for v in gross):
+        fig = plt.figure(figsize=(12.5, 5.2)); ax = fig.add_subplot(111)
+        ax.plot(x, [v if v is not None else float("nan") for v in net],
+                linewidth=1.4, color="#1f5fae", label="net equity (after fees)")
+        ax.plot(x, [v if v is not None else float("nan") for v in gross],
+                linewidth=1.4, color="#c0504d", label="zero-fee equity (fees added back)")
+        ax.legend(loc="best", fontsize=11)
+        out["net_vs_zero_fee_equity"] = _finish(ax, fig, "net_vs_zero_fee_equity",
+                                                f"VWM  {symbol}  -  Net vs Zero-Fee Equity", "equity (USDT)")
+
+    cc = _col("cumulative_commission")
+    if not all(v is None for v in cc):
+        fig = plt.figure(figsize=(12.5, 5.2)); ax = fig.add_subplot(111)
+        ax.plot(x, [v if v is not None else float("nan") for v in cc], linewidth=1.4, color="#8064a2")
+        out["cumulative_commission"] = _finish(ax, fig, "cumulative_commission",
+                                               f"VWM  {symbol}  -  Cumulative Commission", "commission (USDT)")
+
+    if monthly:
+        months = [m for m, _ in monthly]; counts = [c for _, c in monthly]
+        fig = plt.figure(figsize=(12.5, 5.2)); ax = fig.add_subplot(111)
+        xi = list(range(len(months)))
+        ax.bar(xi, counts, color="#1f5fae", width=0.7)
+        step = max(1, len(months) // 24)
+        ax.set_xticks(xi[::step]); ax.set_xticklabels(months[::step], rotation=45, ha="right", fontsize=9)
+        ax.set_title(f"VWM  {symbol}  -  Monthly Trade Count", fontsize=15, fontweight="bold")
+        ax.set_xlabel("month", fontsize=13); ax.set_ylabel("trade count", fontsize=13)
+        ax.grid(True, axis="y", alpha=0.3)
+        p = charts_dir / f"{run_uid}_monthly_trade_count.png"
+        fig.tight_layout(); fig.savefig(p, dpi=130); plt.close(fig)
+        out["monthly_trade_count"] = _repo_rel(p)
+    return out
+
+
+_FEE_SUMMARY_SPECS = [
+    ("trades_per_day", "summary_trades_per_day_by_symbol", "VWM Trades per Day by Symbol", False, ""),
+    ("fee_drag_return", "summary_fee_drag_by_symbol", "VWM Fee Drag by Symbol", True, "%"),
+    ("commission_to_initial_cash", "summary_commission_to_initial_by_symbol",
+     "VWM Commission / Initial Cash by Symbol", True, "%"),
+]
+
+
+def _render_fee_summary_charts(fee_summary: list[dict], charts_dir: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not fee_summary:
+        return out
+    try:
+        import matplotlib  # noqa: PLC0415
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+    except Exception:
+        return out
+    charts_dir.mkdir(parents=True, exist_ok=True)
+    symbols = [r["symbol"] for r in fee_summary]
+    xs = list(range(len(symbols)))
+
+    def _bar(values, stem, title, is_pct):
+        vals = [_f(v) for v in values]
+        if all(v is None for v in vals):
+            return
+        ys = [((v * 100.0 if is_pct else v) if v is not None else 0.0) for v in vals]
+        fig = plt.figure(figsize=(9.5, 5.2)); ax = fig.add_subplot(111)
+        bars = ax.bar(xs, ys, color="#1f5fae", width=0.6)
+        ax.set_xticks(xs); ax.set_xticklabels(symbols, fontsize=12)
+        ax.set_title(title, fontsize=15, fontweight="bold")
+        ax.set_ylabel(title.split("VWM ")[-1] + (" (%)" if is_pct else ""), fontsize=12)
+        ax.grid(True, axis="y", alpha=0.3); ax.axhline(0, color="#888", linewidth=0.8)
+        for b, v in zip(bars, ys):
+            ax.annotate(f"{v:.2f}{'%' if is_pct else ''}", (b.get_x() + b.get_width() / 2, v),
+                        ha="center", va="bottom" if v >= 0 else "top", fontsize=11,
+                        xytext=(0, 3 if v >= 0 else -3), textcoords="offset points")
+        pth = charts_dir / f"{stem}.png"
+        fig.tight_layout(); fig.savefig(pth, dpi=130); plt.close(fig)
+        out[stem] = _repo_rel(pth)
+
+    for key, stem, title, is_pct, _u in _FEE_SUMMARY_SPECS:
+        _bar([r.get(key) for r in fee_summary], stem, title, is_pct)
+
+    # grouped net vs zero-fee return
+    net = [_f(r.get("net_return")) for r in fee_summary]
+    zero = [_f(r.get("zero_fee_return")) for r in fee_summary]
+    if not (all(v is None for v in net) and all(v is None for v in zero)):
+        fig = plt.figure(figsize=(9.5, 5.2)); ax = fig.add_subplot(111)
+        w = 0.38
+        ax.bar([i - w / 2 for i in xs], [(v * 100 if v is not None else 0.0) for v in net],
+               width=w, color="#1f5fae", label="net return")
+        ax.bar([i + w / 2 for i in xs], [(v * 100 if v is not None else 0.0) for v in zero],
+               width=w, color="#c0504d", label="zero-fee return")
+        ax.set_xticks(xs); ax.set_xticklabels(symbols, fontsize=12)
+        ax.set_title("VWM Net vs Zero-Fee Return by Symbol", fontsize=15, fontweight="bold")
+        ax.set_ylabel("return (%)", fontsize=12); ax.grid(True, axis="y", alpha=0.3)
+        ax.axhline(0, color="#888", linewidth=0.8); ax.legend(loc="best", fontsize=11)
+        pth = charts_dir / "summary_net_vs_zero_fee_return_by_symbol.png"
+        fig.tight_layout(); fig.savefig(pth, dpi=130); plt.close(fig)
+        out["summary_net_vs_zero_fee_return_by_symbol"] = _repo_rel(pth)
+    return out
+
+
+def _write_fee_impact_table(rows: list[dict], csv_path: Path, md_path: Path) -> None:
+    cols = fm.FEE_IMPACT_TABLE_COLUMNS
+    _write_csv(rows, cols, csv_path, default="NA")
+    md_cols = ["symbol", "bar_type", "trade_count", "trades_per_day", "net_return",
+               "zero_fee_return", "fee_drag_return", "total_commission",
+               "commission_to_initial_cash", "net_excess_return", "artifact_status"]
+    _write_md(rows, md_cols, md_path)
 
 
 # --- writers ----------------------------------------------------------------
@@ -379,8 +691,10 @@ def _write_dashboard_data(with_uid: list[dict], registry: list[dict],
     (ddir / "filters.json").write_text(json.dumps(filters, indent=2), encoding="utf-8")
 
     schema = [{"metric_name": c, "display_name": disp, "unit": unit, "type": typ,
-               "higher_is_better": hib, "source_table": "evaluation_table_with_uid.csv"}
+               "higher_is_better": hib, "source_table": "evaluation_table_with_uid.csv",
+               "availability": "available", "notes": ""}
               for (c, disp, unit, typ, hib) in METRIC_SCHEMA]
+    schema += FEE_FREQ_SCHEMA
     (ddir / "metrics_schema.json").write_text(json.dumps(schema, indent=2), encoding="utf-8")
 
     index = {"deliverable": "phase1_vwm_crypto_perpetual_2026q2",
@@ -423,12 +737,22 @@ def _write_dashboard_html(with_uid: list[dict], dash_index: dict, summary_charts
         f'<figure><figcaption>{_esc(stem)}</figcaption>'
         f'<img loading="lazy" src="{_esc(_dash_rel(p, deliver))}" alt="{_esc(stem)}"></figure>'
         for stem, p in summary_charts.items())
+    def _kv_block(title, pairs):
+        cells = "".join(f'<tr><td>{_esc(k)}</td><td>{_esc(v)}</td></tr>' for k, v in pairs)
+        return f'<div class="kv"><h3>{_esc(title)}</h3><table class="pathtbl">{cells}</table></div>'
+
     panels = ""
     for r in succ:
         sym, ruid = r.get("Symbol", ""), r.get("run_uid", "NA")
+        di = dash_index.get(ruid, {})
+        freq = di.get("trade_frequency", {})
+        fee = di.get("fee_impact", {})
         imgs = ""
         for label, col in (("Equity curve", "equity_curve_chart_path"),
                            ("Benchmark comparison", "benchmark_chart_path"),
+                           ("Net vs zero-fee equity", "net_vs_zero_fee_chart_path"),
+                           ("Cumulative commission", "cumulative_commission_chart_path"),
+                           ("Monthly trade count", "monthly_trade_count_chart_path"),
                            ("Drawdown", "drawdown_chart_path"),
                            ("Cumulative PnL", "pnl_chart_path"),
                            ("Position", "position_chart_path")):
@@ -442,6 +766,22 @@ def _write_dashboard_html(with_uid: list[dict], dash_index: dict, summary_charts
             f"{_esc(c)}: <b>{_esc(r.get(c, 'NA'))}</b>"
             for c in ("Total Return", "Excess Return", "Max Drawdown %", "Sharpe",
                       "Trade Count", "Profit Factor") if c in r)
+        freq_block = _kv_block("Trade frequency", [
+            ("trade_count", freq.get("trade_count", "NA")), ("fill_count", freq.get("fill_count", "NA")),
+            ("trades_per_day", freq.get("trades_per_day", "NA")),
+            ("trades_per_month", freq.get("trades_per_month", "NA")),
+            ("avg_minutes_between_trades", freq.get("avg_minutes_between_trades", "NA")),
+            ("avg_holding_minutes", freq.get("avg_holding_minutes", "NA")),
+            ("turnover_per_day", freq.get("turnover_per_day", "NA"))])
+        fee_block = _kv_block("Fee impact", [
+            ("net_return", fee.get("net_return", "NA")), ("zero_fee_return", fee.get("zero_fee_return", "NA")),
+            ("fee_drag_return", fee.get("fee_drag_return", "NA")),
+            ("total_commission", fee.get("total_commission", "NA")),
+            ("commission_to_initial_cash", fee.get("commission_to_initial_cash", "NA")),
+            ("avg_commission_per_trade", fee.get("avg_commission_per_trade", "NA")),
+            ("avg_commission_per_fill", fee.get("avg_commission_per_fill", "NA")),
+            ("net_excess_return", fee.get("net_excess_return", "NA")),
+            ("zero_fee_excess_return", fee.get("zero_fee_excess_return", "NA"))])
         panels += (
             f'<section class="panel" data-symbol="{_esc(sym)}" '
             f'data-sizing="{_esc(r.get("Sizing Method", args.sizing_mode))}">'
@@ -449,12 +789,13 @@ def _write_dashboard_html(with_uid: list[dict], dash_index: dict, summary_charts
             f'<span class="status status-{_esc(r.get("artifact_status","NA"))}">'
             f'{_esc(r.get("artifact_status","NA"))}</span></h2>'
             f'<p class="metrics">{metric_bits}</p>'
-            f'<table class="pathtbl">'
+            f'<div class="blocks">{freq_block}{fee_block}'
+            f'<div class="kv"><h3>Artifact paths</h3><table class="pathtbl">'
             f'<tr><td>run_uid</td><td><code>{_esc(ruid)}</code></td></tr>'
             f'<tr><td>PnL CSV</td><td><a href="{_esc(pnl_link)}"><code>{_esc(pnl_link)}</code></a></td></tr>'
             f'<tr><td>PnL timeseries</td><td><a href="{_esc(ts_link)}"><code>{_esc(ts_link)}</code></a></td></tr>'
             f'<tr><td>Raw run dir</td><td><code>{_esc(r.get("raw_run_dir","NA"))}</code></td></tr>'
-            f'</table>'
+            f'</table></div></div>'
             f'<div class="charts">{imgs}</div></section>')
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -477,6 +818,8 @@ def _write_dashboard_html(with_uid: list[dict], dash_index: dict, summary_charts
  .status{{font-size:11px;font-weight:normal;padding:1px 8px;border-radius:10px;color:#fff}}
  .status-complete{{background:#2e7d32}} .status-partial{{background:#ef6c00}} .status-NA{{background:#999}}
  .note{{background:#f3f3f3;border:1px solid #ddd;padding:8px;font-size:12px;margin-top:20px}}
+ .blocks{{display:flex;flex-wrap:wrap;gap:24px;margin:6px 0 10px}}
+ .kv h3{{font-size:13px;margin:2px 0 4px;color:#1f5fae}} .kv{{min-width:260px}}
 </style></head>
 <body>
 <h1>Phase 1 Result System - VWM Crypto-Perpetual</h1>
@@ -751,8 +1094,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"PNL_TIMESERIES {res['pnl_timeseries_path']}")
     print(f"ARTIFACT_MANIFEST {deliver / 'tables' / 'artifact_manifest.csv'}")
     print(f"DASHBOARD {deliver / 'dashboard' / 'index.html'}")
+    print(f"FEE_IMPACT_TABLE {deliver / 'tables' / 'fee_impact_table.csv'} rows={len(res.get('fee_table_rows', []))}")
     print(f"RUNS traced={len(res['registry'])} missing={len(res['missing'])} "
-          f"manifest_rows={len(res['manifest'])} summary_charts={len(res['summary_charts'])}")
+          f"manifest_rows={len(res['manifest'])} summary_charts={len(res['summary_charts'])} "
+          f"fee_summary_charts={len(res.get('fee_summary_charts', {}))}")
     print(f"REPORTS_ARCHIVED {len(res['archived'])} "
           + " ".join(Path(a['old_path']).name for a in res['archived']))
     sup = res.get("superseded", [])

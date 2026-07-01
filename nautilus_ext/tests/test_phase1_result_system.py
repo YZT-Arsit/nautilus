@@ -149,7 +149,8 @@ def test_artifact_manifest(tmp_path):
     uid = _expected_uid()
     types = {m["artifact_type"] for m in man}
     assert {"pnl_timeseries", "pnl_single_csv", "raw_run_dir"} <= types
-    assert all(m["run_uid"] == uid for m in man)
+    # per-run rows carry the run_uid; cross-run summary/fee_impact rows use GLOBAL
+    assert all(m["run_uid"] in (uid, "GLOBAL") for m in man)
     assert all(m["created_at"] == "2026-06-26T00:00:00+00:00" for m in man)
     # success run has at least pnl_single + equity chart
     have_mpl = _has_matplotlib()
