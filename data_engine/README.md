@@ -3,6 +3,17 @@
 The formal, standalone data layer. **Our own design — it does not depend on
 Nautilus Trader's native data system** (Nautilus integration is out of scope).
 
+## Framework-agnostic contract (enforced)
+
+`data_engine` and `feature_engine` **must never import `nautilus_trader`** — both
+packages are portable and can be lifted out to plug into any framework. All
+Nautilus integration lives in `strategy_framework` (the Nautilus layer); the
+dependency direction is one-way: `strategy_framework → data_engine`, never the
+reverse. Any Nautilus↔neutral bridge (e.g. reading a Nautilus `ParquetDataCatalog`
+into neutral ticks) lives at `strategy_framework/nautilus_catalog.py`, not here.
+This is guarded by `tests_platform/test_decoupling.py` (asserts importing the two
+layers loads zero `nautilus_trader` modules).
+
 Importable directly:
 
 ```python
@@ -33,7 +44,32 @@ from data_engine import BarEvent, load_events, make_bar_event, make_bars
 | `synthetic` | generated flat→rise→fall demo path | list |
 | `csv_bars` | historical replay from a local CSV (small demos/tests) | list |
 | `parquet_bars` / `hive_parquet_bars` | historical replay from a Hive-partitioned Parquet dataset (production-style) | list |
+| `parquet_trades` / `hive_parquet_trades` | historical trades (tick) from a Hive Parquet dataset → `TradeEvent` | list |
 | `live_synthetic` | streaming skeleton (no real feed) | generator |
+| `live_gateway` | CTP-like gateway skeleton (`provider: mock` by default) | generator |
+| `binance_ws` | **live Binance public market-data WS** (aggTrade→`TradeEvent`, bookTicker→`QuoteEvent`); bounded by `max_messages`+`timeout_seconds` | generator |
+
+### `binance_ws` (live Binance market data)
+
+Yields the **same neutral `TradeEvent`/`QuoteEvent`** as the historical Binance
+sources (live/historical parity). Network opens lazily on first iteration; the
+optional `websocket-client` dependency is imported only on connect. Example:
+
+```yaml
+data:
+  mode: binance_ws
+  symbol: btcusdt                 # or derived from instrument_id
+  instrument_id: BTCUSDT.BINANCE  # optional override
+  streams: aggTrade,bookTicker
+  base_url: wss://data-stream.binance.vision:9443   # default (market-data-only mirror)
+  max_messages: 100               # bound
+  timeout_seconds: 30             # bound
+```
+
+`base_url` defaults to Binance's **market-data-only** mirror
+`data-stream.binance.vision` (same origin as the Vision historical data) because
+the primary `stream.binance.com` host is unreachable from some networks (e.g. the
+project server, where it is TCP-blocked while the mirror is reachable).
 
 All historical sources sort by event time **once** after loading, then split the
 first `warmup_bars` rows as warmup. Missing O/H/L default to `close`, missing

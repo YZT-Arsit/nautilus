@@ -6,10 +6,11 @@ The trade counterpart to ``parquet_bars`` — reads a StandardTrade Hive dataset
 partition pruning + column pushdown, convert, sort by event time, split into
 ``warmup`` / ``live``.
 
-Expected dataset layout::
+Expected dataset layout (locked canonical partitioning)::
 
-    historical_data/market_data/exchange=BINANCE/venue_type=spot/
-        symbol=BTCUSDT/data_type=aggTrades/date=2024-06-01/part-0.parquet
+    historical_data/market_data/asset_class=crypto/exchange=BINANCE/
+        venue_type=spot/symbol=BTCUSDT/data_type=trade/freq=tick/
+        date=2024-06-01/part-0.parquet
 
 This module imports no ``nautilus_trader`` — it is part of the self-owned
 ``data_engine`` layer.

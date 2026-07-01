@@ -166,6 +166,23 @@ class BinancePublicWebSocketSource:
         for raw in gen:
             yield json.loads(raw)
 
+    def iter_events(self, *, max_messages: int, timeout_seconds: float) -> Iterator[Any]:
+        """Yield normalized :class:`TradeEvent`/:class:`QuoteEvent` (bounded).
+
+        This is the streaming counterpart to :meth:`run_until` and the shape the
+        ``loader.py`` ``binance_ws`` mode consumes as its ``live`` iterable:
+        connect, normalize each message, drop unrecognised frames, and always
+        close the transport (via ``_recv_loop``'s ``finally``).
+        """
+        gen = self._recv_loop(max_messages=max_messages, timeout_seconds=timeout_seconds)
+        try:
+            for raw in gen:
+                ev = self._normalizer.normalize(json.loads(raw), receive_time_ns=self._clock())
+                if ev is not None:
+                    yield ev
+        finally:
+            gen.close()
+
     def run_until(self, *, max_messages: int, timeout_seconds: float) -> LiveSmokeResult:
         """Connect, read up to ``max_messages`` (or until ``timeout_seconds``),
         normalize each, and disconnect.  Returns a :class:`LiveSmokeResult`."""

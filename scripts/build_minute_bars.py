@@ -7,8 +7,8 @@
 输入支持：
 * ``--input x.csv``      —— 标准库 csv，逐行当作 tick/bar（需含价格与时间戳列）。
 * ``--input x.parquet``  —— pyarrow 懒加载读取。
-* Nautilus catalog       —— 见 ``data_engine/adapters/nautilus_catalog.py``
-  （可选，不在本 CLI 默认路径）。
+* Nautilus catalog       —— 见 ``strategy_framework/nautilus_catalog.py``
+  （可选的 Nautilus 集成层桥；data_engine 本身对 Nautilus 零依赖）。
 
 示例::
 

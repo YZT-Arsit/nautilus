@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from data_engine.sources.binance_live import load_binance_ws
 from data_engine.sources.csv_bars import load_csv_bars
 from data_engine.sources.live_gateway import load_live_gateway
 from data_engine.sources.live_synthetic import load_live_synthetic
@@ -24,6 +25,7 @@ _LOADERS = {
     "hive_parquet_bars": load_parquet_bars,  # alias of parquet_bars
     "live_synthetic": load_live_synthetic,
     "live_gateway": load_live_gateway,
+    "binance_ws": load_binance_ws,  # live Binance public market-data WS (trades+quotes)
     # Trade (tick) sources — produce TradeEvent, not BarEvent.
     "synthetic_trades": load_synthetic_trades,
     "parquet_trades": load_parquet_trades,
