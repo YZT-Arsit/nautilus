@@ -162,6 +162,9 @@ def run(args) -> dict:
         artifact_status = "complete" if chart_ok else "partial"
 
         reg_notes = ("missing_fields=" + ",".join(identity.missing_fields)) if identity.missing_fields else ""
+        data_note = getattr(args, "data_note", "") or ""
+        if data_note:
+            reg_notes = (reg_notes + "; " + data_note) if reg_notes else data_note
         registry.append({
             "run_uid": run_uid, "strategy_name": identity.strategy_name,
             "strategy_version": identity.strategy_version, "symbol": identity.symbol,
@@ -516,6 +519,9 @@ def _write_run_manifest(registry: list[dict], path: Path, args, now_iso: str,
         "window": {"start": args.start, "end": args.end},
         "data_version": args.data_version, "backtest_engine": args.backtest_engine,
         "backtest_root": normalize_path(args.backtest_root),
+        "requested_window": {"start": getattr(args, "requested_start", None) or args.start,
+                             "end": getattr(args, "requested_end", None) or args.end},
+        "data_window_note": getattr(args, "data_note", "") or "",
         "run_uid_fields": list(RUN_KEY_FIELDS),
         "runs": [{"run_uid": r["run_uid"], "symbol": r["symbol"], "status": r["status"],
                   "params_hash": r["params_hash"], "params_hash_source": r["params_hash_source"],
@@ -722,6 +728,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--backtest-engine", default="nautilus_backtest")
     ap.add_argument("--sizing-comparison-dir",
                     default="outputs/backtests/vwm_crypto_perpetual_2026q2_sizing_comparison")
+    ap.add_argument("--requested-start", default=None, help="requested window start (for manifest)")
+    ap.add_argument("--requested-end", default=None, help="requested window end (for manifest)")
+    ap.add_argument("--data-note", default="", help="data-window note / fallback reason (manifest + registry)")
     ap.add_argument("--reports-archive-root", default="outputs/archive/phase1_reports_removed")
     ap.add_argument("--superseded-archive-root", default="outputs/archive/phase1_deliverable_superseded")
     ap.add_argument("--archive-superseded", dest="archive_superseded", action="store_true", default=True,
