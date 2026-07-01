@@ -10,10 +10,6 @@
         parse_partition_path,
         FeatureDataReader,
     )
-
-``EodArchiver`` 位于 ``feature_engine.streaming.archiver``，因为它属于流式
-归档路径，这里不重复导出以避免在 ``import feature_engine.storage`` 时拉入
-流式依赖。
 """
 from feature_engine.storage.feature_reader import (
     DEFAULT_FEATURE_PARTITION_COLS,

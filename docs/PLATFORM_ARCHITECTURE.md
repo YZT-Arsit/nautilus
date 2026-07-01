@@ -100,6 +100,15 @@ historical_data/
 
 路径构造/解析集中在 `feature_engine/storage/layout.py`（读写共用，保证一致）。
 
+> **实现状态（2026-07）**：上面是**目标锁定布局**。当前代码已实现「market_data /
+> feature_data 平级」这一核心（`layout.py` + `MarketDataReader` / `FeatureDataReader`
+> / `offline.write_feature_data`），当前分区列命名为
+> `asset_class/exchange/frequency/trading_date/instrument_id`（`instrument_id` 即
+> symbol）。把列改名为 `symbol/freq/date` 并新增一等 `data_type` 维度，会波及
+> `data_engine.transforms` 的列名与**服务器上已有数据**，属于一次「数据迁移」，将在
+> 平台自有 ingest 重新落盘时统一切换（回测读取走 `data_engine/sources/parquet_bars`，
+> 该路径由 config 的 `filters` 驱动、与布局解耦，两种布局都能读）。
+
 ---
 
 ## 3. 特征层接口 (`feature_engine`) — LOCKED
