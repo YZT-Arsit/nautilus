@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     has_filter = getattr(args, "trend_filter_enabled", None) is not None
     csv_cols = (et.SYMBOL_METRIC_COLUMNS + (et.SIZING_COLUMNS if has_sizing else [])
                 + (et.FILTER_COLUMNS if has_filter else []))
-    md_cols = et.MD_CORE_COLUMNS[:-2] + (["Order Quantity", "Initial Notional", "Realized Vol 15m"]
+    md_cols = et.MD_CORE_COLUMNS[:-2] + (["Order Quantity", "Initial Notional", "Realized Vol Bar"]
                                          if has_sizing else []) \
         + (["Trend Filter Enabled"] if has_filter else []) + et.MD_CORE_COLUMNS[-2:]
     et.write_table_csv(rows, table_csv, csv_cols)

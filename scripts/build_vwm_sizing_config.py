@@ -8,10 +8,11 @@ size changes; this is a config passthrough, NOT a VWM-logic change):
                        order_quantity = target_notional_usdt / initial_price
 * ``realized_vol``  -- equal per-bar risk budget:
                        order_quantity = target_risk_usdt_per_bar
-                                        / (initial_price * realized_vol_15m)
-                       realized_vol_15m = std of 15m log returns over the window.
-                       High-vol symbols get fewer units, low-vol more, so each
-                       symbol risks ~the same USDT per 15m bar.
+                                        / (initial_price * realized_vol_bar)
+                       realized_vol_bar = std of per-bar log returns over the window
+                       (bar-agnostic: works for 1m / 5m / 15m / 1h, whatever
+                       ``--bar-type`` selects). High-vol symbols get fewer units,
+                       low-vol more, so each symbol risks ~the same USDT per bar.
 
 Only **reads** local bar parquet (lazy pyarrow), computes sizes, and writes a
 ``position_sizing.csv`` plus the batch YAML (each ``universe.include`` carries its
@@ -36,7 +37,7 @@ from scripts.build_vwm_notional_normalized_config import (
 
 NA = "NA"
 SIZING_CSV_COLUMNS = [
-    "symbol", "initial_price", "realized_vol_15m", "target_notional_usdt",
+    "symbol", "initial_price", "realized_vol_bar", "target_notional_usdt",
     "target_risk_usdt_per_bar", "raw_order_quantity", "raw_initial_notional",
     "final_order_quantity", "final_initial_notional", "min_notional_usdt",
     "max_notional_usdt", "sizing_method", "sizing_status", "caveat",
@@ -48,7 +49,7 @@ _BASE_CAVEAT = ("funding/liquidation/margin/mark-index not modeled; sizing fixed
 # --- realized-volatility math -----------------------------------------------
 
 def realized_vol(closes: list[float]) -> float | None:
-    """Population std of 15m log returns; None if < 2 returns or bad data."""
+    """Population std of per-bar log returns (bar-agnostic); None if < 2 returns or bad data."""
     cs = [float(c) for c in closes if isinstance(c, (int, float)) and math.isfinite(float(c)) and c > 0]
     if len(cs) < 3:
         return None
@@ -95,7 +96,7 @@ def read_window_closes(data_root: Path, *, exchange: str, venue_type: str, symbo
 def _row(symbol, *, method, initial_price=NA, realized=NA, target_notional=NA,
          target_risk=NA, raw_qty=NA, raw_notional=NA, final_qty=NA, final_notional=NA,
          min_notional=NA, max_notional=NA, status, caveat):
-    return {"symbol": symbol, "initial_price": initial_price, "realized_vol_15m": realized,
+    return {"symbol": symbol, "initial_price": initial_price, "realized_vol_bar": realized,
             "target_notional_usdt": target_notional, "target_risk_usdt_per_bar": target_risk,
             "raw_order_quantity": raw_qty, "raw_initial_notional": raw_notional,
             "final_order_quantity": final_qty, "final_initial_notional": final_notional,
@@ -273,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"MODE {args.sizing_mode} usable={len(usable)} target_risk={args.target_risk_usdt_per_bar} "
           f"target_notional={args.target_notional_usdt}")
     for r in sizing:
-        print(f"  {r['symbol']}: status={r['sizing_status']} vol={r['realized_vol_15m']} "
+        print(f"  {r['symbol']}: status={r['sizing_status']} vol={r['realized_vol_bar']} "
               f"final_qty={r['final_order_quantity']} final_notional={r['final_initial_notional']}")
     return 0
 

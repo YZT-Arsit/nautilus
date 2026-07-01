@@ -86,7 +86,7 @@ MD_CORE_COLUMNS = [
 # Optional sizing columns (appended only when a sizing file is supplied). Unified
 # across sizing modes (notional / realized_vol); fields absent for a mode are NA.
 SIZING_COLUMNS = ["Sizing Method", "Sizing Status", "Target Notional USDT",
-                  "Target Risk USDT / Bar", "Realized Vol 15m", "Raw Order Quantity",
+                  "Target Risk USDT / Bar", "Realized Vol Bar", "Raw Order Quantity",
                   "Order Quantity", "Initial Notional"]
 
 # Optional trend-filter columns (appended only when filter info is supplied).
@@ -477,7 +477,7 @@ METRIC_AUDIT: dict[str, tuple[str, str, str, str, str, str]] = {
     "Sizing Status": (_C_EXP, "added", "sizing file", "reliable", "ok/capped/below_min/...", "-"),
     "Target Notional USDT": (_C_EXP, "added", "sizing file", "reliable", "notional-mode target", "NA"),
     "Target Risk USDT / Bar": (_C_EXP, "added", "sizing file", "reliable", "vol-mode per-bar risk", "NA"),
-    "Realized Vol 15m": (_C_EXP, "added", "sizing file", "reliable", "std of 15m log returns", "NA"),
+    "Realized Vol Bar": (_C_EXP, "added", "sizing file", "reliable", "std of per-bar log returns", "NA"),
     "Raw Order Quantity": (_C_EXP, "added", "sizing file", "reliable", "pre-cap quantity", "-"),
     "Order Quantity": (_C_EXP, "added", "sizing file", "reliable", "final per-job quantity", "-"),
     "Initial Notional": (_C_EXP, "added", "sizing file", "reliable", "final quantity x initial price", "-"),
@@ -561,7 +561,7 @@ def attach_sizing(row: dict, sizing: dict | None) -> dict:
     row["Sizing Status"] = _sz(s, "sizing_status", "status")
     row["Target Notional USDT"] = _sz(s, "target_notional_usdt")
     row["Target Risk USDT / Bar"] = _sz(s, "target_risk_usdt_per_bar")
-    row["Realized Vol 15m"] = _sz(s, "realized_vol_15m")
+    row["Realized Vol Bar"] = _sz(s, "realized_vol_bar", "realized_vol_15m")
     row["Raw Order Quantity"] = _sz(s, "raw_order_quantity", "order_quantity")
     row["Order Quantity"] = _sz(s, "final_order_quantity", "order_quantity")
     row["Initial Notional"] = _sz(s, "final_initial_notional", "actual_initial_notional")
@@ -655,7 +655,7 @@ def write_comparison_csv(rows: list[dict], path: Path) -> None:
 # --- three-way sizing-mode comparison (fixed / notional / vol-targeted) -------
 
 SIZING_MODE_COMPARISON_COLUMNS = [
-    "symbol", "sizing_mode", "order_quantity", "initial_notional", "realized_vol_15m",
+    "symbol", "sizing_mode", "order_quantity", "initial_notional", "realized_vol_bar",
     "target_risk_usdt_per_bar", "total_return", "benchmark_return", "excess_return",
     "zero_fee_return", "max_drawdown_pct", "sharpe", "win_rate", "profit_factor",
     "trade_count", "total_commission", "commission_to_abs_gross_pnl", "exposure_pct",
@@ -694,7 +694,7 @@ def build_sizing_mode_comparison(symbols: list[str], mode_specs: list[dict], *,
             out.append({
                 "symbol": sym, "sizing_mode": mode, "order_quantity": oq,
                 "initial_notional": inot,
-                "realized_vol_15m": _sz(sz, "realized_vol_15m") if sz else vol_by_symbol.get(sym, NA),
+                "realized_vol_bar": _sz(sz, "realized_vol_bar", "realized_vol_15m") if sz else vol_by_symbol.get(sym, NA),
                 "target_risk_usdt_per_bar": _sz(sz, "target_risk_usdt_per_bar"),
                 "total_return": tbl.get("Total Return", NA),
                 "benchmark_return": tbl.get("Benchmark Return", NA),

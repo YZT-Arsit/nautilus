@@ -135,9 +135,13 @@ def run(args) -> dict:
         jd = _job_dir_for(backtest_root, s)
         files = discover_run_files(jd)
         cfg = files["config_resolved"]
+        # bar_type from the authoritative per-job summary (falls back to the CLI
+        # default) so the run_uid always reflects the real bar type (e.g. 1m), not
+        # whatever --bar-type defaulted to.
+        bar_type = str(s.get("bar_type") or args.bar_type)
         identity = build_identity(
             s, strategy=args.strategy, sizing_mode=args.sizing_mode,
-            bar_type=args.bar_type, start=args.start, end=args.end,
+            bar_type=bar_type, start=args.start, end=args.end,
             strategy_version=args.strategy_version, data_version=args.data_version,
             backtest_engine=args.backtest_engine,
             config_resolved_text=cfg.read_text(encoding="utf-8") if cfg else None)

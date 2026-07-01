@@ -113,9 +113,29 @@ def test_main_writes_sizing_and_config(tmp_path, monkeypatch):
     assert rc == 0 and cfg_path.is_file() and sizing_path.is_file()
     with sizing_path.open() as fh:
         rdr = csv.DictReader(fh)
-        assert set(rdr.fieldnames) == set(sz.SIZING_CSV_COLUMNS)
+        cols = set(rdr.fieldnames)
+        assert cols == set(sz.SIZING_CSV_COLUMNS)
+        # realized-vol field must be bar-agnostic, NOT hardcoded to 15m
+        assert "realized_vol_bar" in cols and "realized_vol_15m" not in cols
         syms = {r["symbol"] for r in rdr}
     assert syms == {"BTCUSDT", "ETHUSDT"}
+
+
+def test_bar_type_1m_accepted(tmp_path, monkeypatch):
+    # sizing must accept bar_type=1m (not restricted to 15m); realized_vol is bar-agnostic
+    monkeypatch.setattr(sz, "read_window_closes",
+                        _closes_reader({"BTCUSDT": [100.0, 101.0, 100.5] * 20}))
+    cfg_path = tmp_path / "cfg1m.yaml"
+    sizing_path = tmp_path / "out1m" / "position_sizing.csv"
+    rc = sz.main(["--out-config", str(cfg_path), "--out-sizing", str(sizing_path),
+                  "--symbols", "BTCUSDT", "--start", "2024-07-01", "--end", "2026-06-30",
+                  "--bar-type", "1m", "--sizing-mode", "realized_vol",
+                  "--target-risk-usdt-per-bar", "50"])
+    assert rc == 0 and sizing_path.is_file()
+    import yaml
+    cfg = yaml.safe_load(cfg_path.read_text())
+    assert cfg["data"]["bar_type"] == "1m"
+    assert all(i["bar_type"] == "1m" for i in cfg["universe"]["include"])
     # refuses overwrite
     assert sz.main(["--out-config", str(cfg_path), "--out-sizing", str(sizing_path),
                     "--symbols", "BTCUSDT", "--start", "2026-03-01", "--end", "2026-05-31",

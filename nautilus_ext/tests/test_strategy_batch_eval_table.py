@@ -247,6 +247,7 @@ def test_sizing_mode_comparison_helper(tmp_path):
     notional_tbl = {"BTCUSDT": {"Total Return": "-0.0351", "Max Drawdown %": "0.0376", "Backtest Status": "success"}}
     vol_tbl = {"BTCUSDT": {"Total Return": "-0.02", "Max Drawdown %": "0.03", "Backtest Status": "success"}}
     notional_sz = {"BTCUSDT": {"order_quantity": "0.1495", "actual_initial_notional": "10000"}}
+    # legacy sizing dict still uses realized_vol_15m -> comparison reads it via back-compat
     vol_sz = {"BTCUSDT": {"final_order_quantity": "0.1", "final_initial_notional": "6700",
                           "realized_vol_15m": "0.005", "target_risk_usdt_per_bar": "50"}}
     specs = [
@@ -263,7 +264,7 @@ def test_sizing_mode_comparison_helper(tmp_path):
     assert btc["fixed_quantity"]["initial_notional"] == pytest.approx(66883.4)   # price * 1.0
     assert btc["notional_normalized"]["order_quantity"] == "0.1495"
     assert btc["vol_targeted"]["order_quantity"] == "0.1"
-    assert btc["vol_targeted"]["realized_vol_15m"] == "0.005"
+    assert btc["vol_targeted"]["realized_vol_bar"] == "0.005"    # generalized field, back-compat read
     assert btc["vol_targeted"]["target_risk_usdt_per_bar"] == "50"
     out = tmp_path / "cmp"
     et.write_sizing_mode_comparison_csv(rows, out / "c.csv")

@@ -59,7 +59,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # initial_price / realized_vol per symbol come from the vol sizing CSV.
     price_by_symbol = {s: _num(vol_sz.get(s, {}).get("initial_price")) for s in symbols}
-    vol_by_symbol = {s: vol_sz.get(s, {}).get("realized_vol_15m", et.NA) for s in symbols}
+    vol_by_symbol = {s: vol_sz.get(s, {}).get("realized_vol_bar",
+                                              vol_sz.get(s, {}).get("realized_vol_15m", et.NA))
+                     for s in symbols}
 
     mode_specs = [
         {"mode": "fixed_quantity", "table": fixed_tbl, "sizing": {}},
