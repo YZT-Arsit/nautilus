@@ -10,6 +10,12 @@ def test_registry_has_expected_strategies():
         "vwm_long",
         "trend_breakout_atr",
         "turtle_trader",
+        "trendscore_short",
+        "trendscore_long",
+        "traffic_jam_short",
+        "traffic_jam_long",
+        "trading_range_breakout_short",
+        "trading_range_breakout_long",
     }
 
 
@@ -46,3 +52,27 @@ def test_vwm_long_synthetic_runs():
 
 def test_turtle_trader_synthetic_runs():
     assert run_config(_synthetic_cfg("turtle_trader")) == []
+
+
+def test_trendscore_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("trendscore_short")) == []
+
+
+def test_trendscore_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("trendscore_long")) == []
+
+
+def test_traffic_jam_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("traffic_jam_short")) == []
+
+
+def test_traffic_jam_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("traffic_jam_long")) == []
+
+
+def test_trading_range_breakout_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("trading_range_breakout_short")) == []
+
+
+def test_trading_range_breakout_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("trading_range_breakout_long")) == []

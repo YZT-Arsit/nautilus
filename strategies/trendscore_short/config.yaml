@@ -1,0 +1,40 @@
+# TrendScore short — default (synthetic, no-network) run configuration.
+#
+#   python run_strategy.py --strategy trendscore_short
+#   python run_strategy.py --config strategies/trendscore_short/config.yaml
+#
+# `strategy` selects the plugin in strategy_framework/registry.py.
+# `params` are passed to TrendScoreShortConfig.
+#
+# Short-only system: signals are BUY/SELL/HOLD and the signal->order meaning is
+# `sell_means: short` (SELL opens the short, BUY covers it), same as vwm_short.
+#
+# NOTE: like vwm_short, this default config has NO execution block — the synthetic
+# bar source emits volume=0, and the strategy faithfully requires Vol>0 to trade,
+# so no fills would occur here anyway. This config validates the full data ->
+# features -> signals pipeline. For a REAL backtest with fills/PnL (volume>0), use
+#   configs/backtests/trendscore_short_btcusdt_1m_small.yaml
+
+strategy: trendscore_short
+
+params:
+  look_back: 10
+  ma_length: 18
+  atr_length: 10
+  protect_stop_atr_multi: 0.5
+  trail_stop_atr_multi: 3.0
+  breakeven_stop_atr_multi: 5.0
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own MA/score/ATR history from the live stream
+  # (FeatureStrategyRunner.warmup pre-heats only the feature engine), so feed the
+  # whole path as live: it self-warms over ~ma_length+look_back bars.
+  warmup_bars: 0
+  live_bars: 60
+
+output:
+  print_table: false
+  record_signals: false

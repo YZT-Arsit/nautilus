@@ -1,0 +1,38 @@
+# Traffic Jam short — default (synthetic, no-network) run configuration.
+#
+#   python run_strategy.py --strategy traffic_jam_short
+#   python run_strategy.py --config strategies/traffic_jam_short/config.yaml
+#
+# Short-only counter-trend system: signals are BUY/SELL/HOLD and the
+# signal->order meaning is `sell_means: short` (SELL opens the short, BUY covers
+# it), same as vwm_short / trendscore_short.
+#
+# NOTE: like vwm_short / trendscore_short, this default config has NO execution
+# block — the synthetic bar source emits volume=0 and the strategy faithfully
+# requires Vol>0 to trade, so no fills would occur here anyway. This config
+# validates the full data -> features -> signals pipeline. For a REAL backtest
+# with fills/PnL (volume>0), use
+#   configs/backtests/traffic_jam_short_btcusdt_1m_small.yaml
+
+strategy: traffic_jam_short
+
+params:
+  dmi_n: 14
+  adx_level: 25.0
+  adx_lower_than_before: 3
+  consec_bars: 3
+  atr_length: 10
+  protect_stop_atr_multi: 0.5
+  proactive_stop_bars: 10
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own DMI/ADX/ATR history from the live stream.
+  warmup_bars: 0
+  live_bars: 80
+
+output:
+  print_table: false
+  record_signals: false

@@ -1,0 +1,34 @@
+# Trading Range Breakout long — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy trading_range_breakout_long
+#   python run_strategy.py --config strategies/trading_range_breakout_long/config.yaml
+#
+# Long-only breakout system: signals are BUY/SELL/HOLD and the signal->order
+# meaning is `sell_means: flat` (BUY opens the long, SELL flattens it), same as
+# vwm_long.
+#
+# NOTE: like the other Vol>0 strategies, this default config has NO execution
+# block — the synthetic bar source emits volume=0 so no fills would occur. This
+# config validates the full data -> features -> signals pipeline. For a REAL
+# backtest with fills/PnL (volume>0), use
+#   configs/backtests/trading_range_breakout_long_btcusdt_1m_small.yaml
+
+strategy: trading_range_breakout_long
+
+params:
+  range_len: 7
+  rng_pcnt: 200.0
+  atr_s: 8.0
+  atr_len: 2
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own range / ATR history from the live stream.
+  warmup_bars: 0
+  live_bars: 80
+
+output:
+  print_table: false
+  record_signals: false
