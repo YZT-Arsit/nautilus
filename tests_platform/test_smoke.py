@@ -16,6 +16,9 @@ def test_registry_has_expected_strategies():
         "traffic_jam_long",
         "trading_range_breakout_short",
         "trading_range_breakout_long",
+        "three_ema_crossover_short",
+        "three_ema_crossover_long",
+        "thermostat_short",
     }
 
 
@@ -76,3 +79,15 @@ def test_trading_range_breakout_short_synthetic_runs():
 
 def test_trading_range_breakout_long_synthetic_runs():
     assert run_config(_synthetic_cfg("trading_range_breakout_long")) == []
+
+
+def test_three_ema_crossover_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("three_ema_crossover_short")) == []
+
+
+def test_three_ema_crossover_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("three_ema_crossover_long")) == []
+
+
+def test_thermostat_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("thermostat_short")) == []

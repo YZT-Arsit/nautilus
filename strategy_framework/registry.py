@@ -7,6 +7,9 @@ import its ``PLUGIN`` and add one entry below. There is no auto-discovery.
 from __future__ import annotations
 
 from strategies.ma_crossover import PLUGIN as MA_CROSSOVER_PLUGIN
+from strategies.thermostat_short import PLUGIN as THERMOSTAT_SHORT_PLUGIN
+from strategies.three_ema_crossover_long import PLUGIN as THREE_EMA_CROSSOVER_LONG_PLUGIN
+from strategies.three_ema_crossover_short import PLUGIN as THREE_EMA_CROSSOVER_SHORT_PLUGIN
 from strategies.traffic_jam_long import PLUGIN as TRAFFIC_JAM_LONG_PLUGIN
 from strategies.traffic_jam_short import PLUGIN as TRAFFIC_JAM_SHORT_PLUGIN
 from strategies.trading_range_breakout_long import PLUGIN as TRADING_RANGE_BREAKOUT_LONG_PLUGIN
@@ -31,6 +34,9 @@ STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
     TRAFFIC_JAM_LONG_PLUGIN.name: TRAFFIC_JAM_LONG_PLUGIN,
     TRADING_RANGE_BREAKOUT_SHORT_PLUGIN.name: TRADING_RANGE_BREAKOUT_SHORT_PLUGIN,
     TRADING_RANGE_BREAKOUT_LONG_PLUGIN.name: TRADING_RANGE_BREAKOUT_LONG_PLUGIN,
+    THREE_EMA_CROSSOVER_SHORT_PLUGIN.name: THREE_EMA_CROSSOVER_SHORT_PLUGIN,
+    THREE_EMA_CROSSOVER_LONG_PLUGIN.name: THREE_EMA_CROSSOVER_LONG_PLUGIN,
+    THERMOSTAT_SHORT_PLUGIN.name: THERMOSTAT_SHORT_PLUGIN,
 }
 
 
