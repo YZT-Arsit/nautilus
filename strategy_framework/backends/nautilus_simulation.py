@@ -52,9 +52,16 @@ class IntentFillSimulator:
         return self._positions.setdefault(instrument_id, _Position())
 
     def _resolve_price(self, intent: Any, event: Any) -> float:
+        metadata = getattr(intent, "metadata", {}) or {}
+        # Rich-plan strategies (sized/pyramiding) name their intended fill price
+        # via metadata["fill_price"]; honour it so channel-breakout / N-stop /
+        # gap-to-open fills replay faithfully. Simple strategies never set it, so
+        # the legacy event-field path below is unchanged for them.
+        if metadata.get("fill_price") is not None:
+            return float(metadata["fill_price"])
         price = getattr(event, self._price_field, None)
         if price is None:
-            price = (getattr(intent, "metadata", {}) or {}).get("price")
+            price = metadata.get("price")
         if price is None:
             raise ValueError(
                 f"cannot simulate fill for {intent.instrument_id!r}: no "

@@ -39,7 +39,7 @@ from typing import Any
 
 from strategy_framework.execution.intents import OrderIntent, PositionIntent
 from strategy_framework.execution.reports import ExecutionReport
-from strategy_framework.execution.signal_policy import SignalToOrderPolicy
+from strategy_framework.execution.signal_policy import SignalToOrderPolicy, plan_to_intents
 
 _SUPPORTED_MODES = ("simulated", "nautilus_native")
 
@@ -231,9 +231,23 @@ class NautilusBacktestBackend:
             }
         )
 
+        # Rich-plan strategies (sized / pyramiding, e.g. the Turtle system) return
+        # a PlannedSignal carrying an explicit list of sized TradeActions. When
+        # present, execute those directly (sizing already decided by the strategy)
+        # instead of routing a single fixed-quantity order through the policy.
+        actions = getattr(signal, "actions", None)
+        if actions is not None:
+            for intent in plan_to_intents(actions, event):
+                self._process_intent(intent, ts, event)
+            return
+
         intent = self._policy.on_signal(event, snapshot, signal)
         if intent is None:
             return
+        self._process_intent(intent, ts, event)
+
+    def _process_intent(self, intent: Any, ts: int | None, event: Any) -> None:
+        """Record one intent and route it to the configured fill source."""
         self._intents.append(intent)
         action = _intent_action(intent)
         self._intent_rows.append(
@@ -247,7 +261,18 @@ class NautilusBacktestBackend:
         )
         if self._mode == "simulated":
             self._simulator.on_intent(intent, event)
-        elif self._mode == "nautilus_native" and action is not None and ts is not None:
+        elif self._mode == "nautilus_native":
+            if ts is None or action is None:
+                return
+            if int(ts) in self._intents_by_ts:
+                # One (side, quantity) slot per bar timestamp: the native replay
+                # cannot yet execute multiple sized orders on one bar (pyramiding).
+                raise NotImplementedError(
+                    "mode='nautilus_native' cannot replay multiple orders on one "
+                    "bar (pyramiding/rich plans). Use mode='simulated' for sized "
+                    "multi-order strategies like the Turtle system; native "
+                    "multi-order replay is a follow-up."
+                )
             self._intents_by_ts[int(ts)] = action
 
     # -- introspection (unchanged shape) -------------------------------------

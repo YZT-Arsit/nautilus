@@ -1,0 +1,60 @@
+# Turtle trading system — default (synthetic, no-network) run configuration.
+#
+#   python run_strategy.py --strategy turtle_trader
+#   python run_strategy.py --config strategies/turtle_trader/config.yaml
+#
+# `strategy` selects the plugin in strategy_framework/registry.py.
+# `params` are passed to TurtleTraderConfig.
+#
+# The Turtle system sizes its own orders (risk/N) and pyramids multiple units, so
+# it emits a rich order plan (PlannedSignal.actions) rather than BUY/SELL/HOLD
+# strings. It must run through the `nautilus_backtest` backend in `simulated`
+# mode — the dependency-free fill model that understands sized multi-order plans
+# and honours per-order fill prices. `mode: nautilus_native` cannot yet replay
+# multiple orders on one bar (pyramiding) and will raise a clear error.
+
+strategy: turtle_trader
+
+params:
+  n_entries: 3
+  risk_ratio: 1.0
+  atr_length: 20
+  breakout_len: 20
+  failsafe_len: 55
+  trailing_exit_len: 10
+  last_profitable_trade_filter: true
+  # sizing (static notional equity — the signal stream is generated before fills,
+  # so live equity is not observable; see config.py docstring)
+  account_equity: 100000.0
+  contract_unit: 1.0
+  big_point_value: 1.0
+  min_point: 0.01
+  # Demo-only safety cap: with contract_unit/big_point_value=1 on the near-flat
+  # synthetic path, N can collapse toward 0 and blow up risk-based sizing. A cap
+  # keeps the demo bounded. For real futures set contract_unit/big_point_value to
+  # the instrument's real values and drop this cap (defaults to None = faithful).
+  max_units_per_entry: 5
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The Turtle engine builds its OWN Donchian/ATR history from the LIVE stream
+  # (FeatureStrategyRunner.warmup only pre-heats the feature engine, not the
+  # strategy engine — same as VWM). So feed the whole path as live: the engine
+  # self-warms over the first ~failsafe_len bars, then trades.
+  warmup_bars: 0
+  live_bars: 460
+
+execution:
+  backend: nautilus_backtest
+  mode: simulated       # REQUIRED for Turtle (sized multi-order/pyramiding plans)
+  initial_cash: 100000
+  allow_short: true     # Turtle trades both directions
+  price_field: close    # fallback only; TradeActions carry explicit fill prices
+  fee_rate: 0.0
+  slippage_bps: 0.0
+
+output:
+  print_table: false    # rich plan per bar; the backend prints a PnL summary
+  record_signals: false

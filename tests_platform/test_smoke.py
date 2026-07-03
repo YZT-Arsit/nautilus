@@ -4,7 +4,13 @@ from strategy_framework.registry import STRATEGY_REGISTRY, get_entry
 
 
 def test_registry_has_expected_strategies():
-    assert set(STRATEGY_REGISTRY) == {"ma_crossover", "vwm_short", "trend_breakout_atr"}
+    assert set(STRATEGY_REGISTRY) == {
+        "ma_crossover",
+        "vwm_short",
+        "vwm_long",
+        "trend_breakout_atr",
+        "turtle_trader",
+    }
 
 
 def test_get_entry_unknown_raises():
@@ -32,3 +38,11 @@ def test_ma_crossover_synthetic_runs():
 
 def test_vwm_short_synthetic_runs():
     assert run_config(_synthetic_cfg("vwm_short")) == []
+
+
+def test_vwm_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("vwm_long")) == []
+
+
+def test_turtle_trader_synthetic_runs():
+    assert run_config(_synthetic_cfg("turtle_trader")) == []

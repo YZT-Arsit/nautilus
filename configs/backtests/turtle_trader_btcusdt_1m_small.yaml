@@ -1,0 +1,80 @@
+# Small-window REAL backtest config: Turtle trading system over BTCUSDT spot 1m
+# Binance Vision bars.
+#
+# IMPORTANT — execution mode: the Turtle system sizes its own orders (risk/N) and
+# pyramids multiple units per bar, so it emits a rich order plan and MUST run
+# through mode: simulated (the dependency-free fill model that understands sized
+# multi-order plans and honours per-order fill prices). mode: nautilus_native
+# cannot yet replay multiple orders on one bar (pyramiding) and will raise a
+# clear NotImplementedError. The simulated path writes the SAME report artifact
+# set (signals/intents/trades/positions/equity_curve/metrics.json/report.md).
+#
+# Date scope is STRICT: 2026-06-14 .. 2026-06-16 (3 days, 4320 1m bars); the
+# hive_parquet_bars loader prunes by date= partition before reading.
+#
+# Dry-run (no backtest):
+#   python scripts/dry_run_strategy_config.py \
+#       --config configs/backtests/turtle_trader_btcusdt_1m_small.yaml
+# Real backtest (writes outputs/backtests/<run_name>/):
+#   python run_strategy.py --config configs/backtests/turtle_trader_btcusdt_1m_small.yaml
+
+run_name: turtle_trader_btcusdt_1m_20260614_20260616
+strategy: turtle_trader
+
+params:
+  # Faithful Turtle parameters (System-1/2 blend as in the TradeBlazer source).
+  n_entries: 3
+  risk_ratio: 1.0
+  atr_length: 20
+  breakout_len: 20
+  failsafe_len: 55
+  trailing_exit_len: 10
+  last_profitable_trade_filter: true
+  # Sizing: static notional equity (the signal stream is generated before fills,
+  # so live equity is not observable). For BTC spot with big_point_value=1 the
+  # risk-based unit size can be large; set contract_unit/big_point_value to the
+  # instrument's real values on futures, or cap units for engineering runs.
+  account_equity: 100000.0
+  contract_unit: 1.0
+  big_point_value: 1.0
+  min_point: 0.01
+  max_units_per_entry: 5
+  instrument_id: BTCUSDT.BINANCE
+  bar_type: 1m
+
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT.BINANCE
+  # The Turtle engine builds its own Donchian/ATR history from the live stream,
+  # so feed the whole window as live (warmup pre-heats the feature engine only).
+  warmup_bars: 0
+  timestamp_column: ts
+  timestamp_unit: ns
+  open_column: open
+  high_column: high
+  low_column: low
+  close_column: close
+  volume_column: volume
+  filters:
+    asset_class: crypto
+    exchange: BINANCE
+    venue_type: spot
+    symbol: BTCUSDT
+    data_type: bar
+    freq: 1m
+  start: 2026-06-14
+  end: 2026-06-16
+
+execution:
+  backend: nautilus_backtest
+  mode: simulated           # REQUIRED for Turtle (sized multi-order/pyramiding)
+  initial_cash: 100000
+  allow_short: true         # Turtle trades both directions
+  price_field: close        # fallback only; TradeActions carry explicit fill prices
+  fee_rate: 0.0005
+  slippage_bps: 0.0
+
+output:
+  root: outputs/backtests
+  print_table: false        # the backend writes a full report directory instead
