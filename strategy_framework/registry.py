@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from strategies.ma_crossover import PLUGIN as MA_CROSSOVER_PLUGIN
 from strategies.trend_breakout_atr import PLUGIN as TREND_BREAKOUT_ATR_PLUGIN
+from strategies.vwm_long import PLUGIN as VWM_LONG_PLUGIN
 from strategies.vwm_short import PLUGIN as VWM_SHORT_PLUGIN
 from strategy_framework.plugin import StrategyPlugin
 
 STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
     MA_CROSSOVER_PLUGIN.name: MA_CROSSOVER_PLUGIN,
     VWM_SHORT_PLUGIN.name: VWM_SHORT_PLUGIN,
+    VWM_LONG_PLUGIN.name: VWM_LONG_PLUGIN,
     TREND_BREAKOUT_ATR_PLUGIN.name: TREND_BREAKOUT_ATR_PLUGIN,
 }
 

@@ -1,0 +1,33 @@
+# VWM long — default (synthetic, no-network) run configuration.
+#
+#   python run_strategy.py --strategy vwm_long
+#   python run_strategy.py --config strategies/vwm_long/config.yaml
+#
+# `strategy` selects the plugin in strategy_framework/registry.py.
+# `params` are passed to VwmLongConfig.
+#
+# Long-side mirror of strategies/vwm_short. For a real-data + native Nautilus
+# run, add an analogous configs/backtests/vwm_long_*.yaml with
+# `sell_means: flat` (BUY opens the long, SELL flattens it).
+
+strategy: vwm_long
+
+params:
+  mom_len: 5
+  avg_len: 20
+  atr_len: 5
+  atr_pcnt: 0.5
+  setup_len: 5
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # warmup_bars=0: the VWM engine warms up on the live stream (Mode B pipeline
+  # lives inside the strategy and only sees live bars).
+  warmup_bars: 0
+  live_bars: 200
+
+output:
+  print_table: true
+  record_signals: true
