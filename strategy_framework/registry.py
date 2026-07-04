@@ -6,7 +6,20 @@ import its ``PLUGIN`` and add one entry below. There is no auto-discovery.
 """
 from __future__ import annotations
 
+from strategies.going_in_style_long import PLUGIN as GOING_IN_STYLE_LONG_PLUGIN
+from strategies.going_in_style_short import PLUGIN as GOING_IN_STYLE_SHORT_PLUGIN
+from strategies.in_the_zone_long import PLUGIN as IN_THE_ZONE_LONG_PLUGIN
+from strategies.in_the_zone_short import PLUGIN as IN_THE_ZONE_SHORT_PLUGIN
+from strategies.jailbreak_long import PLUGIN as JAILBREAK_LONG_PLUGIN
+from strategies.jailbreak_short import PLUGIN as JAILBREAK_SHORT_PLUGIN
+from strategies.keltner_channel_long import PLUGIN as KELTNER_CHANNEL_LONG_PLUGIN
+from strategies.keltner_channel_short import PLUGIN as KELTNER_CHANNEL_SHORT_PLUGIN
+from strategies.king_keltner_long import PLUGIN as KING_KELTNER_LONG_PLUGIN
+from strategies.king_keltner_short import PLUGIN as KING_KELTNER_SHORT_PLUGIN
 from strategies.ma_crossover import PLUGIN as MA_CROSSOVER_PLUGIN
+from strategies.ma_crossover_channel_long import PLUGIN as MA_CROSSOVER_CHANNEL_LONG_PLUGIN
+from strategies.ma_crossover_channel_short import PLUGIN as MA_CROSSOVER_CHANNEL_SHORT_PLUGIN
+from strategies.ma_sup_res_long import PLUGIN as MA_SUP_RES_LONG_PLUGIN
 from strategies.ma_sup_res_short import PLUGIN as MA_SUP_RES_SHORT_PLUGIN
 from strategies.no_hurry_long import PLUGIN as NO_HURRY_LONG_PLUGIN
 from strategies.no_hurry_short import PLUGIN as NO_HURRY_SHORT_PLUGIN
@@ -73,6 +86,19 @@ STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
     NO_HURRY_SHORT_PLUGIN.name: NO_HURRY_SHORT_PLUGIN,
     NO_HURRY_LONG_PLUGIN.name: NO_HURRY_LONG_PLUGIN,
     MA_SUP_RES_SHORT_PLUGIN.name: MA_SUP_RES_SHORT_PLUGIN,
+    MA_SUP_RES_LONG_PLUGIN.name: MA_SUP_RES_LONG_PLUGIN,
+    MA_CROSSOVER_CHANNEL_LONG_PLUGIN.name: MA_CROSSOVER_CHANNEL_LONG_PLUGIN,
+    MA_CROSSOVER_CHANNEL_SHORT_PLUGIN.name: MA_CROSSOVER_CHANNEL_SHORT_PLUGIN,
+    KING_KELTNER_SHORT_PLUGIN.name: KING_KELTNER_SHORT_PLUGIN,
+    KING_KELTNER_LONG_PLUGIN.name: KING_KELTNER_LONG_PLUGIN,
+    KELTNER_CHANNEL_SHORT_PLUGIN.name: KELTNER_CHANNEL_SHORT_PLUGIN,
+    KELTNER_CHANNEL_LONG_PLUGIN.name: KELTNER_CHANNEL_LONG_PLUGIN,
+    JAILBREAK_SHORT_PLUGIN.name: JAILBREAK_SHORT_PLUGIN,
+    JAILBREAK_LONG_PLUGIN.name: JAILBREAK_LONG_PLUGIN,
+    IN_THE_ZONE_SHORT_PLUGIN.name: IN_THE_ZONE_SHORT_PLUGIN,
+    IN_THE_ZONE_LONG_PLUGIN.name: IN_THE_ZONE_LONG_PLUGIN,
+    GOING_IN_STYLE_SHORT_PLUGIN.name: GOING_IN_STYLE_SHORT_PLUGIN,
+    GOING_IN_STYLE_LONG_PLUGIN.name: GOING_IN_STYLE_LONG_PLUGIN,
 }
 
 

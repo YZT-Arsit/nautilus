@@ -37,6 +37,19 @@ def test_registry_has_expected_strategies():
         "no_hurry_short",
         "no_hurry_long",
         "ma_sup_res_short",
+        "ma_sup_res_long",
+        "ma_crossover_channel_long",
+        "ma_crossover_channel_short",
+        "king_keltner_short",
+        "king_keltner_long",
+        "keltner_channel_short",
+        "keltner_channel_long",
+        "jailbreak_short",
+        "jailbreak_long",
+        "in_the_zone_short",
+        "in_the_zone_long",
+        "going_in_style_short",
+        "going_in_style_long",
     }
 
 
@@ -181,3 +194,55 @@ def test_no_hurry_long_synthetic_runs():
 
 def test_ma_sup_res_short_synthetic_runs():
     assert run_config(_synthetic_cfg("ma_sup_res_short")) == []
+
+
+def test_ma_sup_res_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("ma_sup_res_long")) == []
+
+
+def test_ma_crossover_channel_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("ma_crossover_channel_long")) == []
+
+
+def test_ma_crossover_channel_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("ma_crossover_channel_short")) == []
+
+
+def test_king_keltner_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("king_keltner_short")) == []
+
+
+def test_king_keltner_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("king_keltner_long")) == []
+
+
+def test_keltner_channel_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("keltner_channel_short")) == []
+
+
+def test_keltner_channel_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("keltner_channel_long")) == []
+
+
+def test_jailbreak_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("jailbreak_short")) == []
+
+
+def test_jailbreak_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("jailbreak_long")) == []
+
+
+def test_in_the_zone_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("in_the_zone_short")) == []
+
+
+def test_in_the_zone_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("in_the_zone_long")) == []
+
+
+def test_going_in_style_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("going_in_style_short")) == []
+
+
+def test_going_in_style_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("going_in_style_long")) == []

@@ -1,0 +1,34 @@
+# In The Zone short — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy in_the_zone_short
+#   python run_strategy.py --config strategies/in_the_zone_short/config.yaml
+#
+# Short-only 4-bar box breakout with triple ATR exits: signals are BUY/SELL/HOLD
+# and the signal->order meaning is `sell_means: short` (SELL opens the short, BUY
+# covers it), same as vwm_short.
+#
+# NOTE: the entry/exit gate on Vol > 0. The synthetic bar source emits volume=0,
+# so no trades fire; this config still validates the full data -> features ->
+# signals pipeline. For a REAL backtest with fills/PnL use
+#   configs/backtests/in_the_zone_short_btcusdt_1m_small.yaml
+
+strategy: in_the_zone_short
+
+params:
+  atr_length: 10
+  cancel_flag_n: 5
+  protect_stop_atr_multi: 0.5
+  break_even_stop_atr_multi: 3.0
+  profit_target_atr_multi: 5.0
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own ATR / zone history from the live stream.
+  warmup_bars: 0
+  live_bars: 120
+
+output:
+  print_table: false
+  record_signals: false

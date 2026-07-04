@@ -1,0 +1,35 @@
+# MA-Crossover Channel-Breakout short — default (synthetic, no-network) config.
+#
+#   python run_strategy.py --strategy ma_crossover_channel_short
+#   python run_strategy.py --config strategies/ma_crossover_channel_short/config.yaml
+#
+# Short-only fast/slow MA crossover + channel-breakout system with reversal exit,
+# trailing stop, and re-entry: signals are BUY/SELL/HOLD and the signal->order
+# meaning is `sell_means: short` (SELL opens the short, BUY covers it).
+#
+# This config validates the full data -> features -> signals pipeline. For a REAL
+# backtest with fills/PnL use
+#   configs/backtests/ma_crossover_channel_short_btcusdt_1m_small.yaml
+
+strategy: ma_crossover_channel_short
+
+params:
+  fast_len: 9
+  slow_len: 18
+  ch_len: 12
+  extra_percentage: 300
+  trail_bar: 8
+  re_bars: 15
+  re_entry_ch_len: 10
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own MA / channel / trailing history from the stream.
+  warmup_bars: 0
+  live_bars: 80
+
+output:
+  print_table: false
+  record_signals: false

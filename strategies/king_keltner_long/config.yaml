@@ -1,0 +1,31 @@
+# King Keltner long — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy king_keltner_long
+#   python run_strategy.py --config strategies/king_keltner_long/config.yaml
+#
+# Long-only Keltner-channel breakout: signals are BUY/SELL/HOLD and the
+# signal->order meaning is `sell_means: flat` (BUY opens the long, SELL flattens
+# it), same as obv_revisited_long.
+#
+# NOTE: this strategy has no Vol > 0 gate, so the engine emits signals on the
+# synthetic stream; with no execution block run_config still returns [] (pipeline
+# validation only). For a REAL backtest with fills/PnL use
+#   configs/backtests/king_keltner_long_btcusdt_1m_small.yaml
+
+strategy: king_keltner_long
+
+params:
+  avg_length: 40
+  atr_length: 40
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own MA / ATR history from the live stream.
+  warmup_bars: 0
+  live_bars: 120
+
+output:
+  print_table: false
+  record_signals: false

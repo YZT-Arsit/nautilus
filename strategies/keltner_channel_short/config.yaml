@@ -1,0 +1,34 @@
+# Keltner Channel short — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy keltner_channel_short
+#   python run_strategy.py --config strategies/keltner_channel_short/config.yaml
+#
+# Short-only Keltner-channel armed-trigger breakout: signals are BUY/SELL/HOLD and
+# the signal->order meaning is `sell_means: short` (SELL opens the short, BUY
+# covers it), same as vwm_short.
+#
+# NOTE: this strategy has no Vol > 0 gate, so the engine emits signals on the
+# synthetic stream; with no execution block run_config still returns [] (pipeline
+# validation only). For a REAL backtest with fills/PnL use
+#   configs/backtests/keltner_channel_short_btcusdt_1m_small.yaml
+
+strategy: keltner_channel_short
+
+params:
+  length: 10
+  constt: 1.2
+  chan_pcnt: 0.5
+  sell_n: 5
+  stop_n: 4
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own channel / trigger history from the live stream.
+  warmup_bars: 0
+  live_bars: 120
+
+output:
+  print_table: false
+  record_signals: false

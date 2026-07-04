@@ -1,0 +1,59 @@
+# Small-window REAL backtest config: In The Zone long over BTCUSDT spot 1m
+# Binance Vision bars, native Nautilus BacktestEngine path.
+#
+# Single-unit long-only 4-bar box breakout with triple ATR exits (BUY/SELL/HOLD +
+# sell_means: flat). Date scope is STRICT: 2026-06-14 .. 2026-06-16 (3 days,
+# 4320 1m bars); the hive_parquet_bars loader prunes by date= partition before
+# reading.
+#
+# Real backtest (writes outputs/backtests/<run_name>/):
+#   python run_strategy.py --config configs/backtests/in_the_zone_long_btcusdt_1m_small.yaml
+
+run_name: in_the_zone_long_btcusdt_1m_20260614_20260616
+strategy: in_the_zone_long
+
+params:
+  atr_length: 10
+  cancel_flag_n: 5
+  protect_stop_atr_multi: 0.5
+  break_even_stop_atr_multi: 3.0
+  profit_target_atr_multi: 5.0
+  instrument_id: BTCUSDT.BINANCE
+  bar_type: 1m
+
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT.BINANCE
+  warmup_bars: 0
+  timestamp_column: ts
+  timestamp_unit: ns
+  open_column: open
+  high_column: high
+  low_column: low
+  close_column: close
+  volume_column: volume
+  filters:
+    asset_class: crypto
+    exchange: BINANCE
+    venue_type: spot
+    symbol: BTCUSDT
+    data_type: bar
+    freq: 1m
+  start: 2026-06-14
+  end: 2026-06-16
+
+execution:
+  backend: nautilus_backtest
+  mode: nautilus_native
+  initial_cash: 100000
+  quantity: 1.0
+  sell_means: flat          # BUY opens the long; SELL flattens it
+  allow_short: false
+  price_field: close
+  fee_rate: 0.0005
+  slippage_bps: 1.0
+
+output:
+  root: outputs/backtests
+  print_table: false
