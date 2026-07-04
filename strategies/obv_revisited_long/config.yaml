@@ -1,0 +1,32 @@
+# OBV Revisited long — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy obv_revisited_long
+#   python run_strategy.py --config strategies/obv_revisited_long/config.yaml
+#
+# Long-only volatility-weighted-OBV vs MA system: signals are BUY/SELL/HOLD and
+# the signal->order meaning is `sell_means: flat` (BUY opens the long, SELL
+# flattens it).
+#
+# NOTE: WOBV only moves when Vol > 0. The synthetic bar source emits volume=0, so
+# the WOBV stays flat and never crosses its MA -> no trades. This config still
+# validates the full data -> features -> signals pipeline. For a REAL backtest
+# with fills/PnL (volume>0), use
+#   configs/backtests/obv_revisited_long_btcusdt_1m_small.yaml
+
+strategy: obv_revisited_long
+
+params:
+  avg_length: 25
+  tick: 0.01
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own WOBV / MA history from the live stream.
+  warmup_bars: 0
+  live_bars: 80
+
+output:
+  print_table: false
+  record_signals: false

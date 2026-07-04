@@ -1,0 +1,33 @@
+# Open/Close Histogram long — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy open_close_histogram_long
+#   python run_strategy.py --config strategies/open_close_histogram_long/config.yaml
+#
+# Long-only EMA(Close)-EMA(Open) histogram zero-cross system: signals are
+# BUY/SELL/HOLD and the signal->order meaning is `sell_means: flat` (BUY opens
+# the long, SELL flattens it).
+#
+# NOTE: like the other Vol>0 strategies, this default config has NO execution
+# block — the synthetic bar source emits volume=0 so no fills would occur. This
+# config validates the full data -> features -> signals pipeline. For a REAL
+# backtest with fills/PnL (volume>0), use
+#   configs/backtests/open_close_histogram_long_btcusdt_1m_small.yaml
+
+strategy: open_close_histogram_long
+
+params:
+  open_len: 10
+  close_len: 10
+  atr_len: 10
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own EMA / ATR history from the live stream.
+  warmup_bars: 0
+  live_bars: 80
+
+output:
+  print_table: false
+  record_signals: false

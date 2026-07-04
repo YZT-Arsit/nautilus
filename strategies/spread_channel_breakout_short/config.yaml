@@ -1,0 +1,38 @@
+# Spread Channel Breakout short — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy spread_channel_breakout_short
+#   python run_strategy.py --config strategies/spread_channel_breakout_short/config.yaml
+#
+# Short-only spread channel-breakout system: signals are BUY/SELL/HOLD and the
+# signal->order meaning is `sell_means: short` (SELL opens the short, BUY covers
+# it), same as vwm_short.
+#
+# TWO-LEG NOTE: the TradeBlazer original trades a two-instrument spread; the
+# single-symbol runner feeds one series as the spread (open/close taken as the
+# spread OO/CC). A true two-leg spread source is not yet wired into the runner.
+#
+# NOTE: like the other Vol>0 strategies, this default config has NO execution
+# block — the synthetic bar source emits volume=0 so no fills would occur. This
+# config validates the full data -> features -> signals pipeline. For a REAL
+# backtest with fills/PnL (volume>0), use
+#   configs/backtests/spread_channel_breakout_short_btcusdt_1m_small.yaml
+
+strategy: spread_channel_breakout_short
+
+params:
+  length: 20
+  stop_len: 10
+  lots0: 1.0
+  lots1: 1.0
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own spread channel history from the live stream.
+  warmup_bars: 0
+  live_bars: 80
+
+output:
+  print_table: false
+  record_signals: false

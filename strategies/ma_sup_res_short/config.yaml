@@ -1,0 +1,32 @@
+# MA Support/Resistance short — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy ma_sup_res_short
+#   python run_strategy.py --config strategies/ma_sup_res_short/config.yaml
+#
+# Short-only price-vs-MA support/resistance system with dual ATR stops: signals
+# are BUY/SELL/HOLD and the signal->order meaning is `sell_means: short` (SELL
+# opens the short, BUY covers it), same as vwm_short.
+#
+# This config validates the full data -> features -> signals pipeline. For a REAL
+# backtest with fills/PnL use
+#   configs/backtests/ma_sup_res_short_btcusdt_1m_small.yaml
+
+strategy: ma_sup_res_short
+
+params:
+  ma_length: 10
+  atr_length: 10
+  protect_stop_atr_multi: 0.5
+  trail_stop_atr_multi: 2.5
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own MA / ATR / support-line history from the stream.
+  warmup_bars: 0
+  live_bars: 80
+
+output:
+  print_table: false
+  record_signals: false

@@ -7,6 +7,24 @@ import its ``PLUGIN`` and add one entry below. There is no auto-discovery.
 from __future__ import annotations
 
 from strategies.ma_crossover import PLUGIN as MA_CROSSOVER_PLUGIN
+from strategies.ma_sup_res_short import PLUGIN as MA_SUP_RES_SHORT_PLUGIN
+from strategies.no_hurry_long import PLUGIN as NO_HURRY_LONG_PLUGIN
+from strategies.no_hurry_short import PLUGIN as NO_HURRY_SHORT_PLUGIN
+from strategies.obv_revisited_long import PLUGIN as OBV_REVISITED_LONG_PLUGIN
+from strategies.obv_revisited_short import PLUGIN as OBV_REVISITED_SHORT_PLUGIN
+from strategies.open_close_histogram_long import PLUGIN as OPEN_CLOSE_HISTOGRAM_LONG_PLUGIN
+from strategies.open_close_histogram_short import PLUGIN as OPEN_CLOSE_HISTOGRAM_SHORT_PLUGIN
+from strategies.redrover_long import PLUGIN as REDROVER_LONG_PLUGIN
+from strategies.redrover_short import PLUGIN as REDROVER_SHORT_PLUGIN
+from strategies.reference_deviation_long import PLUGIN as REFERENCE_DEVIATION_LONG_PLUGIN
+from strategies.reference_deviation_short import PLUGIN as REFERENCE_DEVIATION_SHORT_PLUGIN
+from strategies.spread_channel_breakout_long import PLUGIN as SPREAD_CHANNEL_BREAKOUT_LONG_PLUGIN
+from strategies.spread_channel_breakout_short import PLUGIN as SPREAD_CHANNEL_BREAKOUT_SHORT_PLUGIN
+from strategies.superman_long import PLUGIN as SUPERMAN_LONG_PLUGIN
+from strategies.superman_short import PLUGIN as SUPERMAN_SHORT_PLUGIN
+from strategies.swinger_long import PLUGIN as SWINGER_LONG_PLUGIN
+from strategies.swinger_short import PLUGIN as SWINGER_SHORT_PLUGIN
+from strategies.thermostat_long import PLUGIN as THERMOSTAT_LONG_PLUGIN
 from strategies.thermostat_short import PLUGIN as THERMOSTAT_SHORT_PLUGIN
 from strategies.three_ema_crossover_long import PLUGIN as THREE_EMA_CROSSOVER_LONG_PLUGIN
 from strategies.three_ema_crossover_short import PLUGIN as THREE_EMA_CROSSOVER_SHORT_PLUGIN
@@ -37,6 +55,24 @@ STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
     THREE_EMA_CROSSOVER_SHORT_PLUGIN.name: THREE_EMA_CROSSOVER_SHORT_PLUGIN,
     THREE_EMA_CROSSOVER_LONG_PLUGIN.name: THREE_EMA_CROSSOVER_LONG_PLUGIN,
     THERMOSTAT_SHORT_PLUGIN.name: THERMOSTAT_SHORT_PLUGIN,
+    THERMOSTAT_LONG_PLUGIN.name: THERMOSTAT_LONG_PLUGIN,
+    SWINGER_SHORT_PLUGIN.name: SWINGER_SHORT_PLUGIN,
+    SWINGER_LONG_PLUGIN.name: SWINGER_LONG_PLUGIN,
+    SUPERMAN_SHORT_PLUGIN.name: SUPERMAN_SHORT_PLUGIN,
+    SUPERMAN_LONG_PLUGIN.name: SUPERMAN_LONG_PLUGIN,
+    SPREAD_CHANNEL_BREAKOUT_SHORT_PLUGIN.name: SPREAD_CHANNEL_BREAKOUT_SHORT_PLUGIN,
+    SPREAD_CHANNEL_BREAKOUT_LONG_PLUGIN.name: SPREAD_CHANNEL_BREAKOUT_LONG_PLUGIN,
+    REFERENCE_DEVIATION_SHORT_PLUGIN.name: REFERENCE_DEVIATION_SHORT_PLUGIN,
+    REFERENCE_DEVIATION_LONG_PLUGIN.name: REFERENCE_DEVIATION_LONG_PLUGIN,
+    REDROVER_SHORT_PLUGIN.name: REDROVER_SHORT_PLUGIN,
+    REDROVER_LONG_PLUGIN.name: REDROVER_LONG_PLUGIN,
+    OPEN_CLOSE_HISTOGRAM_SHORT_PLUGIN.name: OPEN_CLOSE_HISTOGRAM_SHORT_PLUGIN,
+    OPEN_CLOSE_HISTOGRAM_LONG_PLUGIN.name: OPEN_CLOSE_HISTOGRAM_LONG_PLUGIN,
+    OBV_REVISITED_SHORT_PLUGIN.name: OBV_REVISITED_SHORT_PLUGIN,
+    OBV_REVISITED_LONG_PLUGIN.name: OBV_REVISITED_LONG_PLUGIN,
+    NO_HURRY_SHORT_PLUGIN.name: NO_HURRY_SHORT_PLUGIN,
+    NO_HURRY_LONG_PLUGIN.name: NO_HURRY_LONG_PLUGIN,
+    MA_SUP_RES_SHORT_PLUGIN.name: MA_SUP_RES_SHORT_PLUGIN,
 }
 
 

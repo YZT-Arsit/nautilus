@@ -1,0 +1,36 @@
+# Thermostat long — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy thermostat_long
+#   python run_strategy.py --config strategies/thermostat_long/config.yaml
+#
+# Long-only regime-switching system (CMI splits swing/trend): signals are
+# BUY/SELL/HOLD and the signal->order meaning is `sell_means: flat` (BUY opens
+# the long, SELL flattens it).
+#
+# NOTE: Thermostat_L has NO Vol>0 gate, but this default config still has NO
+# execution block — it validates the full data -> features -> signals pipeline
+# only. For a REAL backtest with fills/PnL use
+#   configs/backtests/thermostat_long_btcusdt_1m_small.yaml
+
+strategy: thermostat_long
+
+params:
+  swing_trend_switch: 20.0
+  swing_prcnt1: 0.50
+  swing_prcnt2: 0.75
+  atr_length: 10
+  bollinger_length: 50
+  num_std_devs: 2.0
+  trend_liq_length: 50
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own CMI / ATR / Bollinger history from the live stream.
+  warmup_bars: 0
+  live_bars: 80
+
+output:
+  print_table: false
+  record_signals: false
