@@ -1,0 +1,39 @@
+# Dual-MA (stop-and-reverse) — default (synthetic, no-network) run configuration.
+#
+#   python run_strategy.py --strategy dual_ma
+#   python run_strategy.py --config strategies/dual_ma/config.yaml
+#
+# Dual-MA is always in the market and flips between long and short, so it emits a
+# rich order plan (PlannedSignal.actions) with a sized reversing order rather than
+# BUY/SELL/HOLD strings. It must run through the `nautilus_backtest` backend in
+# `simulated` mode with `allow_short: true` — the dependency-free fill model that
+# flips a position when an opposing order exceeds it. `mode: nautilus_native`
+# cannot yet replay the reversing plan and will raise a clear error.
+
+strategy: dual_ma
+
+params:
+  fast_length: 5
+  slow_length: 20
+  contract_unit: 1.0
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own moving-average history from the live stream.
+  warmup_bars: 0
+  live_bars: 120
+
+execution:
+  backend: nautilus_backtest
+  mode: simulated       # REQUIRED for Dual-MA (sized reversing plan)
+  initial_cash: 100000
+  allow_short: true     # Dual-MA trades both directions
+  price_field: close    # fallback only; TradeActions carry explicit fill prices
+  fee_rate: 0.0
+  slippage_bps: 0.0
+
+output:
+  print_table: false
+  record_signals: false

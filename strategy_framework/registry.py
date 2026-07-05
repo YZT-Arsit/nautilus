@@ -6,6 +6,25 @@ import its ``PLUGIN`` and add one entry below. There is no auto-discovery.
 """
 from __future__ import annotations
 
+from strategies.avg_channel_range_leader_long import PLUGIN as AVG_CHANNEL_RANGE_LEADER_LONG_PLUGIN
+from strategies.avg_channel_range_leader_short import PLUGIN as AVG_CHANNEL_RANGE_LEADER_SHORT_PLUGIN
+from strategies.bollinger_bandit_long import PLUGIN as BOLLINGER_BANDIT_LONG_PLUGIN
+from strategies.bollinger_bandit_short import PLUGIN as BOLLINGER_BANDIT_SHORT_PLUGIN
+from strategies.displaced_boll_long import PLUGIN as DISPLACED_BOLL_LONG_PLUGIN
+from strategies.displaced_boll_short import PLUGIN as DISPLACED_BOLL_SHORT_PLUGIN
+from strategies.double_your_fun_long import PLUGIN as DOUBLE_YOUR_FUN_LONG_PLUGIN
+from strategies.double_your_fun_short import PLUGIN as DOUBLE_YOUR_FUN_SHORT_PLUGIN
+from strategies.dual_ma import PLUGIN as DUAL_MA_PLUGIN
+from strategies.dynamic_breakout_long import PLUGIN as DYNAMIC_BREAKOUT_LONG_PLUGIN
+from strategies.dynamic_breakout_short import PLUGIN as DYNAMIC_BREAKOUT_SHORT_PLUGIN
+from strategies.escalator_long import PLUGIN as ESCALATOR_LONG_PLUGIN
+from strategies.escalator_short import PLUGIN as ESCALATOR_SHORT_PLUGIN
+from strategies.first_pullback_long import PLUGIN as FIRST_PULLBACK_LONG_PLUGIN
+from strategies.first_pullback_short import PLUGIN as FIRST_PULLBACK_SHORT_PLUGIN
+from strategies.four_ma_crossover_long import PLUGIN as FOUR_MA_CROSSOVER_LONG_PLUGIN
+from strategies.four_ma_crossover_short import PLUGIN as FOUR_MA_CROSSOVER_SHORT_PLUGIN
+from strategies.ghost_trader_long import PLUGIN as GHOST_TRADER_LONG_PLUGIN
+from strategies.ghost_trader_short import PLUGIN as GHOST_TRADER_SHORT_PLUGIN
 from strategies.going_in_style_long import PLUGIN as GOING_IN_STYLE_LONG_PLUGIN
 from strategies.going_in_style_short import PLUGIN as GOING_IN_STYLE_SHORT_PLUGIN
 from strategies.in_the_zone_long import PLUGIN as IN_THE_ZONE_LONG_PLUGIN
@@ -99,6 +118,25 @@ STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
     IN_THE_ZONE_LONG_PLUGIN.name: IN_THE_ZONE_LONG_PLUGIN,
     GOING_IN_STYLE_SHORT_PLUGIN.name: GOING_IN_STYLE_SHORT_PLUGIN,
     GOING_IN_STYLE_LONG_PLUGIN.name: GOING_IN_STYLE_LONG_PLUGIN,
+    GHOST_TRADER_SHORT_PLUGIN.name: GHOST_TRADER_SHORT_PLUGIN,
+    GHOST_TRADER_LONG_PLUGIN.name: GHOST_TRADER_LONG_PLUGIN,
+    FOUR_MA_CROSSOVER_SHORT_PLUGIN.name: FOUR_MA_CROSSOVER_SHORT_PLUGIN,
+    FOUR_MA_CROSSOVER_LONG_PLUGIN.name: FOUR_MA_CROSSOVER_LONG_PLUGIN,
+    FIRST_PULLBACK_SHORT_PLUGIN.name: FIRST_PULLBACK_SHORT_PLUGIN,
+    FIRST_PULLBACK_LONG_PLUGIN.name: FIRST_PULLBACK_LONG_PLUGIN,
+    ESCALATOR_SHORT_PLUGIN.name: ESCALATOR_SHORT_PLUGIN,
+    ESCALATOR_LONG_PLUGIN.name: ESCALATOR_LONG_PLUGIN,
+    DYNAMIC_BREAKOUT_SHORT_PLUGIN.name: DYNAMIC_BREAKOUT_SHORT_PLUGIN,
+    DYNAMIC_BREAKOUT_LONG_PLUGIN.name: DYNAMIC_BREAKOUT_LONG_PLUGIN,
+    DUAL_MA_PLUGIN.name: DUAL_MA_PLUGIN,
+    DOUBLE_YOUR_FUN_SHORT_PLUGIN.name: DOUBLE_YOUR_FUN_SHORT_PLUGIN,
+    DOUBLE_YOUR_FUN_LONG_PLUGIN.name: DOUBLE_YOUR_FUN_LONG_PLUGIN,
+    DISPLACED_BOLL_SHORT_PLUGIN.name: DISPLACED_BOLL_SHORT_PLUGIN,
+    DISPLACED_BOLL_LONG_PLUGIN.name: DISPLACED_BOLL_LONG_PLUGIN,
+    BOLLINGER_BANDIT_SHORT_PLUGIN.name: BOLLINGER_BANDIT_SHORT_PLUGIN,
+    BOLLINGER_BANDIT_LONG_PLUGIN.name: BOLLINGER_BANDIT_LONG_PLUGIN,
+    AVG_CHANNEL_RANGE_LEADER_SHORT_PLUGIN.name: AVG_CHANNEL_RANGE_LEADER_SHORT_PLUGIN,
+    AVG_CHANNEL_RANGE_LEADER_LONG_PLUGIN.name: AVG_CHANNEL_RANGE_LEADER_LONG_PLUGIN,
 }
 
 

@@ -1,0 +1,39 @@
+# Four-MA Crossover short — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy four_ma_crossover_short
+#   python run_strategy.py --config strategies/four_ma_crossover_short/config.yaml
+#
+# Short-only four-moving-average system: signals are BUY/SELL/HOLD and the
+# signal->order meaning is `sell_means: short` (SELL opens the short, BUY covers
+# it), same as vwm_short.
+#
+# NOTE: the entry/exit gate on Vol > 0 and CurrentBar >= min_bars (100). The
+# synthetic bar source emits volume=0, so no trades fire; this config still
+# validates the full data -> features -> signals pipeline. For a REAL backtest
+# with fills/PnL use
+#   configs/backtests/four_ma_crossover_short_btcusdt_1m_small.yaml
+
+strategy: four_ma_crossover_short
+
+params:
+  se_fast: 5
+  se_slow: 20
+  sx_fast: 3
+  sx_slow: 10
+  le_fast: 5
+  le_slow: 20
+  lx_fast: 3
+  lx_slow: 10
+  min_bars: 100
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own moving-average history from the live stream.
+  warmup_bars: 0
+  live_bars: 160
+
+output:
+  print_table: false
+  record_signals: false

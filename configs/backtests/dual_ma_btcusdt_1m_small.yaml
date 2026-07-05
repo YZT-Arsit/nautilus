@@ -1,0 +1,61 @@
+# Small-window REAL backtest config: Dual-MA (stop-and-reverse) over BTCUSDT spot 1m
+# Binance Vision bars.
+#
+# IMPORTANT — execution mode: Dual-MA is always in the market and flips between
+# long and short, so it emits a rich order plan with a sized reversing order and
+# MUST run through mode: simulated (the dependency-free fill model that flips a
+# position when an opposing order exceeds it). mode: nautilus_native cannot yet
+# replay the reversing plan and will raise a clear error. The simulated path
+# writes the SAME report artifact set (signals/intents/trades/positions/
+# equity_curve/metrics.json/report.md).
+#
+# Date scope is STRICT: 2026-06-14 .. 2026-06-16 (3 days, 4320 1m bars); the
+# hive_parquet_bars loader prunes by date= partition before reading.
+#
+# Real backtest (writes outputs/backtests/<run_name>/):
+#   python run_strategy.py --config configs/backtests/dual_ma_btcusdt_1m_small.yaml
+
+run_name: dual_ma_btcusdt_1m_20260614_20260616
+strategy: dual_ma
+
+params:
+  fast_length: 5
+  slow_length: 20
+  contract_unit: 1.0
+  instrument_id: BTCUSDT.BINANCE
+  bar_type: 1m
+
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT.BINANCE
+  warmup_bars: 0
+  timestamp_column: ts
+  timestamp_unit: ns
+  open_column: open
+  high_column: high
+  low_column: low
+  close_column: close
+  volume_column: volume
+  filters:
+    asset_class: crypto
+    exchange: BINANCE
+    venue_type: spot
+    symbol: BTCUSDT
+    data_type: bar
+    freq: 1m
+  start: 2026-06-14
+  end: 2026-06-16
+
+execution:
+  backend: nautilus_backtest
+  mode: simulated           # REQUIRED for Dual-MA (sized reversing plan)
+  initial_cash: 100000
+  allow_short: true         # Dual-MA trades both directions
+  price_field: close        # fallback only; TradeActions carry explicit fill prices
+  fee_rate: 0.0005
+  slippage_bps: 0.0
+
+output:
+  root: outputs/backtests
+  print_table: false

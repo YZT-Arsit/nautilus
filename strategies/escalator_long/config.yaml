@@ -1,0 +1,34 @@
+# Escalator long — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy escalator_long
+#   python run_strategy.py --config strategies/escalator_long/config.yaml
+#
+# Long-only MA + candlestick-pattern breakout system: signals are BUY/SELL/HOLD
+# and the signal->order meaning is `sell_means: flat` (BUY opens the long, SELL
+# flattens it), same as obv_revisited_long.
+#
+# NOTE: entry gates on Vol > 0. The synthetic bar source emits volume=0, so no
+# trades fire; this config still validates the full data -> features -> signals
+# pipeline. For a REAL backtest with fills/PnL use
+#   configs/backtests/escalator_long_btcusdt_1m_small.yaml
+
+strategy: escalator_long
+
+params:
+  fast_length: 8
+  slow_length: 40
+  risk_length: 2
+  profit_factor: 2.0
+  tick: 0.01
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own MA / channel history from the live stream.
+  warmup_bars: 0
+  live_bars: 160
+
+output:
+  print_table: false
+  record_signals: false

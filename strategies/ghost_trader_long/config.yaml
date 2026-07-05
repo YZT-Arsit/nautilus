@@ -1,0 +1,35 @@
+# Ghost Trader long — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy ghost_trader_long
+#   python run_strategy.py --config strategies/ghost_trader_long/config.yaml
+#
+# Long-only "ghost trader": a simulated EMA/RSI/Donchian long that only sends a
+# real order after a simulated loss. Signals are BUY/SELL/HOLD and the
+# signal->order meaning is `sell_means: flat` (BUY opens the long, SELL flattens
+# it), same as obv_revisited_long.
+#
+# This config validates the full data -> features -> signals pipeline. For a REAL
+# backtest with fills/PnL use
+#   configs/backtests/ghost_trader_long_btcusdt_1m_small.yaml
+
+strategy: ghost_trader_long
+
+params:
+  fast_length: 9
+  slow_length: 19
+  rsi_length: 9
+  over_sold: 30
+  over_bought: 70
+  donchian_length: 20
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own EMA / RSI / Donchian history from the live stream.
+  warmup_bars: 0
+  live_bars: 120
+
+output:
+  print_table: false
+  record_signals: false

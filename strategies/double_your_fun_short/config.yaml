@@ -1,0 +1,36 @@
+# DoubleYourFun short — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy double_your_fun_short
+#   python run_strategy.py --config strategies/double_your_fun_short/config.yaml
+#
+# Short-only displaced-MA double-crossing breakout: signals are BUY/SELL/HOLD and
+# the signal->order meaning is `sell_means: short` (SELL opens the short, BUY
+# covers it), same as vwm_short.
+#
+# NOTE: entry gates on Vol > 0. The synthetic bar source emits volume=0, so no
+# trades fire; this config still validates the full data -> features -> signals
+# pipeline. For a REAL backtest with fills/PnL use
+#   configs/backtests/double_your_fun_short_btcusdt_1m_small.yaml
+
+strategy: double_your_fun_short
+
+params:
+  avg_length: 5
+  avg_displace: 5
+  valid_bars1: 5
+  valid_bars2: 5
+  valid_bars3: 5
+  trail_stop_bars: 5
+  tick: 0.01
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own displaced-MA / cross history from the live stream.
+  warmup_bars: 0
+  live_bars: 160
+
+output:
+  print_table: false
+  record_signals: false

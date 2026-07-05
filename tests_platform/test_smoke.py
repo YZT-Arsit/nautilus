@@ -50,6 +50,25 @@ def test_registry_has_expected_strategies():
         "in_the_zone_long",
         "going_in_style_short",
         "going_in_style_long",
+        "ghost_trader_short",
+        "ghost_trader_long",
+        "four_ma_crossover_short",
+        "four_ma_crossover_long",
+        "first_pullback_short",
+        "first_pullback_long",
+        "escalator_short",
+        "escalator_long",
+        "dynamic_breakout_short",
+        "dynamic_breakout_long",
+        "dual_ma",
+        "double_your_fun_short",
+        "double_your_fun_long",
+        "displaced_boll_short",
+        "displaced_boll_long",
+        "bollinger_bandit_short",
+        "bollinger_bandit_long",
+        "avg_channel_range_leader_short",
+        "avg_channel_range_leader_long",
     }
 
 
@@ -246,3 +265,79 @@ def test_going_in_style_short_synthetic_runs():
 
 def test_going_in_style_long_synthetic_runs():
     assert run_config(_synthetic_cfg("going_in_style_long")) == []
+
+
+def test_ghost_trader_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("ghost_trader_short")) == []
+
+
+def test_ghost_trader_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("ghost_trader_long")) == []
+
+
+def test_four_ma_crossover_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("four_ma_crossover_short")) == []
+
+
+def test_four_ma_crossover_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("four_ma_crossover_long")) == []
+
+
+def test_first_pullback_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("first_pullback_short")) == []
+
+
+def test_first_pullback_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("first_pullback_long")) == []
+
+
+def test_escalator_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("escalator_short")) == []
+
+
+def test_escalator_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("escalator_long")) == []
+
+
+def test_dynamic_breakout_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("dynamic_breakout_short")) == []
+
+
+def test_dynamic_breakout_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("dynamic_breakout_long")) == []
+
+
+def test_dual_ma_synthetic_runs():
+    assert run_config(_synthetic_cfg("dual_ma")) == []
+
+
+def test_double_your_fun_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("double_your_fun_short")) == []
+
+
+def test_double_your_fun_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("double_your_fun_long")) == []
+
+
+def test_displaced_boll_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("displaced_boll_short")) == []
+
+
+def test_displaced_boll_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("displaced_boll_long")) == []
+
+
+def test_bollinger_bandit_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("bollinger_bandit_short")) == []
+
+
+def test_bollinger_bandit_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("bollinger_bandit_long")) == []
+
+
+def test_avg_channel_range_leader_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("avg_channel_range_leader_short")) == []
+
+
+def test_avg_channel_range_leader_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("avg_channel_range_leader_long")) == []

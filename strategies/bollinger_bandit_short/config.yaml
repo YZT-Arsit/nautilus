@@ -1,0 +1,34 @@
+# Bollinger Bandit short — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy bollinger_bandit_short
+#   python run_strategy.py --config strategies/bollinger_bandit_short/config.yaml
+#
+# Short-only Bollinger lower-band breakout with a ROC filter and an adaptive exit
+# MA: signals are BUY/SELL/HOLD and the signal->order meaning is `sell_means:
+# short` (SELL opens the short, BUY covers it), same as vwm_short.
+#
+# This config validates the full data -> features -> signals pipeline. For a REAL
+# backtest with fills/PnL use
+#   configs/backtests/bollinger_bandit_short_btcusdt_1m_small.yaml
+
+strategy: bollinger_bandit_short
+
+params:
+  bollinger_lengths: 50
+  offset: 1.25
+  roc_calc_length: 30
+  liq_length: 50
+  liq_floor: 10
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own Bollinger / ROC / exit-MA history from the live
+  # stream.
+  warmup_bars: 0
+  live_bars: 200
+
+output:
+  print_table: false
+  record_signals: false
