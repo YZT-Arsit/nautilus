@@ -377,4 +377,24 @@ charts.addEventListener("touchend",leave);
 </script></body></html>"""
 
 
-__all__ = ["render_interactive"]
+def render_strategy_charts(strategy_dir: str | Path) -> dict:
+    """One call to build every artifact for a strategy from its saved PnL data.
+
+    Per-run PNG panels (equity/drawdown/pnl/position) for each of ``nofee`` /
+    ``fee_5bps``, a fee-vs-nofee overlay PNG, and the interactive HTML. Intended as
+    the pipeline hook a batch/backtest driver calls once both fee scenarios are
+    written, e.g. ``from results import render_strategy_charts``.
+    """
+    from results.charts import render_fee_compare, render_run_charts  # noqa: PLC0415
+
+    strategy_dir = Path(strategy_dir)
+    out: dict = {}
+    for sub in ("nofee", "fee_5bps"):
+        if (strategy_dir / sub / "equity_curve.csv").is_file():
+            out[sub] = render_run_charts(strategy_dir / sub)
+    out["fee_compare"] = render_fee_compare(strategy_dir)
+    out["interactive"] = render_interactive(strategy_dir)
+    return out
+
+
+__all__ = ["render_interactive", "render_strategy_charts"]
