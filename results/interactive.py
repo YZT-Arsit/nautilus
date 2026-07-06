@@ -18,7 +18,7 @@ import csv
 import json
 from pathlib import Path
 
-from results.charts import _load_series, _pick
+from results.charts import _equity_path, _load_series, _pick
 
 _EQ_TARGET = 1500      # equity points to plot
 _TRADE_CAP = 12000     # max trades embedded (stride-sampled beyond this)
@@ -39,10 +39,10 @@ def _to_secs(v: float) -> int:
 
 
 def _scenario(run_dir: Path) -> dict | None:
-    csv_path = run_dir / "equity_curve.csv"
-    if not csv_path.is_file():
+    eq_path = _equity_path(run_dir)
+    if eq_path is None:
         return None
-    s = _load_series(csv_path)
+    s = _load_series(eq_path)
     n = len(s["t"])
     if not n:
         return None
@@ -390,7 +390,7 @@ def render_strategy_charts(strategy_dir: str | Path) -> dict:
     strategy_dir = Path(strategy_dir)
     out: dict = {}
     for sub in ("nofee", "fee_5bps"):
-        if (strategy_dir / sub / "equity_curve.csv").is_file():
+        if _equity_path(strategy_dir / sub) is not None:
             out[sub] = render_run_charts(strategy_dir / sub)
     out["fee_compare"] = render_fee_compare(strategy_dir)
     out["interactive"] = render_interactive(strategy_dir)

@@ -49,9 +49,46 @@ def _num(value, default: float = 0.0) -> float:
         return default
 
 
-def _load_series(equity_csv: Path) -> dict[str, list[float]]:
-    """Read equity_curve.csv into column->list[float] for the columns we plot."""
-    with open(equity_csv, newline="", encoding="utf-8") as fh:
+def _equity_path(run_dir: Path) -> Path | None:
+    """Locate a run's equity series, parquet preferred over csv (hybrid storage)."""
+    for name in ("equity_curve.parquet", "equity_curve.csv"):
+        p = run_dir / name
+        if p.is_file():
+            return p
+    return None
+
+
+def _read_parquet(path: Path) -> tuple[list[str], dict[str, list]]:
+    """Return (column_names, {col: values}); polars preferred, pyarrow fallback."""
+    try:
+        import polars as pl  # noqa: PLC0415
+
+        df = pl.read_parquet(path)
+        return df.columns, {c: df[c].to_list() for c in df.columns}
+    except Exception:
+        import pyarrow.parquet as pq  # noqa: PLC0415
+
+        tbl = pq.read_table(path)
+        return list(tbl.column_names), {c: tbl.column(c).to_pylist() for c in tbl.column_names}
+
+
+def _load_series(equity_path: Path) -> dict[str, list[float]]:
+    """Read an equity series (parquet or csv) into column->list[float] for plotting."""
+    if equity_path.suffix == ".parquet":
+        header, data = _read_parquet(equity_path)
+        tcol = _pick(header, _TIME_COLS)
+        ecol = _pick(header, _EQUITY_COLS)
+        pcol = _pick(header, _PNL_COLS)
+        poscol = _pick(header, _POS_COLS)
+        n = len(next(iter(data.values()))) if data else 0
+        get = lambda c: (data[c] if c in data else [None] * n)  # noqa: E731
+        return {
+            "t": [_num(v, i) for i, v in enumerate(get(tcol))],
+            "equity": [_num(v) for v in get(ecol)],
+            "pnl": [_num(v) for v in get(pcol)],
+            "position": [_num(v) for v in get(poscol)],
+        }
+    with open(equity_path, newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         header = reader.fieldnames or []
         tcol = _pick(header, _TIME_COLS)
@@ -128,14 +165,14 @@ def render_run_charts(run_dir: str | Path) -> dict[str, str]:
     missing or there is no ``equity_curve.csv`` to plot.
     """
     run_dir = Path(run_dir)
-    equity_csv = run_dir / "equity_curve.csv"
-    if not equity_csv.is_file():
+    equity_path = _equity_path(run_dir)
+    if equity_path is None:
         return {}
     plt = _plt()
     if plt is None:
         return {}
 
-    s = _load_series(equity_csv)
+    s = _load_series(equity_path)
     if not s["t"]:
         return {}
     metrics = _read_metrics(run_dir)
@@ -184,9 +221,9 @@ def render_fee_compare(strategy_dir: str | Path) -> str | None:
 
     curves = []
     for sub, label in (("nofee", "no fee"), ("fee_5bps", "fee 5bps")):
-        csv_path = strategy_dir / sub / "equity_curve.csv"
-        if csv_path.is_file():
-            s = _load_series(csv_path)
+        eq_path = _equity_path(strategy_dir / sub)
+        if eq_path is not None:
+            s = _load_series(eq_path)
             if s["t"]:
                 curves.append((label, s, _read_metrics(strategy_dir / sub)))
     if not curves:

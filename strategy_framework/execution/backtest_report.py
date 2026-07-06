@@ -190,6 +190,45 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> No
             writer.writerow(row)
 
 
+def _write_series(out: Path, stem: str, rows: list[dict[str, Any]], columns: list[str]) -> str:
+    """Persist a large per-bar series (``equity_curve``/``signals``).
+
+    Hybrid storage: these two streams have one row per bar (~1M rows over 2 years),
+    are never eyeballed row-by-row, and dominate on-disk size — so we store them as
+    parquet (≈1/8 the size, faster to load for downstream analysis). The small,
+    human-facing streams (trades/fills/intents/positions + metrics/report/config)
+    stay CSV so they can be opened directly on the server.
+
+    Falls back to CSV when polars is unavailable (e.g. local dev without polars) so
+    nothing breaks. Returns the basename actually written (``<stem>.parquet`` or
+    ``<stem>.csv``) — readers try parquet first, then csv.
+    """
+    path = out / f"{stem}.parquet"
+    try:  # preferred: polars (server-canonical)
+        import polars as pl  # noqa: PLC0415
+
+        if rows:
+            frame = pl.DataFrame(rows)
+            keep = [c for c in columns if c in frame.columns]
+            frame.select(keep).write_parquet(path)
+        else:
+            pl.DataFrame({c: [] for c in columns}).write_parquet(path)
+        return f"{stem}.parquet"
+    except Exception:
+        pass
+    try:  # fallback: pyarrow (present without polars too)
+        import pyarrow as pa  # noqa: PLC0415
+        import pyarrow.parquet as pq  # noqa: PLC0415
+
+        table = pa.table({c: [r.get(c) for r in rows] for c in columns})
+        pq.write_table(table, path)
+        return f"{stem}.parquet"
+    except Exception:
+        pass
+    _write_csv(out / f"{stem}.csv", rows, columns)  # last resort: csv
+    return f"{stem}.csv"
+
+
 def _dump_config(path_base: Path, config: dict[str, Any] | None) -> tuple[str, str]:
     """Write the resolved config as YAML when possible, else JSON. Returns (key, path)."""
     if config is None:
@@ -359,8 +398,8 @@ def write_backtest_report(
 
     signal_cols = ["event_time_ns", "event_time", "instrument_id", "signal", "close", *feature_names]
     signal_rows = [{**s, "event_time": _ns_to_iso(s.get("event_time_ns"))} for s in signals]
-    _write_csv(out / "signals.csv", signal_rows, signal_cols)
-    files["signals"] = str(out / "signals.csv")
+    signals_name = _write_series(out, "signals", signal_rows, signal_cols)
+    files["signals"] = str(out / signals_name)
 
     intent_rows = [{**i, "event_time": _ns_to_iso(i.get("event_time_ns"))} for i in intents]
     _write_csv(
@@ -418,13 +457,12 @@ def write_backtest_report(
     )
     files["positions"] = str(out / "positions.csv")
 
-    _write_csv(
-        out / "equity_curve.csv",
-        equity_rows,
+    equity_name = _write_series(
+        out, "equity_curve", equity_rows,
         ["event_time_ns", "event_time", "instrument_id", "close", "cash", "position",
          "realized_pnl", "unrealized_pnl", "equity"],
     )
-    files["equity_curve"] = str(out / "equity_curve.csv")
+    files["equity_curve"] = str(out / equity_name)
 
     metrics_path = out / "metrics.json"
     metrics_path.write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8")
