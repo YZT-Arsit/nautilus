@@ -219,8 +219,10 @@ def build_boundary_rows(code_rows: list[dict]) -> list[dict]:
             except Exception:
                 continue
             for node in ast.walk(tree):
+                # Public strategy-facing surfaces of feature_engine (facades).
+                _public = ("feature_engine.api", "feature_engine.indicators")
                 if isinstance(node, ast.ImportFrom) and node.module and \
-                        node.module.startswith("feature_engine.") and node.module != "feature_engine.api":
+                        node.module.startswith("feature_engine.") and node.module not in _public:
                     roots_ok = False
             if not roots_ok:
                 deep.append(r["path"])

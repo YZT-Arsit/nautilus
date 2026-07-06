@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.trading_range_breakout_long.config import TradingRangeBreakoutLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -78,10 +80,7 @@ class TradingRangeBreakoutLongEngine:
             range_h = range_l = trange = no_trades = None
 
         # 2. True range + ATR(atr_len) and ATRMA(range_len).
-        if self._tr_prev_close is None:
-            tr = high - low
-        else:
-            tr = max(high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close))
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         atr = (sum(list(self._trs)[-cfg.atr_len:]) / cfg.atr_len

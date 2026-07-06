@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.going_in_style_short.config import GoingInStyleShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -71,9 +73,7 @@ class GoingInStyleShortEngine:
         self.current_bar += 1
 
         # 1. True range, ATR(Length) and StopATR = Average(TrueRange, 3).
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         # Lowest(Low[1], Length) — prior lows before this bar.
         lowest_prior = min(self._lows) if self._lows else None
         condition2 = lowest_prior is not None and low < lowest_prior

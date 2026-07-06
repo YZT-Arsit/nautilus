@@ -1,7 +1,9 @@
 """Open/Close Histogram short — pure decision engine (position-aware, offline).
 
-Holds **only** the signal-decision maths (plain-Python; no ``feature_engine`` /
-``strategy_framework`` / ``nautilus_trader`` / ``pandas``). Emits
+Holds **only** the signal-decision maths (plain-Python; no ``strategy_framework``
+/ ``nautilus_trader`` / ``pandas``). The low-level indicator primitives (EMA and
+true range) come from the shared ``feature_engine.indicators`` library rather than
+being re-implemented inline. Emits
 ``BUY``/``SELL``/``HOLD`` with the signal->order meaning left to
 ``SignalToOrderPolicy`` (``sell_means: short`` — SELL opens the short, BUY covers
 it). Single unit, no pyramiding.
@@ -34,24 +36,11 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import Ema, true_range
+
 from strategies.open_close_histogram_short.config import OpenCloseHistogramShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
-
-
-class _Ema:
-    """Standard EMA (XAverage): seed with the first value, alpha = 2/(period+1)."""
-
-    def __init__(self, period: int) -> None:
-        self._alpha = 2.0 / (period + 1.0)
-        self.value: float | None = None
-
-    def update(self, x: float) -> float:
-        if self.value is None:
-            self.value = x
-        else:
-            self.value += self._alpha * (x - self.value)
-        return self.value
 
 
 class OpenCloseHistogramShortEngine:
@@ -59,8 +48,8 @@ class OpenCloseHistogramShortEngine:
 
     def __init__(self, config: OpenCloseHistogramShortConfig) -> None:
         self.cfg = config
-        self._ema_close = _Ema(config.close_len)
-        self._ema_open = _Ema(config.open_len)
+        self._ema_close = Ema(config.close_len)
+        self._ema_open = Ema(config.open_len)
         self._trs: deque[float] = deque(maxlen=config.atr_len)
         self._tr_prev_close: float | None = None
 
@@ -89,9 +78,7 @@ class OpenCloseHistogramShortEngine:
         con2 = self._prev_hist is not None and self._prev_hist >= 0 and hist < 0
 
         # 2. ATR (simple mean of true range).
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         atr10 = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_len else None

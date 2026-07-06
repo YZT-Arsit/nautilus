@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.keltner_channel_short.config import KeltnerChannelShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -73,9 +75,7 @@ class KeltnerChannelShortEngine:
         # 1. Channel: SMA(close) +/- Constt * ATR(length).
         self._closes.append(close)
         avgval = sum(self._closes) / len(self._closes) if len(self._closes) == cfg.length else None
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         avgrange = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.length else None

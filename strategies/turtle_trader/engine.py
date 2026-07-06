@@ -35,6 +35,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.turtle_trader.config import TurtleTraderConfig
 from strategy_framework.execution.intents import TradeAction
 
@@ -75,12 +77,6 @@ class TurtleTraderEngine:
         self.pre_breakout_failure = False          # PreBreakoutFailure (LPT filter)
 
     # -- indicators ----------------------------------------------------------
-
-    def _true_range(self, high: float, low: float) -> float:
-        if self._prev_close is None:
-            return high - low
-        pc = self._prev_close
-        return max(high - low, abs(high - pc), abs(low - pc))
 
     def _update_atr(self, true_range: float) -> None:
         if self._atr is None:
@@ -130,7 +126,7 @@ class TurtleTraderEngine:
 
         # 2. N = previous bar's ATR; then fold this bar's TR into the EMA.
         n = self._atr
-        self._update_atr(self._true_range(high, low))
+        self._update_atr(true_range(high, low, self._prev_close))
         self.current_bar += 1
 
         # 3. Risk-based unit size for this bar.

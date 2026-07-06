@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.jailbreak_short.config import JailBreakShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -75,9 +77,7 @@ class JailBreakShortEngine:
         lowerband = min(self._entry_lows)
         exitshort = max(self._exit_highs)
 
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_val else None

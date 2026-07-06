@@ -31,21 +31,13 @@ on the entry bar and only starts shrinking the next bar); the exit is gated by
 """
 from __future__ import annotations
 
-import math
 from collections import deque
+
+from feature_engine.indicators import rolling_std
 
 from strategies.bollinger_bandit_short.config import BollingerBanditShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
-
-
-def _std(vals: list[float], ddof: int) -> float:
-    n = len(vals)
-    if n - ddof <= 0:
-        return 0.0
-    mean = sum(vals) / n
-    var = sum((x - mean) ** 2 for x in vals) / (n - ddof)
-    return math.sqrt(var)
 
 
 class BollingerBanditShortEngine:
@@ -86,7 +78,7 @@ class BollingerBanditShortEngine:
 
         # 1. Bollinger lower band.
         midline = self._sma(cfg.bollinger_lengths)
-        band = _std(list(self._closes)[-cfg.bollinger_lengths:], ddof=1) if len(self._closes) >= cfg.bollinger_lengths else None
+        band = rolling_std(list(self._closes)[-cfg.bollinger_lengths:], ddof=1) if len(self._closes) >= cfg.bollinger_lengths else None
         dnband = midline - cfg.offset * band if midline is not None and band is not None else None
 
         # 2. Momentum filter rocCalc = Close - Close[rocCalcLength - 1].

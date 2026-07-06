@@ -37,6 +37,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.in_the_zone_short.config import InTheZoneShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -88,9 +90,7 @@ class InTheZoneShortEngine:
         prev_low = self._recent_lows[-1] if self._recent_lows else None
 
         # ATR (simple mean of true range).
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None

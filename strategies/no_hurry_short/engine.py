@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
 from strategies.no_hurry_short.config import NoHurryShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -85,9 +86,7 @@ class NoHurryShortEngine:
         shifted_lower = self._lower_hist[0] if full else None
 
         # 2. ATR (simple mean of true range) * TrailingATRs.
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None

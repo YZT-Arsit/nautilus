@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.trend_breakout_atr.config import TrendBreakoutAtrConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -49,21 +51,13 @@ class TrendBreakoutAtrEngine:
         self._closes: deque[float] = deque(maxlen=config.trend_len)
         self._trs: deque[float] = deque(maxlen=config.atr_len)
 
-    # -- indicators ----------------------------------------------------------
-
-    def _true_range(self, high: float, low: float) -> float:
-        if self._prev_close is None:
-            return high - low
-        pc = self._prev_close
-        return max(high - low, abs(high - pc), abs(low - pc))
-
     def update(self, close: float, high: float, low: float) -> tuple[str, str]:
         cfg = self.cfg
         # 1. breakout reference from PRIOR bars only (computed before append).
         prev_upper = max(self._highs) if len(self._highs) == cfg.breakout_len else None
         prev_lower = min(self._lows) if len(self._lows) == cfg.breakout_len else None
         # 2. ATR over completed bars (includes the current, never the future).
-        tr = self._true_range(high, low)
+        tr = true_range(high, low, self._prev_close)
         self._trs.append(tr)
         atr = (sum(self._trs) / len(self._trs)) if len(self._trs) == cfg.atr_len else None
         # 3. trend MA over closes including the current (a filter on the acted price).

@@ -30,21 +30,13 @@ the SMA value ``Disp`` bars ago combined with the **current** standard deviation
 """
 from __future__ import annotations
 
-import math
 from collections import deque
+
+from feature_engine.indicators import rolling_std
 
 from strategies.displaced_boll_long.config import DisplacedBollLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
-
-
-def _std(vals: list[float], ddof: int) -> float:
-    n = len(vals)
-    if n - ddof <= 0:
-        return 0.0
-    mean = sum(vals) / n
-    var = sum((x - mean) ** 2 for x in vals) / (n - ddof)
-    return math.sqrt(var)
 
 
 class DisplacedBollLongEngine:
@@ -81,7 +73,7 @@ class DisplacedBollLongEngine:
             if len(self._ma_hist) == cfg.disp + 1 and self._ma_hist[0] is not None
             else None
         )
-        sd = _std(list(self._closes)[-cfg.sd_len:], ddof=1) if len(self._closes) >= cfg.sd_len else None
+        sd = rolling_std(list(self._closes)[-cfg.sd_len:], ddof=1) if len(self._closes) >= cfg.sd_len else None
         sdmult = sd * cfg.sdev if sd is not None else None
         if avg_disp is not None and sdmult is not None:
             disptop = avg_disp + sdmult

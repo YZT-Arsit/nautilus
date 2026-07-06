@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.going_in_style_long.config import GoingInStyleLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -72,9 +74,7 @@ class GoingInStyleLongEngine:
         self.current_bar += 1
 
         # 1. True range, ATR(Length) and StopATR = Average(TrueRange, 3).
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         # Highest(High[1], Length) — prior highs before this bar.
         highest_prior = max(self._highs) if self._highs else None
         condition1 = highest_prior is not None and high > highest_prior

@@ -1,7 +1,9 @@
 """First-PullBack long — pure decision engine (position-aware, offline).
 
-Holds **only** the signal-decision maths (plain-Python; no ``feature_engine`` /
-``strategy_framework`` / ``nautilus_trader`` / ``pandas``). Emits
+Holds **only** the signal-decision maths (plain-Python; no ``strategy_framework``
+/ ``nautilus_trader`` / ``pandas``). The low-level indicator primitives (EMA and
+true range) come from the shared ``feature_engine.indicators`` library rather than
+being re-implemented inline. Emits
 ``BUY``/``SELL``/``HOLD`` with the signal->order meaning left to
 ``SignalToOrderPolicy`` (``sell_means: flat`` — BUY opens the long, SELL flattens
 it). Single unit, no pyramiding.
@@ -41,24 +43,11 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import Ema, true_range
+
 from strategies.first_pullback_long.config import FirstPullbackLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
-
-
-class _Ema:
-    """Standard EMA (XAverage): seed with the first value, alpha = 2/(period+1)."""
-
-    def __init__(self, period: int) -> None:
-        self._alpha = 2.0 / (period + 1.0)
-        self.value: float | None = None
-
-    def update(self, x: float) -> float:
-        if self.value is None:
-            self.value = x
-        else:
-            self.value += self._alpha * (x - self.value)
-        return self.value
 
 
 class FirstPullbackLongEngine:
@@ -66,9 +55,9 @@ class FirstPullbackLongEngine:
 
     def __init__(self, config: FirstPullbackLongConfig) -> None:
         self.cfg = config
-        self._ema_fast = _Ema(config.fast_ma)
-        self._ema_slow = _Ema(config.slow_ma)
-        self._ema_signal = _Ema(config.avg_ma)
+        self._ema_fast = Ema(config.fast_ma)
+        self._ema_slow = Ema(config.slow_ma)
+        self._ema_signal = Ema(config.avg_ma)
         self._trs: deque[float] = deque(maxlen=config.atr_len)
         self._tr_prev_close: float | None = None
 
@@ -103,9 +92,7 @@ class FirstPullbackLongEngine:
         signal_line = self._ema_signal.update(macd)
 
         # 2. ATR (simple mean of true range).
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_len else None

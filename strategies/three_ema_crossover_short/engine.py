@@ -1,7 +1,8 @@
 """Three EMA Crossover short — pure decision engine (position-aware, offline).
 
-Holds **only** the signal-decision maths (plain-Python; no ``feature_engine`` /
-``strategy_framework`` / ``nautilus_trader`` / ``pandas``). Emits
+Holds **only** the signal-decision maths (plain-Python; no ``strategy_framework``
+/ ``nautilus_trader`` / ``pandas``). The EMA primitive comes from the shared
+``feature_engine.indicators`` library rather than being re-implemented inline. Emits
 ``BUY``/``SELL``/``HOLD`` with the signal->order meaning left to
 ``SignalToOrderPolicy`` (``sell_means: short`` — SELL opens the short, BUY covers
 it). Single unit, no pyramiding.
@@ -37,24 +38,11 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import Ema
+
 from strategies.three_ema_crossover_short.config import ThreeEmaCrossoverShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
-
-
-class _Ema:
-    """Standard EMA (XAverage): seed with the first value, alpha = 2/(period+1)."""
-
-    def __init__(self, period: int) -> None:
-        self._alpha = 2.0 / (period + 1.0)
-        self.value: float | None = None
-
-    def update(self, x: float) -> float | None:
-        if self.value is None:
-            self.value = x
-        else:
-            self.value += self._alpha * (x - self.value)
-        return self.value
 
 
 class ThreeEmaCrossoverShortEngine:
@@ -62,9 +50,9 @@ class ThreeEmaCrossoverShortEngine:
 
     def __init__(self, config: ThreeEmaCrossoverShortConfig) -> None:
         self.cfg = config
-        self._ema1 = _Ema(config.avg_len1)
-        self._ema2 = _Ema(config.avg_len2)
-        self._ema3 = _Ema(config.avg_len3)
+        self._ema1 = Ema(config.avg_len1)
+        self._ema2 = Ema(config.avg_len2)
+        self._ema3 = Ema(config.avg_len3)
         self._ranges: deque[float] = deque(maxlen=config.r_length)  # MyRange = High-Low
 
         self.current_bar = 0

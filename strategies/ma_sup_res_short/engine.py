@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
 from strategies.ma_sup_res_short.config import MaSupResShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -99,9 +100,7 @@ class MaSupResShortEngine:
         # 1. MA (AverageFC) and ATR (simple mean of true range).
         self._closes.append(close)
         ma = sum(self._closes) / len(self._closes) if len(self._closes) == cfg.ma_length else None
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None

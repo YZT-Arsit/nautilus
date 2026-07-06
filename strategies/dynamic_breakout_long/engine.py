@@ -1,7 +1,9 @@
 """Dynamic Breakout II long — pure decision engine (position-aware, offline).
 
-Holds **only** the signal-decision maths (plain-Python; no ``feature_engine`` /
-``strategy_framework`` / ``nautilus_trader`` / ``pandas``). Emits
+Holds **only** the signal-decision maths (plain-Python; no ``strategy_framework`` /
+``nautilus_trader`` / ``pandas``). The window/std/Donchian primitives come from the
+shared ``feature_engine.indicators`` library (``sma``, ``rolling_std``, ``highest``,
+``lowest``, ``round_half_up``) rather than inline copies. Emits
 ``BUY``/``SELL``/``HOLD`` with the signal->order meaning left to
 ``SignalToOrderPolicy`` (``sell_means: flat`` — BUY opens the long, SELL flattens
 it). Single unit, no pyramiding.
@@ -44,8 +46,9 @@ preempts it.
 """
 from __future__ import annotations
 
-import math
 from collections import deque
+
+from feature_engine.indicators import highest, lowest, rolling_std, round_half_up, sma
 
 from strategies.dynamic_breakout_long.config import DynamicBreakoutLongConfig
 
@@ -53,15 +56,6 @@ BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
 
 _VOL_LEN = 30            # StandardDev(Close, 30) window (TB hard-codes 30).
 _INITIAL_LOOKBACK = 20   # lookBackDays starts at 20 (TB init).
-
-
-def _std(vals: list[float], ddof: int) -> float:
-    n = len(vals)
-    if n - ddof <= 0:
-        return 0.0
-    mean = sum(vals) / n
-    var = sum((x - mean) ** 2 for x in vals) / (n - ddof)
-    return math.sqrt(var)
 
 
 class DynamicBreakoutLongEngine:
@@ -98,7 +92,7 @@ class DynamicBreakoutLongEngine:
 
         # 1. 30-bar volatility and its change -> adaptive lookback (carried forward).
         today_vol = (
-            _std(list(self._closes)[-_VOL_LEN:], ddof=0)
+            rolling_std(list(self._closes)[-_VOL_LEN:], ddof=0)
             if len(self._closes) >= _VOL_LEN else None
         )
         yester_vol = self._prev_today_vol
@@ -107,7 +101,7 @@ class DynamicBreakoutLongEngine:
         else:
             delta = (today_vol - yester_vol) / today_vol
         look = self.look_back_days * (1.0 + delta)
-        look = math.floor(look + 0.5)                 # Round(x, 0), half-up
+        look = round_half_up(look)                    # Round(x, 0), half-up
         look = min(look, cfg.ceiling_amt)
         look = max(look, cfg.floor_amt)
         self.look_back_days = float(look)
@@ -117,12 +111,12 @@ class DynamicBreakoutLongEngine:
             cl = list(self._closes)[-look:]
             hi = list(self._highs)[-look:]
             lo = list(self._lows)[-look:]
-            midline = sum(cl) / look
-            band = _std(cl, ddof=1)
+            midline = sma(cl)
+            band = rolling_std(cl, ddof=1)
             upband = midline + cfg.bol_band_trig * band
             dnband = midline - cfg.bol_band_trig * band
-            buypoint = max(hi)
-            sellpoint = min(lo)
+            buypoint = highest(hi)
+            sellpoint = lowest(lo)
             liqpoint = midline
         else:
             midline = band = upband = dnband = buypoint = sellpoint = liqpoint = None

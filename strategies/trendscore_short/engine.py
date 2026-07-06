@@ -38,6 +38,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
+
 from strategies.trendscore_short.config import TrendScoreShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -79,12 +81,6 @@ class TrendScoreShortEngine:
 
     # -- indicators ----------------------------------------------------------
 
-    def _true_range(self, high: float, low: float) -> float:
-        if self._prev_close is None:
-            return high - low
-        pc = self._prev_close
-        return max(high - low, abs(high - pc), abs(low - pc))
-
     def _trend_score(self, close: float) -> float:
         """+1/-1 for the current close vs each prior close in the buffer."""
         priors = list(self._closes)  # up to look_back prior closes (current not yet appended)
@@ -100,7 +96,7 @@ class TrendScoreShortEngine:
         self._closes.append(close)
         self._ma_closes.append(close)
         self._scores.append(score)
-        self._trs.append(self._true_range(high, low))
+        self._trs.append(true_range(high, low, self._prev_close))
         self._prev_close = close
 
         ma = sum(self._ma_closes) / len(self._ma_closes) if len(self._ma_closes) == cfg.ma_length else None

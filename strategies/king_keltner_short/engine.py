@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import true_range
 from strategies.king_keltner_short.config import KingKeltnerShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -65,9 +66,7 @@ class KingKeltnerShortEngine:
         self._typicals.append(typical)
         mav = sum(self._typicals) / len(self._typicals) if len(self._typicals) == cfg.avg_length else None
 
-        tr = high - low if self._tr_prev_close is None else max(
-            high - low, abs(high - self._tr_prev_close), abs(low - self._tr_prev_close)
-        )
+        tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
         atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None
