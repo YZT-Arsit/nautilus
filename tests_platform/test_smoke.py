@@ -69,6 +69,8 @@ def test_registry_has_expected_strategies():
         "bollinger_bandit_long",
         "avg_channel_range_leader_short",
         "avg_channel_range_leader_long",
+        "adx_ma_channel_short",
+        "adx_ma_channel_long",
     }
 
 
@@ -341,3 +343,11 @@ def test_avg_channel_range_leader_short_synthetic_runs():
 
 def test_avg_channel_range_leader_long_synthetic_runs():
     assert run_config(_synthetic_cfg("avg_channel_range_leader_long")) == []
+
+
+def test_adx_ma_channel_short_synthetic_runs():
+    assert run_config(_synthetic_cfg("adx_ma_channel_short")) == []
+
+
+def test_adx_ma_channel_long_synthetic_runs():
+    assert run_config(_synthetic_cfg("adx_ma_channel_long")) == []

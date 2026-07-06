@@ -6,6 +6,8 @@ import its ``PLUGIN`` and add one entry below. There is no auto-discovery.
 """
 from __future__ import annotations
 
+from strategies.adx_ma_channel_long import PLUGIN as ADX_MA_CHANNEL_LONG_PLUGIN
+from strategies.adx_ma_channel_short import PLUGIN as ADX_MA_CHANNEL_SHORT_PLUGIN
 from strategies.avg_channel_range_leader_long import PLUGIN as AVG_CHANNEL_RANGE_LEADER_LONG_PLUGIN
 from strategies.avg_channel_range_leader_short import PLUGIN as AVG_CHANNEL_RANGE_LEADER_SHORT_PLUGIN
 from strategies.bollinger_bandit_long import PLUGIN as BOLLINGER_BANDIT_LONG_PLUGIN
@@ -137,6 +139,8 @@ STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
     BOLLINGER_BANDIT_LONG_PLUGIN.name: BOLLINGER_BANDIT_LONG_PLUGIN,
     AVG_CHANNEL_RANGE_LEADER_SHORT_PLUGIN.name: AVG_CHANNEL_RANGE_LEADER_SHORT_PLUGIN,
     AVG_CHANNEL_RANGE_LEADER_LONG_PLUGIN.name: AVG_CHANNEL_RANGE_LEADER_LONG_PLUGIN,
+    ADX_MA_CHANNEL_SHORT_PLUGIN.name: ADX_MA_CHANNEL_SHORT_PLUGIN,
+    ADX_MA_CHANNEL_LONG_PLUGIN.name: ADX_MA_CHANNEL_LONG_PLUGIN,
 }
 
 

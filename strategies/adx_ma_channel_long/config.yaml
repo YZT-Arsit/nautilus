@@ -1,0 +1,34 @@
+# ADX + MA-channel long — default (synthetic, no-network) run config.
+#
+#   python run_strategy.py --strategy adx_ma_channel_long
+#   python run_strategy.py --config strategies/adx_ma_channel_long/config.yaml
+#
+# Long-only Wilder-ADX + EMA high/low channel breakout: signals are BUY/SELL/HOLD
+# and the signal->order meaning is `sell_means: flat` (BUY opens the long, SELL
+# flattens it).
+#
+# NOTE: the TradeBlazer source gates entry/exit on Vol > 0, and the synthetic bar
+# source emits volume 0, so this config exercises the data -> features -> signals
+# pipeline but produces no fills. For a REAL backtest with fills/PnL use
+#   configs/backtests/adx_ma_channel_long_btcusdt_1m_small.yaml
+
+strategy: adx_ma_channel_long
+
+params:
+  dmi_n: 14
+  dmi_m: 30
+  avg_len: 30
+  entry_bar: 2
+  tick: 0.01
+  instrument_id: BTCUSDT.BINANCE
+
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT.BINANCE
+  # The engine builds its own ADX / EMA-channel history from the live stream.
+  warmup_bars: 0
+  live_bars: 160
+
+output:
+  print_table: false
+  record_signals: false
