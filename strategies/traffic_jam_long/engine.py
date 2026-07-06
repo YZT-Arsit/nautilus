@@ -28,75 +28,18 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import WilderDMI
+
 from strategies.traffic_jam_long.config import TrafficJamLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
 
 
-class _DmiAdx:
-    """Wilder DMI / ADX (``SF = 1/n``); returns the current ADX or None while warming.
-
-    Copied verbatim from ``strategies/traffic_jam_short/engine.py`` so the long
-    package is self-contained. Standard Wilder seeding (SMA of first ``n``, then
-    ``avg += SF*(x - avg)``); converges to the TradeBlazer DMI ADX in steady state.
-    """
-
-    def __init__(self, n: int) -> None:
-        self.n = n
-        self.sf = 1.0 / n
-        self._ph: float | None = None
-        self._pl: float | None = None
-        self._pc: float | None = None
-        self._pdm: list[float] = []
-        self._mdm: list[float] = []
-        self._tr: list[float] = []
-        self.avg_pdm: float | None = None
-        self.avg_mdm: float | None = None
-        self.svolty: float | None = None
-        self._dx: list[float] = []
-        self.adx: float | None = None
-
-    def update(self, high: float, low: float, close: float) -> float | None:
-        if self._pc is None:
-            self._ph, self._pl, self._pc = high, low, close
-            return None
-
-        tr = max(high - low, abs(high - self._pc), abs(low - self._pc))
-        up_move = high - self._ph
-        down_move = self._pl - low
-        plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0
-        minus_dm = down_move if (down_move > up_move and down_move > 0) else 0.0
-        self._ph, self._pl, self._pc = high, low, close
-
-        if self.avg_pdm is None:
-            self._pdm.append(plus_dm)
-            self._mdm.append(minus_dm)
-            self._tr.append(tr)
-            if len(self._tr) < self.n:
-                return None
-            self.avg_pdm = sum(self._pdm) / self.n
-            self.avg_mdm = sum(self._mdm) / self.n
-            self.svolty = sum(self._tr) / self.n
-        else:
-            self.avg_pdm += self.sf * (plus_dm - self.avg_pdm)
-            self.avg_mdm += self.sf * (minus_dm - self.avg_mdm)
-            self.svolty += self.sf * (tr - self.svolty)
-
-        if self.svolty > 0:
-            plus_di = 100.0 * self.avg_pdm / self.svolty
-            minus_di = 100.0 * self.avg_mdm / self.svolty
-        else:
-            plus_di = minus_di = 0.0
-        divisor = plus_di + minus_di
-        dx = 100.0 * abs(plus_di - minus_di) / divisor if divisor > 0 else 0.0
-
-        if self.adx is None:
-            self._dx.append(dx)
-            if len(self._dx) == self.n:
-                self.adx = sum(self._dx) / self.n
-        else:
-            self.adx += self.sf * (dx - self.adx)
-        return self.adx
+# ``_DmiAdx`` now lives in the shared library as ``WilderDMI`` (textbook Wilder
+# seeding, distinct from ``WilderADX``). The module-level alias keeps the focused
+# unit test's ``from ...engine import _DmiAdx`` working while removing the
+# duplicated class body; the maths are byte-identical.
+_DmiAdx = WilderDMI
 
 
 class TrafficJamLongEngine:
@@ -104,7 +47,7 @@ class TrafficJamLongEngine:
 
     def __init__(self, config: TrafficJamLongConfig) -> None:
         self.cfg = config
-        self._dmi = _DmiAdx(config.dmi_n)
+        self._dmi = WilderDMI(config.dmi_n)
 
         # protective-stop ATR (simple mean of true range)
         self._trs: deque[float] = deque(maxlen=config.atr_length)
