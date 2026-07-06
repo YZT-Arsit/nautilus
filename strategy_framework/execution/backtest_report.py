@@ -437,6 +437,14 @@ def write_backtest_report(
     report_path.write_text(_render_report_md(metrics, trades, final_positions), encoding="utf-8")
     files["report"] = str(report_path)
 
+    # Persist PnL charts alongside the row's data (equity / drawdown / pnl / position
+    # PNGs under ``<run>/charts/``). Best-effort: matplotlib is optional — if it is
+    # not installed ``render_run_charts`` returns ``{}`` and the run still succeeds.
+    from results.charts import render_run_charts  # noqa: PLC0415
+
+    for name, rel in render_run_charts(out).items():
+        files[f"chart_{name}"] = str(out / rel)
+
     return BacktestResult(
         run_name=run_name,
         output_dir=out,

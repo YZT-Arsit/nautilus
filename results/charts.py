@@ -1,13 +1,28 @@
 """Self-built chart rendering from a backtest run's ``equity_curve.csv``.
 
 Pure stdlib to read; matplotlib is **optional** and imported lazily — if it is
-absent, ``render_run_charts`` returns ``{}`` (never fabricates a chart, never
-crashes a run). Produces PNGs under ``<run_dir>/charts/`` so results can be
+absent, the render functions return ``{}`` / ``None`` (never fabricate a chart,
+never crash a run). Produces PNGs under ``<dir>/charts/`` so results can be
 viewed locally after the (server-side) run is pulled back.
+
+Two entry points:
+
+* :func:`render_run_charts` — per-run panels (equity / drawdown / pnl / position)
+  for ONE run directory (a ``nofee`` or ``fee_5bps`` leaf).
+* :func:`render_fee_compare` — overlays the ``nofee`` vs ``fee_5bps`` equity curves
+  of ONE strategy directory on a single chart, so the fee drag is visible at a
+  glance (this is the headline comparison).
+
+Presentation: the x-axis is rendered as calendar dates (the stored ``ts_event`` is
+epoch-ns), titles carry the run/strategy + end return, axes are labelled, and long
+per-bar series (a 2-year 1m run is ~1.05M points) are down-sampled to keep the PNG
+crisp and small.
 """
 from __future__ import annotations
 
 import csv
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Candidate column names (defensive: the writer's schema may evolve).
@@ -16,12 +31,22 @@ _EQUITY_COLS = ("equity", "total_equity")
 _PNL_COLS = ("pnl", "net_pnl", "realized_pnl")
 _POS_COLS = ("position", "position_qty", "net_position")
 
+_MAX_POINTS = 2500          # down-sample target for plotting
+_NS_THRESHOLD = 10 ** 17    # values above this are treated as epoch-ns timestamps
+
 
 def _pick(header: list[str], candidates: tuple[str, ...]) -> str | None:
     for c in candidates:
         if c in header:
             return c
     return None
+
+
+def _num(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _load_series(equity_csv: Path) -> dict[str, list[float]]:
@@ -42,19 +67,58 @@ def _load_series(equity_csv: Path) -> dict[str, list[float]]:
     return cols
 
 
-def _num(value, default: float = 0.0) -> float:
+def _read_metrics(run_dir: Path) -> dict:
+    p = run_dir / "metrics.json"
+    if not p.is_file():
+        return {}
     try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+
+
+def _x_axis(t: list[float]):
+    """Return an x series for plotting: datetimes if ``t`` is epoch-ns, else raw."""
+    if t and max(t) > _NS_THRESHOLD:
+        return [datetime.fromtimestamp(v / 1e9, tz=timezone.utc) for v in t], True
+    return t, False
+
+
+def _downsample(xs: list, *series: list[float]):
+    """Evenly thin ``xs`` and each series to ~``_MAX_POINTS`` (keep first & last)."""
+    n = len(xs)
+    if n <= _MAX_POINTS:
+        return xs, list(series)
+    step = n // _MAX_POINTS
+    idx = list(range(0, n, step))
+    if idx[-1] != n - 1:
+        idx.append(n - 1)
+    return [xs[i] for i in idx], [[s[i] for i in idx] for s in series]
 
 
 def _drawdown(equity: list[float]) -> list[float]:
     dd, peak = [], float("-inf")
     for e in equity:
         peak = max(peak, e)
-        dd.append((e - peak) / peak if peak not in (0.0, float("-inf")) else 0.0)
+        dd.append((e - peak) / peak * 100.0 if peak not in (0.0, float("-inf")) else 0.0)
     return dd
+
+
+def _ret_label(metrics: dict) -> str:
+    r = metrics.get("total_return")
+    return f"  (ret {r:+.1%})" if isinstance(r, (int, float)) else ""
+
+
+def _plt():
+    """Lazy matplotlib (Agg); returns the pyplot module or ``None`` if absent."""
+    try:
+        import matplotlib  # noqa: PLC0415
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+    except ImportError:
+        return None
+    return plt
 
 
 def render_run_charts(run_dir: str | Path) -> dict[str, str]:
@@ -67,38 +131,88 @@ def render_run_charts(run_dir: str | Path) -> dict[str, str]:
     equity_csv = run_dir / "equity_curve.csv"
     if not equity_csv.is_file():
         return {}
-    try:
-        import matplotlib  # noqa: PLC0415
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt  # noqa: PLC0415
-    except ImportError:
+    plt = _plt()
+    if plt is None:
         return {}
 
     s = _load_series(equity_csv)
     if not s["t"]:
         return {}
+    metrics = _read_metrics(run_dir)
+    name_prefix = str(metrics.get("run_name", run_dir.name))
+    x, is_date = _x_axis(s["t"])
+    x, (equity, pnl, position, dd) = _downsample(
+        x, s["equity"], s["pnl"], s["position"], _drawdown(s["equity"])
+    )
+
     charts_dir = run_dir / "charts"
     charts_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {}
-
     panels = [
-        ("equity_curve", "Equity", s["equity"]),
-        ("drawdown", "Drawdown", _drawdown(s["equity"])),
-        ("pnl", "PnL", s["pnl"]),
-        ("position", "Position", s["position"]),
+        ("equity_curve", "Equity" + _ret_label(metrics), "Equity (USDT)", equity),
+        ("drawdown", "Drawdown", "Drawdown (%)", dd),
+        ("pnl", "PnL", "PnL (USDT)", pnl),
+        ("position", "Position", "Position (units)", position),
     ]
-    for name, title, series in panels:
-        fig, ax = plt.subplots(figsize=(9, 3.2))
-        ax.plot(s["t"], series, linewidth=0.9)
-        ax.set_title(title)
+    for fname, title, ylabel, series in panels:
+        fig, ax = plt.subplots(figsize=(11, 3.4))
+        ax.plot(x, series, linewidth=0.9)
+        ax.set_title(f"{name_prefix} — {title}")
+        ax.set_ylabel(ylabel)
         ax.grid(True, alpha=0.3)
+        if is_date:
+            fig.autofmt_xdate()
         fig.tight_layout()
-        png = charts_dir / f"{name}.png"
-        fig.savefig(png, dpi=110)
+        png = charts_dir / f"{fname}.png"
+        fig.savefig(png, dpi=120)
         plt.close(fig)
-        out[name] = str(png.relative_to(run_dir))
+        out[fname] = str(png.relative_to(run_dir))
     return out
 
 
-__all__ = ["render_run_charts"]
+def render_fee_compare(strategy_dir: str | Path) -> str | None:
+    """Overlay the ``nofee`` vs ``fee_5bps`` equity curves of one strategy.
+
+    Writes ``<strategy_dir>/charts/equity_fee_compare.png`` and returns its path
+    relative to ``strategy_dir`` (or ``None`` if matplotlib is missing or neither
+    scenario has an ``equity_curve.csv``).
+    """
+    strategy_dir = Path(strategy_dir)
+    plt = _plt()
+    if plt is None:
+        return None  # matplotlib missing
+
+    curves = []
+    for sub, label in (("nofee", "no fee"), ("fee_5bps", "fee 5bps")):
+        csv_path = strategy_dir / sub / "equity_curve.csv"
+        if csv_path.is_file():
+            s = _load_series(csv_path)
+            if s["t"]:
+                curves.append((label, s, _read_metrics(strategy_dir / sub)))
+    if not curves:
+        return None
+
+    fig, ax = plt.subplots(figsize=(11, 4.2))
+    is_date = False
+    for label, s, metrics in curves:
+        x, is_date = _x_axis(s["t"])
+        x, (equity,) = _downsample(x, s["equity"])
+        ax.plot(x, equity, linewidth=1.0, label=label + _ret_label(metrics))
+    ax.set_title(f"{strategy_dir.name} — equity: fee vs no-fee")
+    ax.set_ylabel("Equity (USDT)")
+    ax.axhline(100000.0, color="grey", linewidth=0.7, linestyle="--", alpha=0.6)
+    ax.legend(loc="best", fontsize=9)
+    ax.grid(True, alpha=0.3)
+    if is_date:
+        fig.autofmt_xdate()
+    fig.tight_layout()
+
+    charts_dir = strategy_dir / "charts"
+    charts_dir.mkdir(parents=True, exist_ok=True)
+    png = charts_dir / "equity_fee_compare.png"
+    fig.savefig(png, dpi=120)
+    plt.close(fig)
+    return str(png.relative_to(strategy_dir))
+
+
+__all__ = ["render_run_charts", "render_fee_compare"]
