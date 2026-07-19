@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import Ema, sma
 from strategies.ghost_trader_short.config import GhostTraderShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -54,8 +55,8 @@ class GhostTraderShortEngine:
         self._bar = -1                    # TradeBlazer CurrentBar (0-based)
 
         # running indicators
-        self._ema_fast: float | None = None
-        self._ema_slow: float | None = None
+        self._ema_fast = Ema(config.fast_length)
+        self._ema_slow = Ema(config.slow_length)
         self._net_chg_avg: float | None = None
         self._tot_chg_avg: float | None = None
 
@@ -85,13 +86,8 @@ class GhostTraderShortEngine:
         cb = self._bar
 
         # 1. EMAs (XAverage: alpha = 2/(n+1), seeded on the first bar).
-        if self._ema_fast is None:
-            self._ema_fast = close
-            self._ema_slow = close
-        else:
-            self._ema_fast += (2 / (cfg.fast_length + 1)) * (close - self._ema_fast)
-            self._ema_slow += (2 / (cfg.slow_length + 1)) * (close - self._ema_slow)
-        avg1, avg2 = self._ema_fast, self._ema_slow
+        avg1 = self._ema_fast.update(close)
+        avg2 = self._ema_slow.update(close)
 
         # 2. Wilder RSI (reformulated as 50*(NetChgAvg/TotChgAvg + 1)).
         self._closes.append(close)
@@ -102,7 +98,7 @@ class GhostTraderShortEngine:
         net = tot = None
         if cb == L:
             net = (close - self._closes[-(L + 1)]) / L
-            tot = sum(self._abs_diffs) / L if len(self._abs_diffs) == L else None
+            tot = sma(self._abs_diffs) if len(self._abs_diffs) == L else None
         elif cb > L and self._net_chg_avg is not None and self._tot_chg_avg is not None:
             sf = 1 / L
             net = self._net_chg_avg + sf * (change - self._net_chg_avg)

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import Ema, true_range
 
 from strategies.turtle_trader.config import TurtleTraderConfig
 from strategy_framework.execution.intents import TradeAction
@@ -64,7 +64,7 @@ class TurtleTraderEngine:
         # ATR (XAverage of TrueRange). ``_atr`` is the EMA value through the
         # previous bar; N = ``_atr`` (i.e. AvgTR[1]).
         self._atr: float | None = None
-        self._atr_alpha = 2.0 / (config.atr_length + 1.0)
+        self._atr_ema = Ema(config.atr_length)
 
         self.current_bar = 0
 
@@ -79,10 +79,7 @@ class TurtleTraderEngine:
     # -- indicators ----------------------------------------------------------
 
     def _update_atr(self, true_range: float) -> None:
-        if self._atr is None:
-            self._atr = true_range  # seed the EMA on the first true range
-        else:
-            self._atr += self._atr_alpha * (true_range - self._atr)
+        self._atr = self._atr_ema.update(true_range)
 
     @staticmethod
     def _highest(buf: deque[float], length: int) -> float | None:

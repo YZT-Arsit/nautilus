@@ -31,7 +31,8 @@ class ParquetStore:
 
     Parameters
     ----------
-    root : Root directory of the dataset (e.g. ``data/raw`` or ``data/features``).
+    root : Root directory of the dataset (``historical_data/market_data`` or
+        ``historical_data/feature_data``).
     partition_cols : Hive partition columns in path order. Must match the
         directory structure on disk.
     """

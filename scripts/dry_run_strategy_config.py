@@ -33,7 +33,9 @@ from scripts.run_bar_loader_smoke import (  # noqa: E402
     parse_date,
 )
 
-_REQUIRED_FILTER_KEYS = ("exchange", "venue_type", "symbol", "bar_type")
+_REQUIRED_FILTER_KEYS = (
+    "asset_class", "exchange", "venue_type", "symbol", "data_type", "freq",
+)
 
 
 def load_config(path: str | Path) -> dict:

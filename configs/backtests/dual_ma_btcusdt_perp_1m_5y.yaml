@@ -1,0 +1,60 @@
+run_name: audit_5y_batch/dual_ma_btcusdt_perp_1m_qty0p001
+strategy: dual_ma
+
+params:
+  fast_length: 5
+  slow_length: 20
+  contract_unit: 0.001
+  instrument_id: BTCUSDT-PERP.BINANCE
+  bar_type: 1m
+
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 20
+  timestamp_column: ts
+  timestamp_unit: ns
+  filters:
+    asset_class: crypto
+    exchange: BINANCE
+    venue_type: futures_um
+    symbol: BTCUSDT
+    data_type: bar
+    freq: 1m
+  start: 2021-07-01
+  end: 2026-06-30
+
+funding_data:
+  mode: hive_parquet_funding
+  root: historical_data/market_data
+  instrument_id: BTCUSDT-PERP.BINANCE
+  timestamp_column: ts
+  timestamp_unit: ns
+  filters:
+    asset_class: crypto
+    exchange: BINANCE
+    venue_type: futures_um
+    symbol: BTCUSDT
+    data_type: funding_rate
+    freq: settlement
+  start: 2021-07-01
+  end: 2026-06-30
+
+execution:
+  backend: nautilus_backtest
+  mode: simulated
+  initial_cash: 100000
+  allow_short: true
+  price_field: open
+  fill_timing: next_bar
+  latency_bars: 1
+  fee_tier: VIP0
+  liquidity_role: taker
+  fee_scenarios: [0.0, 0.0005]
+  slippage_bps: 1.0
+
+output:
+  root: outputs/backtests
+  print_table: false
+  record_signals: false

@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.escalator_short.config import EscalatorShortConfig
+from strategies.escalator_short.execution_adapter import EscalatorShortExecutionAdapter
 from strategies.escalator_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: EscalatorShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="escalator_short",
     config_cls=EscalatorShortConfig,
-    strategy_cls=EscalatorShortStrategy,
+    strategy_cls=EscalatorShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/escalator_short/config.yaml",
 )

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import simple_atr, true_range
 
 from strategies.going_in_style_short.config import GoingInStyleShortConfig
 
@@ -81,8 +81,8 @@ class GoingInStyleShortEngine:
         self._trs_len.append(tr)
         self._trs_3.append(tr)
         self._tr_prev_close = close
-        atr = sum(self._trs_len) / len(self._trs_len) if len(self._trs_len) == cfg.length else None
-        stopatr = sum(self._trs_3) / len(self._trs_3) if len(self._trs_3) == 3 else None
+        atr = simple_atr(self._trs_len, cfg.length)
+        stopatr = simple_atr(self._trs_3, 3)
 
         # Snapshots read by the exit / trailing update.
         prev_stop_price = self.stop_price

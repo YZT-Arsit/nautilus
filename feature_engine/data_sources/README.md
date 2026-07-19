@@ -6,6 +6,8 @@ and normalizing them to a standard schema for use with the feature engine.
 ## Binance Vision
 
 Import OHLCV bars from Binance Vision archive for spot, USD-M futures, or COIN-M futures markets.
+USD-M monthly funding settlements are also supported and use the same locked
+market-data layout with `data_type=funding_rate/freq=settlement`.
 
 ### Quick Start
 
@@ -67,6 +69,17 @@ python scripts/ingest_binance_vision.py \
     --end 2024-12 \
     --output historical_data/market_data \
     --overwrite
+
+# Import actual USD-M funding settlements
+python scripts/ingest_binance_vision.py \
+    --market futures_um \
+    --symbol BTCUSDT \
+    --data-type fundingRate \
+    --frequency monthly \
+    --start 2021-07 \
+    --end 2026-06 \
+    --output historical_data/market_data \
+    --overwrite
 ```
 
 ### Output Schema
@@ -80,7 +93,6 @@ All data is normalized to StandardBar schema:
 | venue_type | string | spot, futures_um, futures_cm |
 | symbol | string | Trading pair (e.g., BTCUSDT) |
 | instrument_id | string | Same as symbol |
-| bar_type | string | Interval (e.g., 1m, 5m, 1h) |
 | open | float64 | Open price |
 | high | float64 | High price |
 | low | float64 | Low price |
@@ -99,13 +111,18 @@ Data is written in Hive-style partitions:
 
 ```
 output/
-  exchange=BINANCE/
-    venue_type=spot/
-      symbol=BTCUSDT/
-        bar_type=1m/
-          date=2024-01-01/
-            part-000.parquet
+  asset_class=crypto/
+    exchange=BINANCE/
+      venue_type=spot/
+        symbol=BTCUSDT/
+          data_type=bar/
+            freq=1m/
+              date=2024-01-01/
+                part-0.parquet
 ```
+
+The adapter's temporary ``bar_type`` column is converted to ``freq`` by the
+writer. It is not persisted as a second interval column or partition layout.
 
 ### Supported Markets
 

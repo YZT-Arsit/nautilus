@@ -10,12 +10,12 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.turtle_trader.config import TurtleTraderConfig
+from strategies.turtle_trader.execution_adapter import TurtleTraderExecutionAdapter
 from strategies.turtle_trader.strategy import (
     _CLOSE,
     _HIGH,
     _LOW,
     _OPEN,
-    TurtleTraderStrategy,
 )
 
 
@@ -33,7 +33,7 @@ def build_specs(config: TurtleTraderConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="turtle_trader",
     config_cls=TurtleTraderConfig,
-    strategy_cls=TurtleTraderStrategy,
+    strategy_cls=TurtleTraderExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/turtle_trader/config.yaml",
 )

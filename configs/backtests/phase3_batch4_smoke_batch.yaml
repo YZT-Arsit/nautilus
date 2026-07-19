@@ -1,0 +1,13 @@
+batch_name: phase3/batch4/smoke
+configs:
+  - configs/backtests/phase3_batch4_trading_range_breakout_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_trading_range_breakout_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_traffic_jam_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_traffic_jam_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_trendscore_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_trendscore_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_bollinger_bandit_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_bollinger_bandit_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_displaced_boll_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch4_displaced_boll_short_smoke_7d.yaml
+output: {root: outputs/batches}

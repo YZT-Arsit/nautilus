@@ -1,0 +1,13 @@
+batch_name: phase3/batch3/5y
+configs:
+  - configs/backtests/phase3_batch3_no_hurry_long_5y.yaml
+  - configs/backtests/phase3_batch3_no_hurry_short_5y.yaml
+  - configs/backtests/phase3_batch3_redrover_long_5y.yaml
+  - configs/backtests/phase3_batch3_redrover_short_5y.yaml
+  - configs/backtests/phase3_batch3_superman_long_5y.yaml
+  - configs/backtests/phase3_batch3_superman_short_5y.yaml
+  - configs/backtests/phase3_batch3_thermostat_long_5y.yaml
+  - configs/backtests/phase3_batch3_thermostat_short_5y.yaml
+  - configs/backtests/phase3_batch3_three_ema_crossover_long_5y.yaml
+  - configs/backtests/phase3_batch3_three_ema_crossover_short_5y.yaml
+output: {root: outputs/batches}

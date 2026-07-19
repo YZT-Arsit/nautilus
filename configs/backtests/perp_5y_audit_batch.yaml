@@ -1,0 +1,6 @@
+batch_name: audit_5y_batch
+configs:
+  - configs/backtests/dual_ma_btcusdt_perp_1m_5y.yaml
+  - configs/backtests/ma_crossover_btcusdt_perp_1m_5y.yaml
+output:
+  root: outputs/backtests

@@ -56,6 +56,11 @@ class MovingAverageCrossoverStrategy:
         self._prev_fast, self._prev_slow = fast, slow
         return signal
 
+    def on_warmup_snapshot(self, snapshot: FeatureSnapshot) -> None:
+        """Seed prior feature values without emitting a trading signal."""
+        self._prev_fast = snapshot.value(self._config.fast_name)
+        self._prev_slow = snapshot.value(self._config.slow_name)
+
 PLUGIN = StrategyPlugin(
     name="ma_crossover",
     config_cls=MovingAverageCrossoverConfig,

@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.avg_channel_range_leader_short.config import AvgChannelRangeLeaderShortConfig
+from strategies.avg_channel_range_leader_short.execution_adapter import AvgChannelRangeLeaderShortExecutionAdapter
 from strategies.avg_channel_range_leader_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: AvgChannelRangeLeaderShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="avg_channel_range_leader_short",
     config_cls=AvgChannelRangeLeaderShortConfig,
-    strategy_cls=AvgChannelRangeLeaderShortStrategy,
+    strategy_cls=AvgChannelRangeLeaderShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/avg_channel_range_leader_short/config.yaml",
 )

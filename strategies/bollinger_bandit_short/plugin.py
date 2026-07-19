@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.bollinger_bandit_short.execution_adapter import BollingerBanditShortExecutionAdapter
+
 from strategies.bollinger_bandit_short.config import BollingerBanditShortConfig
 from strategies.bollinger_bandit_short.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: BollingerBanditShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="bollinger_bandit_short",
     config_cls=BollingerBanditShortConfig,
-    strategy_cls=BollingerBanditShortStrategy,
+    strategy_cls=BollingerBanditShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/bollinger_bandit_short/config.yaml",
 )

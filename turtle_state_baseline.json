@@ -1,0 +1,98 @@
+{
+  "strategy_name": "turtle_trader",
+  "strategy_path": "strategies/turtle_trader",
+  "scope": "single registered Turtle strategy; complex prototype validates the long breakout/add/stop lifecycle",
+  "breakout_state": [
+    {
+      "fields": ["_highs", "_lows", "current_bar"],
+      "owner": "strategy_state",
+      "usage": "prior-bar Donchian breakout, failsafe breakout, trailing channel, and warmup timing"
+    },
+    {
+      "fields": ["pre_breakout_failure"],
+      "owner": "mixed_state",
+      "usage": "last-profitable-trade filter remains a decision rule; its confirmed update depends on the closed execution outcome"
+    }
+  ],
+  "entry_state": [
+    {
+      "fields": ["tradable", "donchian_hi", "donchian_lo", "fs_hi", "fs_lo"],
+      "owner": "strategy_state",
+      "usage": "entry decision and trigger-price calculation"
+    },
+    {
+      "fields": ["position", "units"],
+      "owner": "execution_state",
+      "usage": "actual filled direction and quantity"
+    },
+    {
+      "fields": ["pre_entry_price"],
+      "owner": "mixed_state",
+      "usage": "strategy uses the last entry/add anchor; execution must supply the confirmed fill price"
+    }
+  ],
+  "pyramid_state": [
+    {
+      "fields": ["n_entries", "0.5 * N add condition", "sent_order_this_bar"],
+      "owner": "strategy_state",
+      "usage": "maximum adds, add trigger, and same-bar stop suppression"
+    },
+    {
+      "fields": ["current_entries", "units", "pre_entry_price"],
+      "owner": "mixed_state",
+      "usage": "desired pyramid plan remains in strategy; confirmed entry count, filled quantity, and last add fill come from execution"
+    }
+  ],
+  "stop_state": [
+    {
+      "fields": ["exit_hi", "exit_lo", "2.0 * N stop formula"],
+      "owner": "strategy_state",
+      "usage": "channel and hard-stop decision formulas"
+    },
+    {
+      "fields": ["pre_entry_price", "close_all lifecycle"],
+      "owner": "mixed_state",
+      "usage": "stop formula uses a confirmed fill anchor; execution owns order/fill/flat transition"
+    }
+  ],
+  "risk_unit": [
+    {
+      "fields": ["N", "risk_ratio", "contract_unit", "big_point_value", "max_units_per_entry"],
+      "owner": "strategy_state",
+      "usage": "unchanged desired TurtleUnits formula"
+    },
+    {
+      "fields": ["account_equity", "filled quantity"],
+      "owner": "mixed_state",
+      "usage": "configured notional equity remains a sizing input; execution owns accepted and filled size"
+    }
+  ],
+  "position_state": [
+    {
+      "fields": ["decision position", "pending entry/add/exit"],
+      "owner": "strategy_state",
+      "usage": "pending decision shadow prevents duplicate signals while an intent is outstanding"
+    },
+    {
+      "fields": ["actual position", "filled quantity", "average fill price"],
+      "owner": "execution_state",
+      "usage": "derived only from FillRecord history"
+    }
+  ],
+  "fill_assumption": {
+    "current": "TurtleTraderEngine._open/_add/_flat mutate a decision book on the signal bar and TradeAction.fill_price carries the theoretical channel/stop/gap price",
+    "target": "the same decision plan is emitted; StrategyStateAdapter tracks pending quantities and reconciles actual position, quantity, entry count, and anchors only from fills"
+  },
+  "price_source": {
+    "breakout_trigger": "prior Donchian channel plus/minus min_point, with gap-to-open rule",
+    "add_trigger": "last decision/fill anchor plus/minus 0.5N, with gap-to-open rule",
+    "stop_trigger": "last decision/fill anchor plus/minus 2N, with gap-to-open rule",
+    "actual_fill": "FillRecord.price after configured latency and slippage"
+  },
+  "signal_functions": [
+    "strategies/turtle_trader/engine.py:TurtleTraderEngine.update",
+    "strategies/turtle_trader/engine.py:TurtleTraderEngine._pyramid_long",
+    "strategies/turtle_trader/engine.py:TurtleTraderEngine._pyramid_short",
+    "strategies/turtle_trader/engine.py:TurtleTraderEngine._label"
+  ]
+}

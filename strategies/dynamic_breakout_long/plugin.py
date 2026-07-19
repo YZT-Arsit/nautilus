@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.dynamic_breakout_long.execution_adapter import DynamicBreakoutLongExecutionAdapter
+
 from strategies.dynamic_breakout_long.config import DynamicBreakoutLongConfig
 from strategies.dynamic_breakout_long.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: DynamicBreakoutLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="dynamic_breakout_long",
     config_cls=DynamicBreakoutLongConfig,
-    strategy_cls=DynamicBreakoutLongStrategy,
+    strategy_cls=DynamicBreakoutLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/dynamic_breakout_long/config.yaml",
 )

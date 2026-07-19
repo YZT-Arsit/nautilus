@@ -173,7 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--end", required=True, help="inclusive UTC date YYYY-MM-DD")
     ap.add_argument("--instrument-id", default=None,
                     help="BarEvent label only; defaults to '<symbol>.<exchange>'")
-    ap.add_argument("--timestamp-column", default="event_time_ns")
+    ap.add_argument("--timestamp-column", default="ts")
     ap.add_argument("--timestamp-unit", default="ns")
     ap.add_argument(
         "--physical-date-filter", action=argparse.BooleanOptionalAction, default=True,
@@ -191,10 +191,12 @@ def build_data_config(args) -> dict:
         "instrument_id": args.instrument_id or f"{args.symbol}.{args.exchange}",
         "warmup_bars": 0,
         "filters": {
+            "asset_class": "crypto",
             "exchange": args.exchange,
             "venue_type": args.venue_type,
             "symbol": args.symbol,
-            "bar_type": args.bar_type,
+            "data_type": "bar",
+            "freq": args.bar_type,
         },
         "timestamp_column": args.timestamp_column,
         "timestamp_unit": args.timestamp_unit,
@@ -206,7 +208,7 @@ def per_date_configs(base_cfg: dict, dates):
 
     The loader's ``matching_fragments`` selects only that date's partition for
     physical read, so a per-date sweep reads only the requested dates — not the
-    whole ``symbol/bar_type`` cache.
+    whole ``symbol/freq`` cache.
     """
     for d in dates:
         cfg = dict(base_cfg)

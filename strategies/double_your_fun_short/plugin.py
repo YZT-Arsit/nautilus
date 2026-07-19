@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.double_your_fun_short.config import DoubleYourFunShortConfig
+from strategies.double_your_fun_short.execution_adapter import DoubleYourFunShortExecutionAdapter
 from strategies.double_your_fun_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: DoubleYourFunShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="double_your_fun_short",
     config_cls=DoubleYourFunShortConfig,
-    strategy_cls=DoubleYourFunShortStrategy,
+    strategy_cls=DoubleYourFunShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/double_your_fun_short/config.yaml",
 )

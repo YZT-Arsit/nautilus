@@ -1,0 +1,13 @@
+batch_name: phase3/batch2/5y
+configs:
+  - configs/backtests/phase3_batch2_in_the_zone_long_5y.yaml
+  - configs/backtests/phase3_batch2_in_the_zone_short_5y.yaml
+  - configs/backtests/phase3_batch2_jailbreak_long_5y.yaml
+  - configs/backtests/phase3_batch2_jailbreak_short_5y.yaml
+  - configs/backtests/phase3_batch2_keltner_channel_long_5y.yaml
+  - configs/backtests/phase3_batch2_keltner_channel_short_5y.yaml
+  - configs/backtests/phase3_batch2_ma_crossover_channel_long_5y.yaml
+  - configs/backtests/phase3_batch2_ma_crossover_channel_short_5y.yaml
+  - configs/backtests/phase3_batch2_ma_sup_res_long_5y.yaml
+  - configs/backtests/phase3_batch2_ma_sup_res_short_5y.yaml
+output: {root: outputs/batches}

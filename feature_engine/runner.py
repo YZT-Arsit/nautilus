@@ -55,8 +55,12 @@ class FeatureStrategyRunner:
         self._strategy = strategy
 
     def warmup(self, events: Iterable[Any]) -> None:
-        """Pre-heat the engine with historical events (no signals produced)."""
-        self._engine.warmup(events)
+        """Pre-heat features and an optional strategy warmup hook, without orders."""
+        hook = getattr(self._strategy, "on_warmup_snapshot", None)
+        for event in events:
+            snapshot = self._engine.on_event(event)
+            if hook is not None:
+                hook(snapshot)
 
     def on_event(self, event: Any) -> tuple[FeatureSnapshot, Any]:
         """Process one live event, returning ``(snapshot, signal)``."""

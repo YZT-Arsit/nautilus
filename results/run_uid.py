@@ -21,6 +21,8 @@ UNKNOWN = "unknown"
 RUN_KEY_FIELDS = (
     "strategy", "strategy_version", "symbol", "exchange", "venue_type",
     "bar_type", "start", "end", "fee", "params_hash", "data_version", "engine",
+    "fee_tier", "maker_fee", "taker_fee", "slippage_bps", "fill_timing",
+    "latency_bars", "funding_model", "funding_data_version",
 )
 
 

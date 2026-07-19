@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import sma
 from strategies.obv_revisited_long.config import ObvRevisitedLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -70,7 +71,7 @@ class ObvRevisitedLongEngine:
         if high - low != 0:
             self._wobv += ((close - open_) / (high - low)) * volume
         self._wobv_hist.append(self._wobv)
-        ssma = sum(self._wobv_hist) / len(self._wobv_hist) if len(self._wobv_hist) == cfg.avg_length else None
+        ssma = sma(self._wobv_hist) if len(self._wobv_hist) == cfg.avg_length else None
 
         # 2. WOBV / MA crossovers (need the prior WOBV & MA).
         con = con2 = False

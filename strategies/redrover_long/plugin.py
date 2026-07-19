@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.redrover_long.config import RedRoverLongConfig
+from strategies.redrover_long.execution_adapter import RedRoverLongExecutionAdapter
 from strategies.redrover_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: RedRoverLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="redrover_long",
     config_cls=RedRoverLongConfig,
-    strategy_cls=RedRoverLongStrategy,
+    strategy_cls=RedRoverLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/redrover_long/config.yaml",
 )

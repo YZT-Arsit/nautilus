@@ -22,12 +22,7 @@ from feature_engine.compute.feature_lib.base import (
     WarmupRequirement,
 )
 from feature_engine.compute.spec import FeatureSpec
-
-
-def _true_range(high: float, low: float, prev_close: float | None) -> float:
-    if prev_close is None:
-        return high - low
-    return max(high - low, abs(high - prev_close), abs(low - prev_close))
+from feature_engine.indicators import true_range
 
 
 class TrueRangeFeature(_AbstractFeature):
@@ -59,7 +54,7 @@ class TrueRangeFeature(_AbstractFeature):
         close = _bar_field(event, "close")
         if high is None or low is None or close is None:
             return self._no_change()
-        tr = _true_range(high, low, self._prev_close)
+        tr = true_range(high, low, self._prev_close)
         self._prev_close = close
         triggered = self._should_trigger(ts_ns)
         if triggered:
@@ -107,7 +102,7 @@ class ATRFeature(_AbstractFeature):
         c = _bar_field(event, "close")
         if None in (h, low, c):
             return self._no_change()
-        tr = _true_range(h, low, self._prev_close)
+        tr = true_range(h, low, self._prev_close)
         self._prev_close = c
         self._state.push(tr)
         triggered = self._should_trigger(ts_ns)

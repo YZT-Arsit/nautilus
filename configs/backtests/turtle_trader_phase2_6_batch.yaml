@@ -1,0 +1,4 @@
+batch_name: phase2_6/turtle_trader_5y_batch
+configs:
+  - configs/backtests/turtle_trader_btcusdt_perp_1m_5y.yaml
+output: {root: outputs/batches}

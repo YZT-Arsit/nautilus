@@ -18,6 +18,8 @@ dependency.
 """
 from __future__ import annotations
 
+from feature_engine.indicators.atr import true_range
+
 
 class WilderDMI:
     """Wilder DMI / ADX (``SF = 1/n``); returns the current ADX or None while warming.
@@ -48,7 +50,7 @@ class WilderDMI:
             self._ph, self._pl, self._pc = high, low, close
             return None
 
-        tr = max(high - low, abs(high - self._pc), abs(low - self._pc))
+        tr = true_range(high, low, self._pc)
         up_move = high - self._ph
         down_move = self._pl - low
         plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0

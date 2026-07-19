@@ -14,6 +14,7 @@ from data_engine.sources.live_gateway import load_live_gateway
 from data_engine.sources.live_synthetic import load_live_synthetic
 from data_engine.sources.parquet_bars import load_parquet_bars
 from data_engine.sources.parquet_trades import load_parquet_trades
+from data_engine.sources.parquet_funding import load_parquet_funding
 from data_engine.sources.synthetic import load_synthetic_bars
 from data_engine.sources.synthetic_trades import load_synthetic_trades
 
@@ -21,15 +22,14 @@ from data_engine.sources.synthetic_trades import load_synthetic_trades
 _LOADERS = {
     "synthetic": load_synthetic_bars,
     "csv_bars": load_csv_bars,
-    "parquet_bars": load_parquet_bars,
-    "hive_parquet_bars": load_parquet_bars,  # alias of parquet_bars
+    "hive_parquet_bars": load_parquet_bars,
     "live_synthetic": load_live_synthetic,
     "live_gateway": load_live_gateway,
     "binance_ws": load_binance_ws,  # live Binance public market-data WS (trades+quotes)
     # Trade (tick) sources — produce TradeEvent, not BarEvent.
     "synthetic_trades": load_synthetic_trades,
-    "parquet_trades": load_parquet_trades,
-    "hive_parquet_trades": load_parquet_trades,  # alias of parquet_trades
+    "hive_parquet_trades": load_parquet_trades,
+    "hive_parquet_funding": load_parquet_funding,
 }
 
 

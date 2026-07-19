@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import simple_atr, sma, true_range
 
 from strategies.trendscore_short.config import TrendScoreShortConfig
 
@@ -99,9 +99,9 @@ class TrendScoreShortEngine:
         self._trs.append(true_range(high, low, self._prev_close))
         self._prev_close = close
 
-        ma = sum(self._ma_closes) / len(self._ma_closes) if len(self._ma_closes) == cfg.ma_length else None
-        score_ma = sum(self._scores) / len(self._scores) if len(self._scores) == cfg.ma_length else None
-        atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None
+        ma = sma(self._ma_closes) if len(self._ma_closes) == cfg.ma_length else None
+        score_ma = sma(self._scores) if len(self._scores) == cfg.ma_length else None
+        atr = simple_atr(self._trs, cfg.atr_length)
 
         signal, reason = HOLD, "hold"
         entered = False

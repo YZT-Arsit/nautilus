@@ -8,11 +8,13 @@ Examples
 --------
 Raw bar partition::
 
-    data/raw/asset_class=stock/exchange=SSE/frequency=1m/trading_date=2026-05-26/
+    historical_data/market_data/asset_class=stock/exchange=SSE/venue_type=stock/
+        symbol=600000/data_type=bar/freq=1m/date=2026-05-26/
 
 Feature partition::
 
-    data/features/feature_group=technical/frequency=1m/trading_date=2026-05-26/
+    historical_data/feature_data/feature_group=technical/asset_class=stock/
+        exchange=SSE/venue_type=stock/symbol=600000/freq=1m/date=2026-05-26/
 """
 from __future__ import annotations
 

@@ -1,0 +1,10 @@
+{
+  "strategy_name": "swinger_short",
+  "signal_functions": ["SwingerShortStrategy.on_snapshot", "SwingerShortEngine.update"],
+  "entry": "flat; prior close below trend MA; prior oscillator non-negative and falling; volume > 0 -> SELL",
+  "exit": "short for a full bar; prior oscillator rising; current high crosses prior N-bar high; volume > 0 -> BUY",
+  "position_state": ["position", "bars_since_entry", "_prev_mp"],
+  "entry_price_source": "No price is stored; source documentation assumes Open and the string signal carries no price.",
+  "exit_price_source": "_prev_exits is a trigger threshold, not a fill. Max(Open, ExitS[1]) is documented but not emitted.",
+  "execution_assumptions": ["SELL immediately sets internal position to -1", "BUY immediately sets internal position to 0", "_prev_mp records assumed end-of-bar position"]
+}

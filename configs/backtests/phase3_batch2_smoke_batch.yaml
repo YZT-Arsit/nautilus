@@ -1,0 +1,13 @@
+batch_name: phase3/batch2/smoke
+configs:
+  - configs/backtests/phase3_batch2_in_the_zone_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_in_the_zone_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_jailbreak_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_jailbreak_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_keltner_channel_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_keltner_channel_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_ma_crossover_channel_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_ma_crossover_channel_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_ma_sup_res_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch2_ma_sup_res_short_smoke_7d.yaml
+output: {root: outputs/batches}

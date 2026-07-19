@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import Ema, true_range
+from feature_engine.indicators import Ema, simple_atr, true_range
 
 from strategies.first_pullback_long.config import FirstPullbackLongConfig
 
@@ -95,7 +95,7 @@ class FirstPullbackLongEngine:
         tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
-        atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_len else None
+        atr = simple_atr(self._trs, cfg.atr_len)
 
         # 3. Zero-line crosses of the signal line.
         con1 = self._prev_signal is not None and self._prev_signal <= 0 and signal_line > 0

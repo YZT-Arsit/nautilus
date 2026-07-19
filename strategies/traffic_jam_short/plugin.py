@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.traffic_jam_short.execution_adapter import TrafficJamShortExecutionAdapter
+
 from strategies.traffic_jam_short.config import TrafficJamShortConfig
 from strategies.traffic_jam_short.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: TrafficJamShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="traffic_jam_short",
     config_cls=TrafficJamShortConfig,
-    strategy_cls=TrafficJamShortStrategy,
+    strategy_cls=TrafficJamShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/traffic_jam_short/config.yaml",
 )

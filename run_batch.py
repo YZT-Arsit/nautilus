@@ -52,6 +52,7 @@ _METRIC_COLS = (
     "net_pnl",
     "net_realized_pnl",
     "total_commission",
+    "funding_pnl",
     "trade_count",
     "win_rate",
     "final_equity",
@@ -115,6 +116,34 @@ def main(argv: list[str] | None = None) -> None:
 
     batch = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
     batch.setdefault("batch_name", Path(args.config).stem)
+    if batch.get("configs"):
+        rows: list[dict[str, Any]] = []
+        for config_path in batch["configs"]:
+            path = Path(config_path)
+            if not path.is_absolute():
+                path = _REPO_ROOT / path
+            cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            print(f"[batch] config={config_path} ...")
+            try:
+                results = run_config(cfg)
+            except Exception as exc:  # noqa: BLE001
+                rows.append({"symbol": cfg.get("strategy"), "status": "failed", "error": str(exc)})
+                continue
+            symbol = (cfg.get("data", {}).get("filters", {}) or {}).get("symbol")
+            for result in results:
+                metrics = _read_metrics(result.get("output_dir"))
+                row = {
+                    "symbol": symbol,
+                    "params": cfg.get("strategy"),
+                    "fee": result.get("fee"),
+                    "status": "ok",
+                    "run_name": result.get("run_name"),
+                    "output_dir": result.get("output_dir"),
+                }
+                row.update({column: metrics.get(column) for column in _METRIC_COLS})
+                rows.append(row)
+        _write_table(batch, rows)
+        return
     symbols = batch.get("symbols") or [batch.get("symbol")]
     if not symbols or symbols == [None]:
         parser.error("batch config needs a 'symbols' list (or a 'symbol')")

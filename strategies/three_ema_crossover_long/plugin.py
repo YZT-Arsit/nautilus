@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.three_ema_crossover_long.config import ThreeEmaCrossoverLongConfig
+from strategies.three_ema_crossover_long.execution_adapter import ThreeEmaCrossoverLongExecutionAdapter
 from strategies.three_ema_crossover_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: ThreeEmaCrossoverLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="three_ema_crossover_long",
     config_cls=ThreeEmaCrossoverLongConfig,
-    strategy_cls=ThreeEmaCrossoverLongStrategy,
+    strategy_cls=ThreeEmaCrossoverLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/three_ema_crossover_long/config.yaml",
 )

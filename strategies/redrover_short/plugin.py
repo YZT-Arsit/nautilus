@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.redrover_short.config import RedRoverShortConfig
+from strategies.redrover_short.execution_adapter import RedRoverShortExecutionAdapter
 from strategies.redrover_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: RedRoverShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="redrover_short",
     config_cls=RedRoverShortConfig,
-    strategy_cls=RedRoverShortStrategy,
+    strategy_cls=RedRoverShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/redrover_short/config.yaml",
 )

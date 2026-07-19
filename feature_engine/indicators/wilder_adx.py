@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators.atr import true_range
+
 
 class WilderADX:
     """Wilder DMI/ADX; ``update(high, low, close)`` -> current ADX or ``None``."""
@@ -39,10 +41,7 @@ class WilderADX:
         self.current_bar += 1
         cb = self.current_bar
 
-        if self._prev_close is None:
-            tr = high - low
-        else:
-            tr = max(high - low, abs(high - self._prev_close), abs(low - self._prev_close))
+        tr = true_range(high, low, self._prev_close)
         self._high_hist.append(high)
         self._low_hist.append(low)
         self._tr_hist.append(tr)

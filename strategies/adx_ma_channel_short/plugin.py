@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.adx_ma_channel_short.config import AdxMaChannelShortConfig
+from strategies.adx_ma_channel_short.execution_adapter import AdxMaChannelShortExecutionAdapter
 from strategies.adx_ma_channel_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: AdxMaChannelShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="adx_ma_channel_short",
     config_cls=AdxMaChannelShortConfig,
-    strategy_cls=AdxMaChannelShortStrategy,
+    strategy_cls=AdxMaChannelShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/adx_ma_channel_short/config.yaml",
 )

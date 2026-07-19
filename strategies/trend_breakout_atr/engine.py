@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import simple_atr, sma, true_range
 
 from strategies.trend_breakout_atr.config import TrendBreakoutAtrConfig
 
@@ -59,10 +59,10 @@ class TrendBreakoutAtrEngine:
         # 2. ATR over completed bars (includes the current, never the future).
         tr = true_range(high, low, self._prev_close)
         self._trs.append(tr)
-        atr = (sum(self._trs) / len(self._trs)) if len(self._trs) == cfg.atr_len else None
+        atr = simple_atr(self._trs, cfg.atr_len)
         # 3. trend MA over closes including the current (a filter on the acted price).
         self._closes.append(close)
-        trend_ma = (sum(self._closes) / len(self._closes)) if len(self._closes) == cfg.trend_len else None
+        trend_ma = sma(self._closes) if len(self._closes) == cfg.trend_len else None
 
         signal, reason = self._decide(close, prev_upper, prev_lower, trend_ma, atr)
 

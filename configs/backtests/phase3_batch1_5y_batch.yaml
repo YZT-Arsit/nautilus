@@ -1,0 +1,13 @@
+batch_name: phase3/batch1/5y
+configs:
+  - configs/backtests/phase3_batch1_adx_ma_channel_long_5y.yaml
+  - configs/backtests/phase3_batch1_adx_ma_channel_short_5y.yaml
+  - configs/backtests/phase3_batch1_avg_channel_range_leader_long_5y.yaml
+  - configs/backtests/phase3_batch1_avg_channel_range_leader_short_5y.yaml
+  - configs/backtests/phase3_batch1_double_your_fun_long_5y.yaml
+  - configs/backtests/phase3_batch1_double_your_fun_short_5y.yaml
+  - configs/backtests/phase3_batch1_escalator_long_5y.yaml
+  - configs/backtests/phase3_batch1_escalator_short_5y.yaml
+  - configs/backtests/phase3_batch1_going_in_style_long_5y.yaml
+  - configs/backtests/phase3_batch1_going_in_style_short_5y.yaml
+output: {root: outputs/batches}

@@ -50,10 +50,9 @@ Fidelity notes:
 """
 from __future__ import annotations
 
-import math
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import rolling_std, simple_atr, sma, true_range
 from strategies.thermostat_short.config import ThermostatShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -113,28 +112,27 @@ class ThermostatShortEngine:
 
         self._lows3.append(low)
         self._highs3.append(high)
-        lok_buy = sum(self._lows3) / len(self._lows3) if len(self._lows3) == 3 else None
-        lok_sell = sum(self._highs3) / len(self._highs3) if len(self._highs3) == 3 else None
+        lok_buy = sma(self._lows3) if len(self._lows3) == 3 else None
+        lok_sell = sma(self._highs3) if len(self._highs3) == 3 else None
 
         key = (high + low + close) / 3.0
 
         tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
-        atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None
+        atr = simple_atr(self._trs, cfg.atr_length)
 
         self._boll.append(close)
         if len(self._boll) == cfg.bollinger_length:
-            mid = sum(self._boll) / len(self._boll)
-            var = sum((x - mid) ** 2 for x in self._boll) / len(self._boll)
-            band = math.sqrt(var)
+            mid = sma(self._boll)
+            band = rolling_std(self._boll, ddof=0)
             upband = mid + cfg.num_std_devs * band
             dnband = mid - cfg.num_std_devs * band
         else:
             upband = dnband = None
 
         self._trend_closes.append(close)
-        trend_prot = (sum(self._trend_closes) / len(self._trend_closes)
+        trend_prot = (sma(self._trend_closes)
                       if len(self._trend_closes) == cfg.trend_liq_length else None)
 
         # swing trigger prices: current Open, previous-bar ATR / keyOfDay / 3-bar ranges.

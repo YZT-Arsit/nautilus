@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.displaced_boll_long.execution_adapter import DisplacedBollLongExecutionAdapter
+
 from strategies.displaced_boll_long.config import DisplacedBollLongConfig
 from strategies.displaced_boll_long.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: DisplacedBollLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="displaced_boll_long",
     config_cls=DisplacedBollLongConfig,
-    strategy_cls=DisplacedBollLongStrategy,
+    strategy_cls=DisplacedBollLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/displaced_boll_long/config.yaml",
 )

@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import simple_atr, true_range
 from strategies.no_hurry_long.config import NoHurryLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -90,7 +90,7 @@ class NoHurryLongEngine:
         tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
-        atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None
+        atr = simple_atr(self._trs, cfg.atr_length)
         atr_val = atr * cfg.trailing_atrs if atr is not None else None
 
         mp_start = self.position

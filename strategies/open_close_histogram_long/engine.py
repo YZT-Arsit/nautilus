@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import Ema, true_range
+from feature_engine.indicators import Ema, simple_atr, true_range
 
 from strategies.open_close_histogram_long.config import OpenCloseHistogramLongConfig
 
@@ -81,7 +81,7 @@ class OpenCloseHistogramLongEngine:
         tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
-        atr10 = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_len else None
+        atr10 = simple_atr(self._trs, cfg.atr_len)
 
         # 3. On an up-cross arm the entry / exit triggers (held until the next one).
         if con1 and atr10 is not None:

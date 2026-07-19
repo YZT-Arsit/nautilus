@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.jailbreak_long.config import JailBreakLongConfig
+from strategies.jailbreak_long.execution_adapter import JailBreakLongExecutionAdapter
 from strategies.jailbreak_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: JailBreakLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="jailbreak_long",
     config_cls=JailBreakLongConfig,
-    strategy_cls=JailBreakLongStrategy,
+    strategy_cls=JailBreakLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/jailbreak_long/config.yaml",
 )

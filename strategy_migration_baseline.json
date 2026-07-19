@@ -1,0 +1,51 @@
+{
+  "strategy_name": "reference_deviation_long",
+  "signal_functions": [
+    {
+      "path": "strategies/reference_deviation_long/strategy.py",
+      "function": "ReferenceDeviationLongStrategy.on_snapshot",
+      "role": "reads the five OHLCV passthrough values and delegates to the decision engine"
+    },
+    {
+      "path": "strategies/reference_deviation_long/engine.py",
+      "function": "ReferenceDeviationLongEngine.update",
+      "role": "updates RDV history and emits BUY, SELL, or HOLD"
+    }
+  ],
+  "signal_dependencies": {
+    "features": [
+      "refdev_l_bar_open",
+      "refdev_l_bar_high",
+      "refdev_l_bar_low",
+      "refdev_l_bar_close",
+      "refdev_l_bar_volume"
+    ],
+    "indicator": "feature_engine.indicators.sma",
+    "entry_condition": "bar-start position == 0 and previous RDV > et_long and volume > 0",
+    "exit_condition": "bar-start position == 1 and bars_since_entry > 0 and previous RDV < 0 and volume > 0",
+    "temporal_semantics": "RDV decisions use RDV[1]; entry and exit are mutually exclusive on one update"
+  },
+  "internal_state_fields": [
+    "_closes",
+    "_drd",
+    "current_bar",
+    "position",
+    "bars_since_entry",
+    "_rdv",
+    "_prev_rdv"
+  ],
+  "entry_price_source": "No entry price is stored or returned. The source strategy documentation says entry at Open, while the current string signal carries no price.",
+  "exit_price_source": "No exit price is stored or returned. The source strategy documentation says exit at Open, while the current string signal carries no price.",
+  "position_update_location": {
+    "entry": "strategies/reference_deviation_long/engine.py:ReferenceDeviationLongEngine.update (BUY branch sets position=1 and bars_since_entry=0)",
+    "exit": "strategies/reference_deviation_long/engine.py:ReferenceDeviationLongEngine.update (SELL branch sets position=0 and bars_since_entry=0)",
+    "counter": "strategies/reference_deviation_long/engine.py:ReferenceDeviationLongEngine.update increments bars_since_entry while internally long"
+  },
+  "execution_assumptions": [
+    "A BUY signal is treated as a filled long before ReferenceDeviationLongEngine.update returns.",
+    "A SELL signal is treated as a completed flatten before ReferenceDeviationLongEngine.update returns.",
+    "No rejected, partial, delayed, or missing fill can be represented in the internal position state.",
+    "The strategy does not modify cash, equity, commission, funding, or PnL.",
+    "The existing backend separately converts BUY/SELL/HOLD to intents and owns fill accounting."
+  ]
+}

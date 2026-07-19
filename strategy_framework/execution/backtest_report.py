@@ -16,6 +16,7 @@ istically for ``config.yaml`` and degrades to ``config.json`` when unavailable).
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -85,6 +86,7 @@ class _Accountant:
         self._pos: dict[str, _Pos] = {}
         self.trades: list[TradeRow] = []
         self.total_commission = 0.0  # sum of all fill commissions (charged once)
+        self.total_funding = 0.0
 
     def position(self, instrument_id: str) -> _Pos:
         return self._pos.setdefault(instrument_id, _Pos())
@@ -153,6 +155,15 @@ class _Accountant:
         if instrument_id in self._pos:
             self._pos[instrument_id].last_price = price
 
+    def apply_funding(self, event: Any, fallback_mark: float) -> float:
+        """Settle one funding cashflow; positive means cash received."""
+        pos = self.position(event.instrument_id)
+        mark = event.mark_price if event.mark_price is not None else fallback_mark
+        payment = -pos.qty * float(mark) * float(event.funding_rate)
+        self.cash += payment
+        self.total_funding += payment
+        return payment
+
     def equity(self, marks: dict[str, float]) -> float:
         eq = self.cash
         for iid, pos in self._pos.items():
@@ -188,6 +199,26 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> No
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
+
+
+def write_artifact_manifest(run_dir: str | Path, run_name: str | None = None) -> Path:
+    """Write a content-addressed manifest for one completed result directory."""
+    root = Path(run_dir)
+    artifacts = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file() and p.name != "artifact_manifest.json"):
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        artifacts.append({
+            "path": path.relative_to(root).as_posix(),
+            "size_bytes": path.stat().st_size,
+            "sha256": digest.hexdigest(),
+        })
+    manifest = {"run_name": run_name or root.name, "artifacts": artifacts}
+    output = root / "artifact_manifest.json"
+    output.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return output
 
 
 def _write_series(out: Path, stem: str, rows: list[dict[str, Any]], columns: list[str]) -> str:
@@ -261,6 +292,7 @@ def write_backtest_report(
     slippage_bps: float = 0.0,
     fill_timing: str = "same_bar",
     execution_stats: dict[str, Any] | None = None,
+    funding_events: list[Any] | None = None,
     config: dict[str, Any] | None = None,
     engine_summary: dict[str, Any] | None = None,
 ) -> BacktestResult:
@@ -274,6 +306,7 @@ def write_backtest_report(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     feature_names = list(feature_names or [])
+    funding_sorted = sorted(funding_events or [], key=lambda event: event.event_time_ns)
 
     fills_sorted = sorted(fills, key=lambda f: (f.event_time_ns or 0))
     acct = _Accountant(initial_cash, fee_rate=fee_rate)
@@ -281,6 +314,8 @@ def write_backtest_report(
     # Build the equity curve by walking bars in time order, applying any fills
     # whose timestamp has been reached, then marking to the bar close.
     fi = 0
+    funding_i = 0
+    funding_rows: list[dict[str, Any]] = []
     equity_rows: list[dict[str, Any]] = []
     equity_values: list[float] = []
     bars_sorted = sorted(bars, key=lambda b: (b.get("event_time_ns") or 0))
@@ -295,6 +330,24 @@ def write_backtest_report(
             acct.apply_fill(fills_sorted[fi])
             fi += 1
         acct.mark(iid, close)
+        while funding_i < len(funding_sorted) and funding_sorted[funding_i].event_time_ns <= ts:
+            funding = funding_sorted[funding_i]
+            mark = funding.mark_price
+            if mark is None:
+                mark = last_marks.get(funding.instrument_id, close)
+            position = acct.position(funding.instrument_id).qty
+            payment = acct.apply_funding(funding, float(mark))
+            funding_rows.append({
+                "event_time_ns": funding.event_time_ns,
+                "event_time": _ns_to_iso(funding.event_time_ns),
+                "instrument_id": funding.instrument_id,
+                "position": position,
+                "mark_price": float(mark),
+                "funding_rate": funding.funding_rate,
+                "funding_payment": payment,
+                "cumulative_funding": acct.total_funding,
+            })
+            funding_i += 1
         pos = acct.position(iid)
         equity = acct.equity(last_marks)
         equity_values.append(equity)
@@ -307,7 +360,10 @@ def write_backtest_report(
                 "cash": round(acct.cash, 8),
                 "position": round(pos.qty, 10),
                 "realized_pnl": round(acct.realized_total(), 8),
+                "commission": round(acct.total_commission, 8),
+                "funding_pnl": round(acct.total_funding, 8),
                 "unrealized_pnl": round(acct.unrealized(last_marks), 8),
+                "net_pnl": round(equity - float(initial_cash), 8),
                 "equity": round(equity, 8),
             }
         )
@@ -347,7 +403,8 @@ def write_backtest_report(
     gross_realized = acct.realized_total()          # price PnL, EXCLUDING fees
     unrealized = acct.unrealized(last_marks)        # mark-to-market, gross
     total_commission = acct.total_commission        # charged once (in cash)
-    net_realized = gross_realized - total_commission
+    total_funding = acct.total_funding
+    net_realized = gross_realized - total_commission + total_funding
     net_pnl = final_equity - float(initial_cash)    # == net_realized + unrealized
     gross_win_rate = round(wins / trade_count, 6) if trade_count else None
 
@@ -363,6 +420,8 @@ def write_backtest_report(
         "realized_pnl": round(gross_realized, 8),
         "gross_realized_pnl": round(gross_realized, 8),
         "total_commission": round(total_commission, 8),
+        "funding_pnl": round(total_funding, 8),
+        "funding_event_count": len(funding_rows),
         "net_realized_pnl": round(net_realized, 8),
         "unrealized_pnl": round(unrealized, 8),
         # net_pnl == final_equity - initial_cash == net_realized + unrealized.
@@ -387,7 +446,7 @@ def write_backtest_report(
         "fill_timing": fill_timing,
     }
     if execution_stats:
-        for k in ("original_intent_count", "executed_intent_count", "dropped_tail_intents"):
+        for k in ("original_intent_count", "executed_intent_count", "dropped_tail_intents", "latency_bars"):
             if k in execution_stats:
                 metrics[k] = execution_stats[k]
     if engine_summary:
@@ -422,6 +481,9 @@ def write_backtest_report(
         }
         for f in fills_sorted
     ]
+    for row in fill_rows:
+        if row["commission"] == 0.0 and fee_rate:
+            row["commission"] = row["quantity"] * row["fill_price"] * fee_rate
     _write_csv(
         out / "trades.csv",
         [
@@ -451,6 +513,13 @@ def write_backtest_report(
     files["fills"] = str(out / "fills.csv")
 
     _write_csv(
+        out / "funding_payments.csv", funding_rows,
+        ["event_time_ns", "event_time", "instrument_id", "position", "mark_price",
+         "funding_rate", "funding_payment", "cumulative_funding"],
+    )
+    files["funding_payments"] = str(out / "funding_payments.csv")
+
+    _write_csv(
         out / "positions.csv",
         final_positions,
         ["instrument_id", "quantity", "avg_price", "market_price", "unrealized_pnl", "realized_pnl"],
@@ -460,7 +529,7 @@ def write_backtest_report(
     equity_name = _write_series(
         out, "equity_curve", equity_rows,
         ["event_time_ns", "event_time", "instrument_id", "close", "cash", "position",
-         "realized_pnl", "unrealized_pnl", "equity"],
+         "realized_pnl", "commission", "funding_pnl", "unrealized_pnl", "net_pnl", "equity"],
     )
     files["equity_curve"] = str(out / equity_name)
 
@@ -482,6 +551,8 @@ def write_backtest_report(
 
     for name, rel in render_run_charts(out).items():
         files[f"chart_{name}"] = str(out / rel)
+    manifest_path = write_artifact_manifest(out, run_name)
+    files["artifact_manifest"] = str(manifest_path)
 
     return BacktestResult(
         run_name=run_name,
@@ -522,6 +593,7 @@ def _render_report_md(metrics: dict[str, Any], trades: list[TradeRow],
         f"| max_drawdown | {m['max_drawdown']:.4%} |",
         f"| realized_pnl (gross) | {m['realized_pnl']:.4f} |",
         f"| total_commission | {m.get('total_commission', 0.0):.4f} |",
+        f"| funding_pnl | {m.get('funding_pnl', 0.0):.4f} |",
         f"| net_realized_pnl | {m.get('net_realized_pnl', 0.0):.4f} |",
         f"| unrealized_pnl | {m['unrealized_pnl']:.4f} |",
         f"| net_pnl | {m.get('net_pnl', 0.0):.4f} |",

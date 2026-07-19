@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.four_ma_crossover_short.execution_adapter import FourMaCrossoverShortExecutionAdapter
+
 from strategies.four_ma_crossover_short.config import FourMaCrossoverShortConfig
 from strategies.four_ma_crossover_short.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: FourMaCrossoverShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="four_ma_crossover_short",
     config_cls=FourMaCrossoverShortConfig,
-    strategy_cls=FourMaCrossoverShortStrategy,
+    strategy_cls=FourMaCrossoverShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/four_ma_crossover_short/config.yaml",
 )

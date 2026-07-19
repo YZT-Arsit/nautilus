@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import simple_atr, sma, true_range
 from strategies.ma_sup_res_long.config import MaSupResLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -100,11 +100,11 @@ class MaSupResLongEngine:
 
         # 1. MA (AverageFC) and ATR (simple mean of true range).
         self._closes.append(close)
-        ma = sum(self._closes) / len(self._closes) if len(self._closes) == cfg.ma_length else None
+        ma = sma(self._closes) if len(self._closes) == cfg.ma_length else None
         tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
-        atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None
+        atr = simple_atr(self._trs, cfg.atr_length)
 
         # 2. Close / MA crosses (need the prior close & MA).
         cross_under = cross_over = False

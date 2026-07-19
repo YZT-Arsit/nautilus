@@ -1,0 +1,37 @@
+run_name: phase3/batch6/open_close_histogram_short_btcperp_1m_smoke_7d
+strategy: open_close_histogram_short
+params: {instrument_id: BTCUSDT-PERP.BINANCE, bar_type: 1m}
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 0
+  timestamp_column: ts
+  timestamp_unit: ns
+  filters: {asset_class: crypto, exchange: BINANCE, venue_type: futures_um, symbol: BTCUSDT, data_type: bar, freq: 1m}
+  start: 2026-06-24
+  end: 2026-06-30
+funding_data:
+  mode: hive_parquet_funding
+  root: historical_data/market_data
+  instrument_id: BTCUSDT-PERP.BINANCE
+  timestamp_column: ts
+  timestamp_unit: ns
+  filters: {asset_class: crypto, exchange: BINANCE, venue_type: futures_um, symbol: BTCUSDT, data_type: funding_rate, freq: settlement}
+  start: 2026-06-24
+  end: 2026-06-30
+execution:
+  backend: nautilus_backtest
+  mode: simulated
+  initial_cash: 100000
+  quantity: 0.001
+  sell_means: short
+  allow_short: true
+  price_field: open
+  fill_timing: next_bar
+  latency_bars: 1
+  fee_tier: VIP0
+  liquidity_role: taker
+  fee_rate: 0.0005
+  slippage_bps: 1.0
+output: {root: outputs/backtests, print_table: false, record_signals: false}

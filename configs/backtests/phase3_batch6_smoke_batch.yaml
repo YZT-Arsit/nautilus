@@ -1,0 +1,10 @@
+batch_name: phase3/batch6/smoke
+configs:
+  - configs/backtests/phase3_batch6_open_close_histogram_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch6_open_close_histogram_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch6_vwm_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch6_vwm_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch6_ghost_trader_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch6_ghost_trader_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch6_trend_breakout_atr_smoke_7d.yaml
+output: {root: outputs/batches}

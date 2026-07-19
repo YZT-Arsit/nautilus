@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.going_in_style_long.config import GoingInStyleLongConfig
+from strategies.going_in_style_long.execution_adapter import GoingInStyleLongExecutionAdapter
 from strategies.going_in_style_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: GoingInStyleLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="going_in_style_long",
     config_cls=GoingInStyleLongConfig,
-    strategy_cls=GoingInStyleLongStrategy,
+    strategy_cls=GoingInStyleLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/going_in_style_long/config.yaml",
 )

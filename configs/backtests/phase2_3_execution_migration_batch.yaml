@@ -1,0 +1,6 @@
+batch_name: phase2_3/execution_migration_5y_batch
+configs:
+  - configs/backtests/reference_deviation_short_btcusdt_perp_1m_5y.yaml
+  - configs/backtests/swinger_long_btcusdt_perp_1m_5y.yaml
+  - configs/backtests/swinger_short_btcusdt_perp_1m_5y.yaml
+output: {root: outputs/batches}

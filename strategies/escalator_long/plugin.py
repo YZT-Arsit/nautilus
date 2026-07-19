@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.escalator_long.config import EscalatorLongConfig
+from strategies.escalator_long.execution_adapter import EscalatorLongExecutionAdapter
 from strategies.escalator_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: EscalatorLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="escalator_long",
     config_cls=EscalatorLongConfig,
-    strategy_cls=EscalatorLongStrategy,
+    strategy_cls=EscalatorLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/escalator_long/config.yaml",
 )

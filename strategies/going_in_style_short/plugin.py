@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.going_in_style_short.config import GoingInStyleShortConfig
+from strategies.going_in_style_short.execution_adapter import GoingInStyleShortExecutionAdapter
 from strategies.going_in_style_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: GoingInStyleShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="going_in_style_short",
     config_cls=GoingInStyleShortConfig,
-    strategy_cls=GoingInStyleShortStrategy,
+    strategy_cls=GoingInStyleShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/going_in_style_short/config.yaml",
 )

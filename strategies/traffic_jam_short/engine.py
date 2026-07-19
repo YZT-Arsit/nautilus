@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import WilderDMI
+from feature_engine.indicators import simple_atr, true_range, WilderDMI
 
 from strategies.traffic_jam_short.config import TrafficJamShortConfig
 
@@ -93,13 +93,10 @@ class TrafficJamShortEngine:
         adx = self._dmi.update(high, low, close)
 
         # 2. protective-stop ATR (simple mean of true range).
-        if self._atr_prev_close is None:
-            tr = high - low
-        else:
-            tr = max(high - low, abs(high - self._atr_prev_close), abs(low - self._atr_prev_close))
+        tr = true_range(high, low, self._atr_prev_close)
         self._trs.append(tr)
         self._atr_prev_close = close
-        atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None
+        atr = simple_atr(self._trs, cfg.atr_length)
 
         # 3. consecutive up-close count (this bar's CountIf).
         up = 1 if (self._consec_prev_close is not None and close > self._consec_prev_close) else 0

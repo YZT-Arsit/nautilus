@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import simple_atr, true_range
 from strategies.redrover_short.config import RedRoverShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -67,7 +67,7 @@ class RedRoverShortEngine:
         tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
-        atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None
+        atr = simple_atr(self._trs, cfg.atr_length)
 
         # 2. Weighted price + support / resistance (current bar).
         wavg = (high + low + 2.0 * close) / 4.0

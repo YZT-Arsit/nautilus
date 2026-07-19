@@ -1,0 +1,13 @@
+batch_name: phase3/batch5/5y
+configs:
+  - configs/backtests/phase3_batch5_dynamic_breakout_long_5y.yaml
+  - configs/backtests/phase3_batch5_dynamic_breakout_short_5y.yaml
+  - configs/backtests/phase3_batch5_first_pullback_long_5y.yaml
+  - configs/backtests/phase3_batch5_first_pullback_short_5y.yaml
+  - configs/backtests/phase3_batch5_four_ma_crossover_long_5y.yaml
+  - configs/backtests/phase3_batch5_four_ma_crossover_short_5y.yaml
+  - configs/backtests/phase3_batch5_king_keltner_long_5y.yaml
+  - configs/backtests/phase3_batch5_king_keltner_short_5y.yaml
+  - configs/backtests/phase3_batch5_obv_revisited_long_5y.yaml
+  - configs/backtests/phase3_batch5_obv_revisited_short_5y.yaml
+output: {root: outputs/batches}

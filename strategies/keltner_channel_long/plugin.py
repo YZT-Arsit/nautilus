@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.keltner_channel_long.config import KeltnerChannelLongConfig
+from strategies.keltner_channel_long.execution_adapter import KeltnerChannelLongExecutionAdapter
 from strategies.keltner_channel_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: KeltnerChannelLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="keltner_channel_long",
     config_cls=KeltnerChannelLongConfig,
-    strategy_cls=KeltnerChannelLongStrategy,
+    strategy_cls=KeltnerChannelLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/keltner_channel_long/config.yaml",
 )

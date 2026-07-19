@@ -20,15 +20,16 @@ Bridging notes
   ``SignalToOrderPolicy`` (config ``sell_means: flat``). BUY opens the long,
   SELL flattens it.
 
-This module imports no ``nautilus_trader`` symbols at import time. The VWM
-feature engine wraps Nautilus indicators (a pre-existing dependency); those are
-imported lazily when a strategy instance is built.
+The VWM feature engine uses the shared pure-Python indicator primitives under
+``feature_engine.indicators``; the strategy layer has no indicator formula copy
+and no Nautilus indicator dependency.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from feature_engine.api import FeatureSnapshot, FeatureSpec, rolling_mean_spec
+from feature_engine.indicators import sma_last
 from strategy_framework.plugin import StrategyPlugin
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -71,14 +72,6 @@ class VwmLongConfig:
 
 # --- pure trend-filter helpers (unit-testable, no Nautilus) ------------------
 
-def simple_moving_average(values: list[float], length: int) -> float | None:
-    """Mean of the last ``length`` values, or None if too few / bad length."""
-    if length <= 0 or len(values) < length:
-        return None
-    window = values[-length:]
-    return sum(window) / float(length)
-
-
 def trend_gate(closes: list[float], *, fast_len: int, slow_len: int,
                mode: str = "long_only_uptrend") -> bool | None:
     """Regime gate for long entries.
@@ -87,8 +80,8 @@ def trend_gate(closes: list[float], *, fast_len: int, slow_len: int,
     or ``None`` (insufficient history to decide). ``long_only_uptrend`` allows a
     long only when ``fast_ma > slow_ma``. Unknown modes do not gate (True).
     """
-    fast = simple_moving_average(closes, fast_len)
-    slow = simple_moving_average(closes, slow_len)
+    fast = sma_last(closes, fast_len)
+    slow = sma_last(closes, slow_len)
     if fast is None or slow is None:
         return None
     if mode == "long_only_uptrend":
@@ -131,8 +124,7 @@ class VwmLongStrategy:
     """Drive the VWM long signal engine from feature snapshots."""
 
     def __init__(self, config: VwmLongConfig) -> None:
-        # Lazy imports: the VWM feature engine wraps Nautilus indicators, so
-        # only touch it when a strategy is actually built (not at import time).
+        # Lazy import keeps registry loading cheap.
         from strategies.vwm_long.signals import (
             VolumeWeightedMomentumLongSignalEngine,
             VwmLongSignalConfig,
@@ -219,10 +211,13 @@ class VwmLongStrategy:
         return HOLD
 
 
+from strategies.vwm_long.execution_adapter import VwmLongExecutionAdapter
+
+
 PLUGIN = StrategyPlugin(
     name="vwm_long",
     config_cls=VwmLongConfig,
-    strategy_cls=VwmLongStrategy,
+    strategy_cls=VwmLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/vwm_long/config.yaml",
 )

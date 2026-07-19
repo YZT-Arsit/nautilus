@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.ma_crossover_channel_long.config import MaCrossoverChannelLongConfig
+from strategies.ma_crossover_channel_long.execution_adapter import MaCrossoverChannelLongExecutionAdapter
 from strategies.ma_crossover_channel_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: MaCrossoverChannelLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="ma_crossover_channel_long",
     config_cls=MaCrossoverChannelLongConfig,
-    strategy_cls=MaCrossoverChannelLongStrategy,
+    strategy_cls=MaCrossoverChannelLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/ma_crossover_channel_long/config.yaml",
 )

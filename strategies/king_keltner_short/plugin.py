@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.king_keltner_short.execution_adapter import KingKeltnerShortExecutionAdapter
+
 from strategies.king_keltner_short.config import KingKeltnerShortConfig
 from strategies.king_keltner_short.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: KingKeltnerShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="king_keltner_short",
     config_cls=KingKeltnerShortConfig,
-    strategy_cls=KingKeltnerShortStrategy,
+    strategy_cls=KingKeltnerShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/king_keltner_short/config.yaml",
 )

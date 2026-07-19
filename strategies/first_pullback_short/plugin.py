@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.first_pullback_short.execution_adapter import FirstPullbackShortExecutionAdapter
+
 from strategies.first_pullback_short.config import FirstPullbackShortConfig
 from strategies.first_pullback_short.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: FirstPullbackShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="first_pullback_short",
     config_cls=FirstPullbackShortConfig,
-    strategy_cls=FirstPullbackShortStrategy,
+    strategy_cls=FirstPullbackShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/first_pullback_short/config.yaml",
 )

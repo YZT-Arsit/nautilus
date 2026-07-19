@@ -38,6 +38,17 @@ class ReferenceDeviationLongStrategy:
         return self._engine.position
 
     def on_snapshot(self, snapshot: FeatureSnapshot) -> str:
+        """Legacy baseline entry point using the engine's immediate-fill wrapper."""
+        return self.signal_from_snapshot(snapshot)
+
+    def signal_from_snapshot(
+        self,
+        snapshot: FeatureSnapshot,
+        *,
+        position: int | None = None,
+        bars_since_entry: int | None = None,
+    ) -> str:
+        """Generate a signal, optionally using execution-supplied state."""
         open_ = snapshot.value(_OPEN)
         high = snapshot.value(_HIGH)
         low = snapshot.value(_LOW)
@@ -46,8 +57,14 @@ class ReferenceDeviationLongStrategy:
         if open_ is None or high is None or low is None or close is None or volume is None:
             self.last_reason = "warmup_hold"
             return HOLD
-        signal, reason = self._engine.update(
-            float(open_), float(high), float(low), float(close), float(volume)
-        )
+        values = (float(open_), float(high), float(low), float(close), float(volume))
+        if position is None:
+            signal, reason = self._engine.update(*values)
+        else:
+            signal, reason = self._engine.generate_signal(
+                *values,
+                position=position,
+                bars_since_entry=int(bars_since_entry or 0),
+            )
         self.last_reason = reason
         return signal

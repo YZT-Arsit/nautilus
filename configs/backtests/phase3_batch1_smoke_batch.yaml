@@ -1,0 +1,13 @@
+batch_name: phase3/batch1/smoke
+configs:
+  - configs/backtests/phase3_batch1_adx_ma_channel_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_adx_ma_channel_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_avg_channel_range_leader_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_avg_channel_range_leader_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_double_your_fun_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_double_your_fun_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_escalator_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_escalator_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_going_in_style_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch1_going_in_style_short_smoke_7d.yaml
+output: {root: outputs/batches}

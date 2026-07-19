@@ -21,7 +21,12 @@ from typing import Any
 
 from data_engine.adapters.trade_adapter import make_trade_event, side_from_is_buyer_maker
 from data_engine.events import TradeEvent
-from data_engine.sources.hive_partitioning import matching_fragments
+from data_engine.sources.hive_partitioning import (
+    matching_fragments,
+    select_date_window_fragments,
+    validate_market_filters,
+)
+from data_engine.sources.parquet_bars import coerce_partition_date
 from data_engine.split import split_warmup_live
 from data_engine.time import ONE_SECOND_NS, to_event_time_ns, validate_time_unit
 from data_engine.validation import optional_numeric, require_numeric
@@ -44,12 +49,17 @@ class ParquetTradeSource:
         side_column: str | None = "side",
         is_buyer_maker_column: str | None = "is_buyer_maker",
         trade_id_column: str | None = "agg_trade_id",
+        start: object | None = None,
+        end: object | None = None,
     ) -> None:
         validate_time_unit(timestamp_unit)
         self._root = root
         self._instrument_id = instrument_id
         self._warmup = warmup
         self._filters = dict(filters) if filters else {}
+        validate_market_filters(self._filters, data_type="trade")
+        self._start = coerce_partition_date(start, "start")
+        self._end = coerce_partition_date(end, "end")
         self._timestamp_column = timestamp_column
         self._timestamp_unit = timestamp_unit
         self._price_column = price_column
@@ -121,6 +131,12 @@ class ParquetTradeSource:
             raise ValueError(
                 f"no parquet fragments under {self._root!r} match filters {self._filters!r}"
             )
+        if self._start is not None or self._end is not None:
+            fragments = select_date_window_fragments(
+                fragments, self._start, self._end, self._warmup,
+            )
+            if not fragments:
+                raise ValueError("no trade fragments match the requested date window")
 
         # Schema guard based on the matching trade fragments, not the mixed root.
         schema_names = set(fragments[0].physical_schema.names)
@@ -128,6 +144,8 @@ class ParquetTradeSource:
             raise ValueError(f"required price column {self._price_column!r} is missing")
         if self._quantity_column not in schema_names:
             raise ValueError(f"required quantity column {self._quantity_column!r} is missing")
+        if self._timestamp_column not in schema_names:
+            raise ValueError(f"required timestamp column {self._timestamp_column!r} is missing")
 
         wanted = [
             self._timestamp_column,
@@ -156,17 +174,27 @@ class ParquetTradeSource:
         return self._trades
 
     def warmup(self) -> list[TradeEvent]:
-        return split_warmup_live(self._trades_cached(), self._warmup)[0]
+        return self._split_cached()[0]
 
     def stream(self) -> list[TradeEvent]:
-        return split_warmup_live(self._trades_cached(), self._warmup)[1]
+        return self._split_cached()[1]
+
+    def _split_cached(self) -> tuple[list[TradeEvent], list[TradeEvent]]:
+        trades = self._trades_cached()
+        if self._start is None:
+            return split_warmup_live(trades, self._warmup)
+        from datetime import datetime, time, timezone  # noqa: PLC0415
+        start_ns = int(datetime.combine(self._start, time.min, timezone.utc).timestamp() * 1_000_000_000)
+        prior = [trade for trade in trades if trade.event_time_ns < start_ns]
+        live = [trade for trade in trades if trade.event_time_ns >= start_ns]
+        return prior[-self._warmup:] if self._warmup else [], live
 
 
 def load_parquet_trades(data_config: dict[str, Any]) -> tuple[list[TradeEvent], list[TradeEvent]]:
     """Build a :class:`ParquetTradeSource` from a config and return ``(warmup, live)``."""
     root = data_config.get("root") or data_config.get("path")
     if not root:
-        raise ValueError("parquet_trades mode requires a 'root' directory for the Parquet dataset")
+        raise ValueError("hive_parquet_trades mode requires a market_data 'root'")
     source = ParquetTradeSource(
         root=root,
         instrument_id=data_config.get("instrument_id", "BTC/USDT"),
@@ -180,5 +208,7 @@ def load_parquet_trades(data_config: dict[str, Any]) -> tuple[list[TradeEvent], 
         side_column=data_config.get("side_column", "side"),
         is_buyer_maker_column=data_config.get("is_buyer_maker_column", "is_buyer_maker"),
         trade_id_column=data_config.get("trade_id_column", "agg_trade_id"),
+        start=data_config.get("start"),
+        end=data_config.get("end"),
     )
-    return split_warmup_live(source._trades_cached(), source._warmup)
+    return source.warmup(), source.stream()

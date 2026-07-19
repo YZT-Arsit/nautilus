@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import rolling_std
+from feature_engine.indicators import rolling_std, sma
 
 from strategies.bollinger_bandit_short.config import BollingerBanditShortConfig
 
@@ -63,14 +63,14 @@ class BollingerBanditShortEngine:
     def _sma(self, period: int) -> float | None:
         if len(self._closes) < period:
             return None
-        return sum(list(self._closes)[-period:]) / period
+        return sma(list(self._closes)[-period:])
 
     def _sma_avail(self, period: int) -> float | None:
         """SMA over the last ``min(period, len)`` closes (TB Average during warmup)."""
         if not self._closes:
             return None
         n = min(period, len(self._closes))
-        return sum(list(self._closes)[-n:]) / n
+        return sma(list(self._closes)[-n:])
 
     def update(self, open_: float, high: float, low: float, close: float, volume: float):
         cfg = self.cfg

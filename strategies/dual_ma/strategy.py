@@ -48,3 +48,9 @@ class DualMaStrategy:
         label, actions, reason = self._engine.update(float(open_), float(close))
         self.last_reason = reason
         return PlannedSignal(label, actions)
+
+    def on_warmup_snapshot(self, snapshot: FeatureSnapshot) -> None:
+        """Advance the decision engine without emitting or assuming an order."""
+        close = snapshot.value(_CLOSE)
+        if close is not None:
+            self._engine.warmup(float(close))

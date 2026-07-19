@@ -34,6 +34,7 @@ Config (``execution:`` block)::
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,13 @@ from strategy_framework.execution.reports import ExecutionReport
 from strategy_framework.execution.signal_policy import SignalToOrderPolicy, plan_to_intents
 
 _SUPPORTED_MODES = ("simulated", "nautilus_native")
+
+
+def _fee_label(fee: float) -> str:
+    if float(fee) == 0.0:
+        return "nofee"
+    bps = float(fee) * 10_000
+    return f"fee_{int(bps)}bps" if bps == int(bps) else f"fee_{bps:g}bps".replace(".", "p")
 
 
 def try_translate_to_nautilus_order(intent: OrderIntent):
@@ -82,11 +90,12 @@ def _intent_action(intent: Any) -> tuple[str, float] | None:
     return None
 
 
-def _shift_intents_to_next_bar(
+def _shift_intents_by_bars(
     intents_by_ts: dict[int, tuple[str, float]],
     ordered_ts: list[int],
+    latency_bars: int = 1,
 ) -> tuple[dict[int, tuple[str, float]], int]:
-    """Shift each intent's *execution* timestamp to the next bar (``next_bar`` mode).
+    """Shift each intent's execution timestamp by ``latency_bars`` bars.
 
     ``ordered_ts`` is the full, ascending, de-duplicated list of bar timestamps.
     An intent keyed at ``ts[t]`` moves to ``ts[t+1]``; an intent on the final bar
@@ -99,9 +108,11 @@ def _shift_intents_to_next_bar(
     strictly increasing sequence, so distinct intents never collide after the
     shift (no silent loss): every non-tail intent is preserved.
     """
+    if latency_bars < 0:
+        raise ValueError("latency_bars must be non-negative")
     next_of: dict[int, int] = {}
-    for i in range(len(ordered_ts) - 1):
-        next_of[ordered_ts[i]] = ordered_ts[i + 1]
+    for i in range(len(ordered_ts) - latency_bars):
+        next_of[ordered_ts[i]] = ordered_ts[i + latency_bars]
     shifted: dict[int, tuple[str, float]] = {}
     dropped = 0
     for ts, action in intents_by_ts.items():
@@ -137,6 +148,9 @@ class NautilusBacktestBackend:
         self._allow_short = bool(cfg.get("allow_short", False))
         self._price_field = cfg.get("price_field", "close")
         self._fee_rate = float(cfg.get("fee_rate", 0.0))
+        self._fee_scenarios = [float(value) for value in cfg.get("fee_scenarios", [])]
+        if len(self._fee_scenarios) > 1 and self._mode != "simulated":
+            raise ValueError("single-pass fee_scenarios currently require mode='simulated'")
         self._slippage_bps = float(cfg.get("slippage_bps", 0.0))
 
         # Execution timing: same_bar (default, legacy) submits/fills on the signal
@@ -149,11 +163,12 @@ class NautilusBacktestBackend:
                 f"unknown fill_timing {self._fill_timing!r}. Supported: "
                 "('same_bar', 'next_bar')"
             )
-        if self._fill_timing == "next_bar" and self._mode == "simulated":
-            raise ValueError(
-                "fill_timing='next_bar' is only supported with mode='nautilus_native' "
-                "in this step; the simulated reference fill model is same_bar only."
-            )
+        default_latency = 1 if self._fill_timing == "next_bar" else 0
+        self._latency_bars = int(cfg.get("latency_bars", default_latency))
+        if self._latency_bars < 0:
+            raise ValueError("latency_bars must be non-negative")
+        if self._fill_timing == "same_bar" and self._latency_bars:
+            raise ValueError("same_bar execution requires latency_bars=0")
         # Populated at close(): the (possibly shifted) execution map + its stats.
         self._exec_map: dict[int, tuple[str, float]] | None = None
         self._exec_stats: dict[str, Any] | None = None
@@ -169,6 +184,9 @@ class NautilusBacktestBackend:
         self._signal_rows: list[dict[str, Any]] = []
         self._intent_rows: list[dict[str, Any]] = []
         self._intents_by_ts: dict[int, tuple[str, float]] = {}
+        self._pending_simulated: list[tuple[int, Any]] = []
+        self._bar_index = -1
+        self._dropped_pending = 0
 
         # Run/output context (provided by run_strategy; may be empty for unit use).
         data_cfg = ctx.get("data", {}) or {}
@@ -176,7 +194,9 @@ class NautilusBacktestBackend:
         self._run_name = ctx.get("run_name") or cfg.get("run_name") or "backtest"
         self._config = ctx.get("config")
         self._output_dir = self._resolve_output_dir(ctx)
+        self._funding_events = list(ctx.get("funding_events") or [])
         self.last_result = None  # populated by close() when a report is written
+        self.last_results = []
 
         # The simulated reference fill model (only built when needed).
         self._simulator = None
@@ -205,6 +225,7 @@ class NautilusBacktestBackend:
     # -- streaming -----------------------------------------------------------
 
     def on_signal(self, event: Any, snapshot: Any, signal: str) -> None:
+        self._bar_index += 1
         ts = getattr(event, "event_time_ns", None)
         instrument_id = getattr(event, "instrument_id", None)
         close = getattr(event, "close", None)
@@ -220,6 +241,8 @@ class NautilusBacktestBackend:
                 "volume": getattr(event, "volume", 0.0),
             }
         )
+        if self._mode == "simulated" and self._latency_bars:
+            self._execute_due_simulated(event)
         value = getattr(snapshot, "value", lambda *_: None)
         self._signal_rows.append(
             {
@@ -260,7 +283,10 @@ class NautilusBacktestBackend:
             }
         )
         if self._mode == "simulated":
-            self._simulator.on_intent(intent, event)
+            if self._latency_bars:
+                self._pending_simulated.append((self._bar_index + self._latency_bars, intent))
+            else:
+                self._simulator.on_intent(intent, event)
         elif self._mode == "nautilus_native":
             if ts is None or action is None:
                 return
@@ -274,6 +300,19 @@ class NautilusBacktestBackend:
                     "multi-order replay is a follow-up."
                 )
             self._intents_by_ts[int(ts)] = action
+
+    def _execute_due_simulated(self, event: Any) -> None:
+        """Fill due intents at the delayed bar open with execution timestamp."""
+        due = [item for item in self._pending_simulated if item[0] <= self._bar_index]
+        self._pending_simulated = [item for item in self._pending_simulated if item[0] > self._bar_index]
+        execution_ts = int(getattr(event, "event_time_ns", 0))
+        execution_price = float(getattr(event, "open", getattr(event, "close")))
+        for _, intent in due:
+            metadata = {**(getattr(intent, "metadata", {}) or {})}
+            metadata["signal_time_ns"] = int(getattr(intent, "event_time_ns", 0))
+            metadata["fill_price"] = execution_price
+            delayed = replace(intent, event_time_ns=execution_ts, metadata=metadata)
+            self._simulator.on_intent(delayed, event)
 
     # -- introspection (unchanged shape) -------------------------------------
 
@@ -318,24 +357,30 @@ class NautilusBacktestBackend:
             int(b["event_time_ns"]) for b in self._bar_rows
             if b.get("event_time_ns") is not None
         })
-        shifted, dropped = _shift_intents_to_next_bar(self._intents_by_ts, ordered_ts)
+        shifted, dropped = _shift_intents_by_bars(
+            self._intents_by_ts, ordered_ts, self._latency_bars,
+        )
         return shifted, {
             "fill_timing": "next_bar",
             "original_intent_count": original,
             "executed_intent_count": len(shifted),
             "dropped_tail_intents": dropped,
+            "latency_bars": self._latency_bars,
         }
 
     def _collect_fills(self):
         """Return ``(fills, engine_summary)`` from the configured fill source."""
         if self._mode == "simulated":
-            return list(self._simulator.report().fills), None
+            self._dropped_pending = len(self._pending_simulated)
+            fills = list(self._simulator.report().fills)
+            from strategy_framework.execution.costs import apply_adverse_slippage
+            return [apply_adverse_slippage(fill, self._slippage_bps) for fill in fills], None
         # native: run the real Nautilus engine (lazy import keeps this module clean)
         from strategy_framework.backends.nautilus_native import run_native_backtest
 
         # Use the fill_timing-resolved execution map (same_bar = identity).
         exec_map = self._exec_map if self._exec_map is not None else self._intents_by_ts
-        return run_native_backtest(
+        fills, summary = run_native_backtest(
             bars=self._bar_rows,
             intents_by_ts=exec_map,
             instrument_id=self._instrument_id,
@@ -345,44 +390,61 @@ class NautilusBacktestBackend:
             fee_rate=self._fee_rate,
             slippage_bps=self._slippage_bps,
         )
+        from strategy_framework.execution.costs import apply_adverse_slippage
+        return [apply_adverse_slippage(fill, self._slippage_bps) for fill in fills], summary
 
     def close(self) -> None:
         # Resolve the execution intent map (same_bar = identity; next_bar shifts
         # execution to the following bar) BEFORE collecting fills, and keep its
         # stats for the report.
         self._exec_map, self._exec_stats = self._execution_intents()
+        if self._mode == "simulated":
+            self._exec_stats["executed_intent_count"] = len(self._simulator.report().fills)
+            self._exec_stats["dropped_tail_intents"] = len(self._pending_simulated)
+            self._exec_stats["latency_bars"] = self._latency_bars
         fills, engine_summary = self._collect_fills()
 
         if self._output_dir is not None:
             from strategy_framework.execution.backtest_report import write_backtest_report
-
-            result = write_backtest_report(
-                output_dir=self._output_dir,
-                run_name=self._run_name,
-                mode=self._mode,
-                backend="nautilus_backtest",
-                initial_cash=self._initial_cash,
-                bars=self._bar_rows,
-                signals=self._signal_rows,
-                intents=self._intent_rows,
-                fills=fills,
-                feature_names=self._spec_names,
-                fee_rate=self._fee_rate,
-                slippage_bps=self._slippage_bps,
-                fill_timing=self._fill_timing,
-                execution_stats=self._exec_stats,
-                config=self._config,
-                engine_summary=engine_summary,
-            )
-            self.last_result = result
-            m = result.metrics
-            print(f"[nautilus_backtest] mode={self._mode} run={self._run_name}")
-            print(f"  output: {result.output_dir}")
-            print(
-                f"  metrics: final_equity={m['final_equity']:.2f} "
-                f"total_return={m['total_return']:.4%} trades={m['trade_count']} "
-                f"fills={m['fill_count']}"
-            )
+            scenarios = self._fee_scenarios or [self._fee_rate]
+            multi = len(scenarios) > 1
+            for fee in scenarios:
+                run_name = f"{self._run_name}/{_fee_label(fee)}" if multi else self._run_name
+                output_dir = self._output_dir / _fee_label(fee) if multi else self._output_dir
+                result = write_backtest_report(
+                    output_dir=output_dir,
+                    run_name=run_name,
+                    mode=self._mode,
+                    backend="nautilus_backtest",
+                    initial_cash=self._initial_cash,
+                    bars=self._bar_rows,
+                    signals=self._signal_rows,
+                    intents=self._intent_rows,
+                    fills=fills,
+                    feature_names=self._spec_names,
+                    fee_rate=fee,
+                    slippage_bps=self._slippage_bps,
+                    fill_timing=self._fill_timing,
+                    execution_stats=self._exec_stats,
+                    funding_events=self._funding_events,
+                    config=self._config,
+                    engine_summary=engine_summary,
+                )
+                self.last_result = result
+                self.last_results.append(result)
+                m = result.metrics
+                print(f"[nautilus_backtest] mode={self._mode} run={run_name}")
+                print(f"  output: {result.output_dir}")
+                print(
+                    f"  metrics: final_equity={m['final_equity']:.2f} "
+                    f"total_return={m['total_return']:.4%} trades={m['trade_count']} "
+                    f"fills={m['fill_count']}"
+                )
+            if multi:
+                from results.charts import render_fee_compare
+                render_fee_compare(self._output_dir)
+                from strategy_framework.execution.backtest_report import write_artifact_manifest
+                write_artifact_manifest(self._output_dir, self._run_name)
             return
 
         # No output directory configured: print a concise summary only.

@@ -2,7 +2,8 @@
 """CLI: Ingest Binance Vision historical market data into Hive Parquet.
 
 Downloads bars from Binance Vision archive and writes to market_data with
-Hive partitioning (exchange=BINANCE/venue_type=.../symbol=.../bar_type=.../date=...).
+Locked Hive partitioning:
+``asset_class/exchange/venue_type/symbol/data_type/freq/date``.
 
 Examples::
 
@@ -73,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--data-type",
         default="klines",
-        choices=["klines", "aggTrades"],
+        choices=["klines", "aggTrades", "fundingRate", "fundingRateApi"],
         help="Data type to ingest (default: klines)",
     )
     ap.add_argument(
@@ -126,6 +127,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         # Validate date formats
+        if args.data_type == "fundingRate" and args.frequency != "monthly":
+            print("Error: fundingRate archives are monthly", file=sys.stderr)
+            return 1
+        if args.data_type == "fundingRateApi" and args.frequency != "daily":
+            print("Error: fundingRateApi uses daily start/end dates", file=sys.stderr)
+            return 1
         if args.frequency == "monthly":
             try:
                 datetime.strptime(args.start, "%Y-%m")
@@ -142,7 +149,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
 
         is_trades = args.data_type == "aggTrades"
-        if not is_trades and not args.interval:
+        is_funding = args.data_type in ("fundingRate", "fundingRateApi")
+        if not is_trades and not is_funding and not args.interval:
             print("Error: --interval is required for --data-type klines", file=sys.stderr)
             return 1
 
@@ -150,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  Data type: {args.data_type}")
         print(f"  Market: {args.market}")
         print(f"  Symbol: {args.symbol}")
-        if not is_trades:
+        if not is_trades and not is_funding:
             print(f"  Interval: {args.interval}")
         print(f"  Frequency: {args.frequency}")
         print(f"  Date range: {args.start} to {args.end}")
@@ -163,7 +171,19 @@ def main(argv: list[str] | None = None) -> int:
 
         # Import data
         importer = BinanceVisionImporter(timeout=args.timeout)
-        if is_trades:
+        if is_funding:
+            if args.data_type == "fundingRateApi":
+                df = importer.import_funding_api_period(
+                    symbol=args.symbol, start_date=args.start, end_date=args.end,
+                )
+            else:
+                df = importer.import_funding_period(
+                    symbol=args.symbol,
+                    start_date=args.start,
+                    end_date=args.end,
+                )
+            unit_label, price_field = "funding settlements", None
+        elif is_trades:
             df = importer.import_aggtrades_period(
                 market=args.market,
                 symbol=args.symbol,
@@ -190,7 +210,10 @@ def main(argv: list[str] | None = None) -> int:
 
         # Show sample
         print(f"  Date range: {df['ts'].min()} to {df['ts'].max()}")
-        print(f"  Price range: {df[price_field].min()} to {df[price_field].max()}")
+        if price_field:
+            print(f"  Price range: {df[price_field].min()} to {df[price_field].max()}")
+        else:
+            print(f"  Funding rate range: {df['funding_rate'].min()} to {df['funding_rate'].max()}")
         print()
 
         if args.dry_run:
@@ -210,23 +233,27 @@ def main(argv: list[str] | None = None) -> int:
         output_root.mkdir(parents=True, exist_ok=True)
 
         # Locked layout: asset_class/exchange/venue_type/symbol/data_type/freq/date
-        # (see docs/PLATFORM_ARCHITECTURE.md §2.3). data_type + freq are explicit;
-        # asset_class=crypto for Binance.
+        # data_type + freq are explicit; asset_class=crypto for Binance.
         df_with_date = df.with_columns([
             pl.col("ts").dt.strftime("%Y-%m-%d").alias("date"),
             pl.lit("crypto").alias("asset_class"),
         ])
-        if is_trades:
+        if is_funding:
+            df_with_date = df_with_date.with_columns([
+                pl.lit("funding_rate").alias("data_type"),
+                pl.lit("settlement").alias("freq"),
+            ])
+        elif is_trades:
             df_with_date = df_with_date.with_columns([
                 pl.lit("trade").alias("data_type"),
                 pl.lit("tick").alias("freq"),
             ])
         else:
-            # bar_type (e.g. "1m") becomes the freq dimension; data_type=bar.
+            # The adapter's transient bar_type becomes the locked freq partition.
             df_with_date = df_with_date.with_columns([
                 pl.lit("bar").alias("data_type"),
                 pl.col("bar_type").alias("freq"),
-            ])
+            ]).drop("bar_type")
         partitioning_cols = [
             "asset_class", "exchange", "venue_type", "symbol", "data_type", "freq", "date",
         ]
@@ -252,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             existing_data_behavior=existing_behavior,
             basename_template="part-{i}.parquet",
             file_visitor=_visit,
+            max_partitions=4096,
         )
 
         print(f"  Wrote {len(written_paths)} file(s)")

@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import simple_atr, sma, true_range
 
 from strategies.keltner_channel_long.config import KeltnerChannelLongConfig
 
@@ -75,11 +75,11 @@ class KeltnerChannelLongEngine:
 
         # 1. Channel: SMA(close) +/- Constt * ATR(length).
         self._closes.append(close)
-        avgval = sum(self._closes) / len(self._closes) if len(self._closes) == cfg.length else None
+        avgval = sma(self._closes) if len(self._closes) == cfg.length else None
         tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
-        avgrange = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.length else None
+        avgrange = simple_atr(self._trs, cfg.length)
 
         kcu = None
         chan_rng = None

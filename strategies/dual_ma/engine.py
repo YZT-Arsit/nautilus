@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import sma
 from strategy_framework.execution.intents import TradeAction
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -51,7 +52,7 @@ class DualMaEngine:
     def _sma(self, period: int) -> float | None:
         if len(self._closes) < period:
             return None
-        return sum(list(self._closes)[-period:]) / period
+        return sma(list(self._closes)[-period:])
 
     def update(self, open_: float, close: float):
         cfg = self.cfg
@@ -82,6 +83,12 @@ class DualMaEngine:
 
         label = self._label(actions)
         return label, actions, reason
+
+    def warmup(self, close: float) -> None:
+        """Advance MA history without changing the simulated position."""
+        self._closes.append(close)
+        self._prev_fast = self._sma(self.cfg.fast_length)
+        self._prev_slow = self._sma(self.cfg.slow_length)
 
     @staticmethod
     def _label(actions: list[TradeAction]) -> str:

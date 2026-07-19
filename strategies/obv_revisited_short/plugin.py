@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.obv_revisited_short.execution_adapter import ObvRevisitedShortExecutionAdapter
+
 from strategies.obv_revisited_short.config import ObvRevisitedShortConfig
 from strategies.obv_revisited_short.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: ObvRevisitedShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="obv_revisited_short",
     config_cls=ObvRevisitedShortConfig,
-    strategy_cls=ObvRevisitedShortStrategy,
+    strategy_cls=ObvRevisitedShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/obv_revisited_short/config.yaml",
 )

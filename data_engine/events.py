@@ -81,3 +81,21 @@ class QuoteEvent:
     @property
     def spread(self) -> float:
         return self.ask_price - self.bid_price
+
+
+@dataclass
+class FundingRateEvent:
+    """One perpetual-contract funding settlement observation.
+
+    Positive rates mean longs pay shorts. ``mark_price`` is optional because
+    Binance Vision's archived funding files contain the settled rate but not the
+    mark; the account layer then uses the latest available contract mark.
+    """
+
+    event_time_ns: int
+    instrument_id: str
+    funding_rate: float
+    interval_hours: int | None = None
+    mark_price: float | None = None
+    source: str | None = None
+    event_type: str = "funding_rate"

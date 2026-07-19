@@ -4,33 +4,17 @@ The strategy keeps its own rolling ``deque`` and passes the current window slice
 here; these functions carry no state. They reproduce the exact maths the strategy
 ports used inline:
 
-* ``sma``          — simple mean of the window (TradeBlazer ``Average``).
 * ``rolling_std``  — standard deviation with an explicit divisor: ``ddof=1`` is the
   sample std (TB ``StandardDev`` DataType 2), ``ddof=0`` the population std
   (DataType 1). Returns ``0.0`` when the window is too small.
 * ``highest`` / ``lowest`` — Donchian channel extremes over the window.
 * ``round_half_up`` — TradeBlazer ``Round(x, 0)`` (round half away toward +inf via
   ``floor(x + 0.5)``, matching the ports' adaptive-lookback rounding).
-* ``true_range`` — TradeBlazer ``TrueRange``: ``high - low`` on the first bar (no
-  prior close), otherwise ``max(high - low, |high - prev_close|, |low - prev_close|)``.
-  A simple ATR is then ``sma`` of a rolling ``true_range`` window.
 """
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-
-
-def sma(window: Sequence[float]) -> float:
-    """Simple mean of ``window`` (caller guarantees it is non-empty)."""
-    return sum(window) / len(window)
-
-
-def true_range(high: float, low: float, prev_close: float | None) -> float:
-    """TradeBlazer ``TrueRange``; ``high - low`` when there is no ``prev_close``."""
-    if prev_close is None:
-        return high - low
-    return max(high - low, abs(high - prev_close), abs(low - prev_close))
 
 
 def rolling_std(window: Sequence[float], ddof: int) -> float:

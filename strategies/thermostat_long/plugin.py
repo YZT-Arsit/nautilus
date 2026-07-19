@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.thermostat_long.config import ThermostatLongConfig
+from strategies.thermostat_long.execution_adapter import ThermostatLongExecutionAdapter
 from strategies.thermostat_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: ThermostatLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="thermostat_long",
     config_cls=ThermostatLongConfig,
-    strategy_cls=ThermostatLongStrategy,
+    strategy_cls=ThermostatLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/thermostat_long/config.yaml",
 )

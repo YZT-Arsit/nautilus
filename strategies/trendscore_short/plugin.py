@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.trendscore_short.execution_adapter import TrendScoreShortExecutionAdapter
+
 from strategies.trendscore_short.config import TrendScoreShortConfig
 from strategies.trendscore_short.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: TrendScoreShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="trendscore_short",
     config_cls=TrendScoreShortConfig,
-    strategy_cls=TrendScoreShortStrategy,
+    strategy_cls=TrendScoreShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/trendscore_short/config.yaml",
 )

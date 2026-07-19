@@ -22,3 +22,6 @@ class Ema:
         else:
             self.value += self._alpha * (x - self.value)
         return self.value
+
+    def reset(self) -> None:
+        self.value = None

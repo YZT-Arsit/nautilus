@@ -28,7 +28,7 @@ from data_engine import BarEvent, load_events, make_bar_event, make_bars
 | `time.py` | `ONE_SECOND_NS`, `to_event_time_ns(value, unit)` for ns/us/ms/s |
 | `validation.py` | `require_numeric`, `optional_numeric` (no pandas) |
 | `schema.py` | bar field-name constants |
-| `split.py` | `split_warmup_live(events, warmup_bars)` |
+| `split.py` | Warmup/live split for non-windowed sources |
 | `adapters/bar_adapter.py` | `make_bar_event(...)`, `make_bars(...)` |
 | `streams/base.py` | `EventSource` protocol (`warmup()` / `stream()`) |
 | `sources/synthetic.py` | `SyntheticBarSource` + `load_synthetic_bars` |
@@ -43,8 +43,9 @@ from data_engine import BarEvent, load_events, make_bar_event, make_bars
 |------|--------|-------------|
 | `synthetic` | generated flat→rise→fall demo path | list |
 | `csv_bars` | historical replay from a local CSV (small demos/tests) | list |
-| `parquet_bars` / `hive_parquet_bars` | historical replay from a Hive-partitioned Parquet dataset (production-style) | list |
-| `parquet_trades` / `hive_parquet_trades` | historical trades (tick) from a Hive Parquet dataset → `TradeEvent` | list |
+| `hive_parquet_bars` | bars from the locked `market_data` Hive dataset | list |
+| `hive_parquet_trades` | trades from the same locked Hive dataset → `TradeEvent` | list |
+| `hive_parquet_funding` | perpetual funding settlements → `FundingRateEvent` | list |
 | `live_synthetic` | streaming skeleton (no real feed) | generator |
 | `live_gateway` | CTP-like gateway skeleton (`provider: mock` by default) | generator |
 | `binance_ws` | **live Binance public market-data WS** (aggTrade→`TradeEvent`, bookTicker→`QuoteEvent`); bounded by `max_messages`+`timeout_seconds` | generator |
@@ -71,34 +72,40 @@ data:
 the primary `stream.binance.com` host is unreachable from some networks (e.g. the
 project server, where it is TCP-blocked while the mirror is reachable).
 
-All historical sources sort by event time **once** after loading, then split the
-first `warmup_bars` rows as warmup. Missing O/H/L default to `close`, missing
-volume to `0.0`, and a missing timestamp column yields monotonic 1-second
-timestamps.
+All historical sources sort by event time once. For a bounded Hive query,
+`warmup_bars` is taken from partitions immediately before `start`; the live
+stream still begins at `start`, so warmup never consumes the requested backtest
+window. The locked Parquet schema requires the configured timestamp column.
 
 - **`csv_bars`** — for small demo/test files (stdlib `csv`, no extra deps).
-- **`parquet_bars` / `hive_parquet_bars`** — preferred for larger historical
-  backtests. Reads a Hive-partitioned dataset with `pyarrow.dataset` using
+- **`hive_parquet_bars`** — the only historical bar reader. It requires the
+  locked partition selector
+  `asset_class/exchange/venue_type/symbol/data_type/freq` and optionally `date`.
+  It reads with `pyarrow.dataset` using
   **partition pruning** (simple equality `filters`) and **column pushdown**
   (only needed bar columns are read). Example config:
 
   ```yaml
   data:
-    mode: parquet_bars        # or: hive_parquet_bars
-    root: data/bars
-    instrument_id: BTC/USDT
+    mode: hive_parquet_bars
+    root: historical_data/market_data
+    instrument_id: BTCUSDT.BINANCE
     warmup_bars: 20
-    partition_cols: [trading_date, instrument_id]
     filters:
-      trading_date: "2024-01-01"
-      instrument_id: BTC/USDT
-    timestamp_column: event_time_ns
+      asset_class: crypto
+      exchange: BINANCE
+      venue_type: futures_um
+      symbol: BTCUSDT
+      data_type: bar
+      freq: 1m
+    start: "2024-07-01"
+    end: "2024-07-03"
+    timestamp_column: ts
     timestamp_unit: ns
   ```
 
   `pyarrow` is the only added dependency; **no pandas**. The source returns plain
-  `BarEvent` objects and shares the design (not the code) of the older
-  `quant_feature_engine` Parquet store.
+  `BarEvent` objects.
 
 ## Adding a real live source later
 

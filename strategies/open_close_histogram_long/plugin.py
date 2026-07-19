@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.open_close_histogram_long.execution_adapter import OpenCloseHistogramLongExecutionAdapter
+
 from strategies.open_close_histogram_long.config import OpenCloseHistogramLongConfig
 from strategies.open_close_histogram_long.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: OpenCloseHistogramLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="open_close_histogram_long",
     config_cls=OpenCloseHistogramLongConfig,
-    strategy_cls=OpenCloseHistogramLongStrategy,
+    strategy_cls=OpenCloseHistogramLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/open_close_histogram_long/config.yaml",
 )

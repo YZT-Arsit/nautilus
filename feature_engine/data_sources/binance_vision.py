@@ -6,13 +6,15 @@ Supports spot, futures_um (USD-M), and futures_cm (COIN-M) markets.
 from __future__ import annotations
 
 import io
+import json
 import warnings
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING
 from urllib.request import urlopen
+from urllib.parse import urlencode
 from urllib.error import HTTPError
 
 if TYPE_CHECKING:
@@ -353,6 +355,100 @@ def build_binance_vision_aggtrades_url(
     return f"{base_url}/daily/aggTrades/{symbol}/{symbol}-aggTrades-{date}.zip"
 
 
+def build_binance_vision_funding_url(symbol: str, date: str) -> str:
+    """Return the USD-M monthly funding-rate archive URL."""
+    if len(date) != 7 or date[4] != "-":
+        raise ValueError(f"Monthly date must be YYYY-MM format, got {date}")
+    return (
+        "https://data.binance.vision/data/futures/um/monthly/fundingRate/"
+        f"{symbol}/{symbol}-fundingRate-{date}.zip"
+    )
+
+
+def read_binance_funding_zip(
+    url_or_bytes: str | bytes, *, timeout: int = 30,
+) -> list[dict]:
+    """Read Binance Vision's funding CSV into neutral rows."""
+    if isinstance(url_or_bytes, str):
+        try:
+            response = urlopen(url_or_bytes, timeout=timeout)
+            zip_bytes = response.read()
+        except HTTPError as e:
+            raise HTTPError(
+                url_or_bytes, e.code, f"Download failed: {e.code} at {url_or_bytes}",
+                e.hdrs, e.fp,
+            ) from e
+    else:
+        zip_bytes = url_or_bytes
+    rows: list[dict] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            csv_files = [name for name in zf.namelist() if name.endswith(".csv")]
+            if not csv_files:
+                raise ValueError("No CSV file found in ZIP")
+            lines = zf.read(csv_files[0]).decode("utf-8").strip().splitlines()
+            for line in lines:
+                fields = line.strip().split(",")
+                if len(fields) < 3:
+                    continue
+                try:
+                    rows.append({
+                        "calc_time": int(fields[0]),
+                        "funding_interval_hours": int(fields[1]),
+                        "funding_rate": float(fields[2]),
+                    })
+                except ValueError:  # header or malformed row
+                    continue
+    except zipfile.BadZipFile as e:
+        raise IOError("Invalid ZIP format") from e
+    return rows
+
+
+def normalize_binance_funding(rows: list[dict], *, symbol: str) -> "pl.DataFrame":
+    """Normalize archived USD-M settlements to the funding-rate schema."""
+    if not rows:
+        raise ValueError("No funding rows to normalize")
+    import polars as pl  # noqa: PLC0415
+
+    ingested_at = datetime.utcnow()
+    normalized = [{
+        "ts": datetime.utcfromtimestamp(row["calc_time"] / 1000),
+        "exchange": "BINANCE",
+        "venue_type": "futures_um",
+        "symbol": symbol,
+        "instrument_id": f"{symbol}-PERP.BINANCE",
+        "funding_rate": float(row["funding_rate"]),
+        "funding_interval_hours": int(row["funding_interval_hours"]),
+        "source": "binance_vision_funding_rate",
+        "ingested_at": ingested_at,
+    } for row in rows]
+    return pl.DataFrame(normalized).sort("ts")
+
+
+def read_binance_funding_api(
+    symbol: str, start_date: str, end_date: str, *, timeout: int = 30,
+) -> list[dict]:
+    """Fetch the not-yet-archived USD-M funding tail from the public REST API."""
+    start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end = (
+        datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        + timedelta(days=1) - timedelta(milliseconds=1)
+    )
+    params = urlencode({
+        "symbol": symbol,
+        "startTime": int(start.timestamp() * 1000),
+        "endTime": int(end.timestamp() * 1000),
+        "limit": 1000,
+    })
+    with urlopen(f"https://fapi.binance.com/fapi/v1/fundingRate?{params}", timeout=timeout) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return [{
+        "calc_time": int(row["fundingTime"]),
+        "funding_interval_hours": 8,
+        "funding_rate": float(row["fundingRate"]),
+    } for row in payload]
+
+
 def _parse_bool(value: str) -> bool:
     """Parse a Binance CSV boolean ('true'/'false', case-insensitive)."""
     return str(value).strip().lower() in ("true", "1")
@@ -610,6 +706,41 @@ class BinanceVisionImporter:
         import polars as pl  # noqa: PLC0415
         return pl.concat(all_dfs).sort("ts")
 
+    def import_funding_period(
+        self, symbol: str, start_date: str, end_date: str,
+    ) -> "pl.DataFrame":
+        """Import monthly USD-M funding settlements for a date range."""
+        dates = self._generate_dates("monthly", start_date, end_date)
+        all_dfs = []
+        failed_dates = []
+        for date in dates:
+            try:
+                rows = read_binance_funding_zip(
+                    build_binance_vision_funding_url(symbol, date), timeout=self.timeout,
+                )
+                if rows:
+                    all_dfs.append(normalize_binance_funding(rows, symbol=symbol))
+            except (HTTPError, IOError, ValueError) as exc:
+                failed_dates.append((date, str(exc)))
+        if not all_dfs:
+            raise ValueError(f"Failed to import any funding data. Failed dates: {failed_dates}")
+        if failed_dates:
+            for date, error in failed_dates[:3]:
+                print(f"Warning: failed to import funding {date}: {error}")
+        import polars as pl  # noqa: PLC0415
+        return pl.concat(all_dfs).sort("ts")
+
+    def import_funding_api_period(
+        self, symbol: str, start_date: str, end_date: str,
+    ) -> "pl.DataFrame":
+        """Import the current unarchived funding tail from Binance REST."""
+        return normalize_binance_funding(
+            read_binance_funding_api(
+                symbol, start_date, end_date, timeout=self.timeout,
+            ),
+            symbol=symbol,
+        )
+
     @staticmethod
     def _generate_dates(
         frequency: Frequency,
@@ -666,6 +797,10 @@ __all__ = [
     "build_binance_vision_aggtrades_url",
     "read_binance_aggtrades_zip",
     "normalize_binance_aggtrades",
+    "build_binance_vision_funding_url",
+    "read_binance_funding_zip",
+    "normalize_binance_funding",
+    "read_binance_funding_api",
     "StandardTrade",
     "Market",
     "Frequency",

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import sma
 from strategies.avg_channel_range_leader_short.config import AvgChannelRangeLeaderShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -66,7 +67,7 @@ class AvgChannelRangeLeaderShortEngine:
     def _mean(dq: deque[float], period: int) -> float | None:
         if len(dq) < period:
             return None
-        return sum(dq) / len(dq)
+        return sma(dq)
 
     def update(self, open_: float, high: float, low: float, close: float, volume: float):
         cfg = self.cfg

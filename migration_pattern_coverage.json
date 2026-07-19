@@ -1,0 +1,58 @@
+[
+  {
+    "pattern": "position_gate",
+    "strategy_count": 2,
+    "examples": ["vwm_long", "vwm_short"],
+    "coverage_status": "covered",
+    "notes": "Dominant pattern count is 2. Fill-owned position gating is also a cross-cutting dependency of every other B-class mapping."
+  },
+  {
+    "pattern": "fill_anchored_price",
+    "strategy_count": 16,
+    "examples": ["bollinger_bandit_long", "dynamic_breakout_long", "king_keltner_long"],
+    "coverage_status": "covered",
+    "notes": "Existing state adapter boundary can replace theoretical entry/exit price and internal position with confirmed fill state while preserving signal conditions."
+  },
+  {
+    "pattern": "market_derived_stop_target",
+    "strategy_count": 36,
+    "examples": ["adx_ma_channel_long", "escalator_long", "traffic_jam_long"],
+    "coverage_status": "covered",
+    "notes": "Stop/target formulas remain strategy decision state; fill anchors, actual position, and order lifecycle use the existing execution/state adapter boundary."
+  },
+  {
+    "pattern": "filled_position_lifecycle",
+    "strategy_count": 1,
+    "examples": ["trend_breakout_atr"],
+    "coverage_status": "covered",
+    "notes": "Existing mixed-state synchronization covers fill-triggered position age, cooldown, and favourable-excursion lifecycle."
+  },
+  {
+    "pattern": "virtual_trade_decision_model",
+    "strategy_count": 2,
+    "examples": ["ghost_trader_long", "ghost_trader_short"],
+    "coverage_status": "covered",
+    "notes": "Virtual my_* trade state remains strategy-owned and is separated from the actual fill-owned position and PnL."
+  },
+  {
+    "pattern": "pyramid_fill_reconciliation",
+    "strategy_count": 1,
+    "examples": ["turtle_trader"],
+    "coverage_status": "validated_no_remaining_match",
+    "notes": "The pattern covers the migrated Turtle strategy. No remaining needs_refactor strategy maintains an equivalent multi-entry pyramid ledger."
+  },
+  {
+    "pattern": "blocked",
+    "strategy_count": 2,
+    "examples": ["spread_channel_breakout_long", "spread_channel_breakout_short"],
+    "coverage_status": "not_covered_data_contract",
+    "notes": "The existing required market-data contract is unavailable. This is not evidence of a missing execution migration pattern."
+  },
+  {
+    "pattern": "unknown",
+    "strategy_count": 0,
+    "examples": [],
+    "coverage_status": "none",
+    "notes": "No remaining strategy exposes an unclassified execution-owned or mixed state model in the current audit."
+  }
+]

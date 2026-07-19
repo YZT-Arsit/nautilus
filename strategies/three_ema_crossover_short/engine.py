@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import Ema
+from feature_engine.indicators import Ema, sma
 
 from strategies.three_ema_crossover_short.config import ThreeEmaCrossoverShortConfig
 
@@ -88,7 +88,7 @@ class ThreeEmaCrossoverShortEngine:
 
         # 3. RangeS = Average(High-Low, r_length) (SMA over the last r_length bars).
         self._ranges.append(high - low)
-        range_s = sum(self._ranges) / len(self._ranges)
+        range_s = sma(self._ranges)
 
         signal, reason = HOLD, "hold"
         entered = False

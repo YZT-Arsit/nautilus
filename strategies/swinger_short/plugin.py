@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.swinger_short.config import SwingerShortConfig
+from strategies.swinger_short.execution_adapter import SwingerShortExecutionAdapter
 from strategies.swinger_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: SwingerShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="swinger_short",
     config_cls=SwingerShortConfig,
-    strategy_cls=SwingerShortStrategy,
+    strategy_cls=SwingerShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/swinger_short/config.yaml",
 )

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import sma
 from strategies.ma_crossover_channel_long.config import MaCrossoverChannelLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -84,8 +85,8 @@ class MaCrossoverChannelLongEngine:
         # 1. Fast / slow moving averages (simple means).
         self._closes.append(close)
         n = len(self._closes)
-        fast_ma = sum(list(self._closes)[-cfg.fast_len:]) / cfg.fast_len if n >= cfg.fast_len else None
-        slow_ma = sum(self._closes) / cfg.slow_len if n >= cfg.slow_len else None
+        fast_ma = sma(list(self._closes)[-cfg.fast_len:]) if n >= cfg.fast_len else None
+        slow_ma = sma(self._closes) if n >= cfg.slow_len else None
 
         # 2. Channel windows (include the current bar).
         self._ch_highs.append(high)

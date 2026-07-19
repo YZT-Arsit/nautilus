@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.bollinger_bandit_long.execution_adapter import BollingerBanditLongExecutionAdapter
+
 from strategies.bollinger_bandit_long.config import BollingerBanditLongConfig
 from strategies.bollinger_bandit_long.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: BollingerBanditLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="bollinger_bandit_long",
     config_cls=BollingerBanditLongConfig,
-    strategy_cls=BollingerBanditLongStrategy,
+    strategy_cls=BollingerBanditLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/bollinger_bandit_long/config.yaml",
 )

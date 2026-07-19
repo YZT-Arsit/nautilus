@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.no_hurry_long.config import NoHurryLongConfig
+from strategies.no_hurry_long.execution_adapter import NoHurryLongExecutionAdapter
 from strategies.no_hurry_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: NoHurryLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="no_hurry_long",
     config_cls=NoHurryLongConfig,
-    strategy_cls=NoHurryLongStrategy,
+    strategy_cls=NoHurryLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/no_hurry_long/config.yaml",
 )

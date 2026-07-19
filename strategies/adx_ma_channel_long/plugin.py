@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.adx_ma_channel_long.config import AdxMaChannelLongConfig
+from strategies.adx_ma_channel_long.execution_adapter import AdxMaChannelLongExecutionAdapter
 from strategies.adx_ma_channel_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: AdxMaChannelLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="adx_ma_channel_long",
     config_cls=AdxMaChannelLongConfig,
-    strategy_cls=AdxMaChannelLongStrategy,
+    strategy_cls=AdxMaChannelLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/adx_ma_channel_long/config.yaml",
 )

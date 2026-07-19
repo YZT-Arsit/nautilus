@@ -1,8 +1,7 @@
 """VWM feature engine (self-contained).
 
-Copied verbatim from ``strategies/vwm_short/vwm_features.py`` (the VWM/ATR
-features are side-agnostic); depends only on the local ``indicators`` and
-``signal_types`` modules.
+The VWM/ATR features are side-agnostic and depend on the shared
+``feature_engine.indicators`` primitives plus the strategy's bar contract.
 
 VWM = XAverage(Vol * Momentum(Close, MomLen), AvgLen)
 AATR = AvgTrueRange(ATRLen)
@@ -14,12 +13,13 @@ import dataclasses
 from collections import deque
 from dataclasses import asdict, dataclass
 
-from strategies.vwm_long.indicators import (
-    AtrFeature,
-    EmaFeature,
-    RawMomentumFeature,
+from feature_engine.indicators import (
     cross_over,
     cross_under,
+    Ema,
+    Momentum,
+    SimpleAtr,
+    true_range,
 )
 from strategies.vwm_long.signal_types import BarInput
 
@@ -56,9 +56,9 @@ class VwmFeatureEngine:
 
     def __init__(self, config: VwmFeatureConfig) -> None:
         self.config = config
-        self.momentum = RawMomentumFeature(config.mom_len)
-        self.vwm = EmaFeature(config.avg_len)
-        self.atr = AtrFeature(config.atr_len)
+        self.momentum = Momentum(config.mom_len)
+        self.vwm = Ema(config.avg_len)
+        self.atr = SimpleAtr(config.atr_len)
         self.current_bar = 0
         self._processed_bars: list[dict[str, float]] = []
         self._true_ranges: deque[float] = deque(maxlen=config.atr_len)
@@ -83,12 +83,12 @@ class VwmFeatureEngine:
         self.current_bar += 1
 
         self._processed_bars.append(asdict(bar))
-        self._true_ranges.append(self._true_range(bar))
+        self._true_ranges.append(true_range(bar.high, bar.low, self._previous_close))
         self._previous_close = bar.close
         momentum = self.momentum.update(bar.close)
-        atr = self.atr.update(bar)
+        atr = self.atr.update(bar.high, bar.low, bar.close)
         if momentum is not None:
-            self.vwm.update_raw(bar.volume * momentum)
+            self.vwm.update(bar.volume * momentum)
         vwm = self.vwm.value
 
         self._latest_snapshot = VwmFeatureSnapshot(
@@ -136,12 +136,3 @@ class VwmFeatureEngine:
         self.last_ts_event = state.get("last_ts_event")
         if self.current_bar != int(state.get("current_bar", -1)):
             raise ValueError("VwmFeatureEngine checkpoint replay produced an invalid bar count.")
-
-    def _true_range(self, bar: BarInput) -> float:
-        if self._previous_close is None:
-            return bar.high - bar.low
-        return max(
-            bar.high - bar.low,
-            abs(bar.high - self._previous_close),
-            abs(bar.low - self._previous_close),
-        )

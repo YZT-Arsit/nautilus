@@ -1,0 +1,54 @@
+run_name: phase2_6/turtle_trader_btcusdt_perp_1m_smoke_7d
+strategy: turtle_trader
+
+params:
+  n_entries: 3
+  risk_ratio: 1.0
+  atr_length: 20
+  breakout_len: 20
+  failsafe_len: 55
+  trailing_exit_len: 10
+  last_profitable_trade_filter: true
+  account_equity: 100000.0
+  contract_unit: 1.0
+  big_point_value: 1.0
+  min_point: 0.01
+  max_units_per_entry: 1
+  instrument_id: BTCUSDT-PERP.BINANCE
+  bar_type: 1m
+
+data:
+  mode: hive_parquet_bars
+  root: historical_data/market_data
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 0
+  timestamp_column: ts
+  timestamp_unit: ns
+  filters: {asset_class: crypto, exchange: BINANCE, venue_type: futures_um, symbol: BTCUSDT, data_type: bar, freq: 1m}
+  start: 2026-06-24
+  end: 2026-06-30
+
+funding_data:
+  mode: hive_parquet_funding
+  root: historical_data/market_data
+  instrument_id: BTCUSDT-PERP.BINANCE
+  timestamp_column: ts
+  timestamp_unit: ns
+  filters: {asset_class: crypto, exchange: BINANCE, venue_type: futures_um, symbol: BTCUSDT, data_type: funding_rate, freq: settlement}
+  start: 2026-06-24
+  end: 2026-06-30
+
+execution:
+  backend: nautilus_backtest
+  mode: simulated
+  initial_cash: 100000
+  allow_short: true
+  price_field: open
+  fill_timing: next_bar
+  latency_bars: 1
+  fee_tier: VIP0
+  liquidity_role: taker
+  fee_rate: 0.0005
+  slippage_bps: 1.0
+
+output: {root: outputs/backtests, print_table: false, record_signals: false}

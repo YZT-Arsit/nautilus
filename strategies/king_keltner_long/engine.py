@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from feature_engine.indicators import true_range
+from feature_engine.indicators import simple_atr, sma, true_range
 from strategies.king_keltner_long.config import KingKeltnerLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -65,12 +65,12 @@ class KingKeltnerLongEngine:
         # 1. Typical-price MA and the upper Keltner band.
         typical = (high + low + close) / 3
         self._typicals.append(typical)
-        mav = sum(self._typicals) / len(self._typicals) if len(self._typicals) == cfg.avg_length else None
+        mav = sma(self._typicals) if len(self._typicals) == cfg.avg_length else None
 
         tr = true_range(high, low, self._tr_prev_close)
         self._trs.append(tr)
         self._tr_prev_close = close
-        atr = sum(self._trs) / len(self._trs) if len(self._trs) == cfg.atr_length else None
+        atr = simple_atr(self._trs, cfg.atr_length)
         up = mav + atr if (mav is not None and atr is not None) else None
 
         mp_start = self.position

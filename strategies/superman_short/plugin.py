@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.superman_short.config import SupermanShortConfig
+from strategies.superman_short.execution_adapter import SupermanShortExecutionAdapter
 from strategies.superman_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: SupermanShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="superman_short",
     config_cls=SupermanShortConfig,
-    strategy_cls=SupermanShortStrategy,
+    strategy_cls=SupermanShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/superman_short/config.yaml",
 )

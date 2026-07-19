@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.trading_range_breakout_long.execution_adapter import TradingRangeBreakoutLongExecutionAdapter
+
 from strategies.trading_range_breakout_long.config import TradingRangeBreakoutLongConfig
 from strategies.trading_range_breakout_long.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: TradingRangeBreakoutLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="trading_range_breakout_long",
     config_cls=TradingRangeBreakoutLongConfig,
-    strategy_cls=TradingRangeBreakoutLongStrategy,
+    strategy_cls=TradingRangeBreakoutLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/trading_range_breakout_long/config.yaml",
 )

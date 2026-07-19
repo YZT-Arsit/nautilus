@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.ghost_trader_long.execution_adapter import GhostTraderLongExecutionAdapter
+
 from strategies.ghost_trader_long.config import GhostTraderLongConfig
 from strategies.ghost_trader_long.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: GhostTraderLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="ghost_trader_long",
     config_cls=GhostTraderLongConfig,
-    strategy_cls=GhostTraderLongStrategy,
+    strategy_cls=GhostTraderLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/ghost_trader_long/config.yaml",
 )

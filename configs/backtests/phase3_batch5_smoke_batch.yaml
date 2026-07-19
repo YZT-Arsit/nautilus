@@ -1,0 +1,13 @@
+batch_name: phase3/batch5/smoke
+configs:
+  - configs/backtests/phase3_batch5_dynamic_breakout_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_dynamic_breakout_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_first_pullback_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_first_pullback_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_four_ma_crossover_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_four_ma_crossover_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_king_keltner_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_king_keltner_short_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_obv_revisited_long_smoke_7d.yaml
+  - configs/backtests/phase3_batch5_obv_revisited_short_smoke_7d.yaml
+output: {root: outputs/batches}

@@ -28,7 +28,7 @@ from pathlib import Path
 # Candidate column names (defensive: the writer's schema may evolve).
 _TIME_COLS = ("event_time_ns", "ts_event", "time_ns", "time", "ts")
 _EQUITY_COLS = ("equity", "total_equity")
-_PNL_COLS = ("pnl", "net_pnl", "realized_pnl")
+_PNL_COLS = ("net_pnl", "pnl", "realized_pnl")
 _POS_COLS = ("position", "position_qty", "net_position")
 
 _MAX_POINTS = 2500          # down-sample target for plotting
@@ -229,27 +229,32 @@ def render_fee_compare(strategy_dir: str | Path) -> str | None:
     if not curves:
         return None
 
-    fig, ax = plt.subplots(figsize=(11, 4.2))
-    is_date = False
-    for label, s, metrics in curves:
-        x, is_date = _x_axis(s["t"])
-        x, (equity,) = _downsample(x, s["equity"])
-        ax.plot(x, equity, linewidth=1.0, label=label + _ret_label(metrics))
-    ax.set_title(f"{strategy_dir.name} — equity: fee vs no-fee")
-    ax.set_ylabel("Equity (USDT)")
-    ax.axhline(100000.0, color="grey", linewidth=0.7, linestyle="--", alpha=0.6)
-    ax.legend(loc="best", fontsize=9)
-    ax.grid(True, alpha=0.3)
-    if is_date:
-        fig.autofmt_xdate()
-    fig.tight_layout()
-
     charts_dir = strategy_dir / "charts"
     charts_dir.mkdir(parents=True, exist_ok=True)
-    png = charts_dir / "equity_fee_compare.png"
-    fig.savefig(png, dpi=120)
-    plt.close(fig)
-    return str(png.relative_to(strategy_dir))
+    outputs = []
+    for field, title, ylabel, baseline in (
+        ("equity", "equity: fee vs no-fee", "Equity (USDT)", 100000.0),
+        ("pnl", "net PnL: fee vs no-fee", "Net PnL (USDT)", 0.0),
+    ):
+        fig, ax = plt.subplots(figsize=(11, 4.2))
+        is_date = False
+        for label, s, metrics in curves:
+            x, is_date = _x_axis(s["t"])
+            x, (series,) = _downsample(x, s[field])
+            ax.plot(x, series, linewidth=1.0, label=label + _ret_label(metrics))
+        ax.set_title(f"{strategy_dir.name} — {title}")
+        ax.set_ylabel(ylabel)
+        ax.axhline(baseline, color="grey", linewidth=0.7, linestyle="--", alpha=0.6)
+        ax.legend(loc="best", fontsize=9)
+        ax.grid(True, alpha=0.3)
+        if is_date:
+            fig.autofmt_xdate()
+        fig.tight_layout()
+        png = charts_dir / f"{field}_fee_compare.png"
+        fig.savefig(png, dpi=120)
+        plt.close(fig)
+        outputs.append(png)
+    return str(outputs[0].relative_to(strategy_dir))
 
 
 __all__ = ["render_run_charts", "render_fee_compare"]

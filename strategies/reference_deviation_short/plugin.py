@@ -10,6 +10,9 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.reference_deviation_short.config import ReferenceDeviationShortConfig
+from strategies.reference_deviation_short.execution_adapter import (
+    ReferenceDeviationShortExecutionAdapter,
+)
 from strategies.reference_deviation_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +38,7 @@ def build_specs(config: ReferenceDeviationShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="reference_deviation_short",
     config_cls=ReferenceDeviationShortConfig,
-    strategy_cls=ReferenceDeviationShortStrategy,
+    strategy_cls=ReferenceDeviationShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/reference_deviation_short/config.yaml",
 )

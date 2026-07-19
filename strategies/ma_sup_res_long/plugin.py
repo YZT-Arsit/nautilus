@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.ma_sup_res_long.config import MaSupResLongConfig
+from strategies.ma_sup_res_long.execution_adapter import MaSupResLongExecutionAdapter
 from strategies.ma_sup_res_long.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: MaSupResLongConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="ma_sup_res_long",
     config_cls=MaSupResLongConfig,
-    strategy_cls=MaSupResLongStrategy,
+    strategy_cls=MaSupResLongExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/ma_sup_res_long/config.yaml",
 )

@@ -12,6 +12,9 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.trend_breakout_atr.config import TrendBreakoutAtrConfig
+from strategies.trend_breakout_atr.execution_adapter import (
+    TrendBreakoutAtrExecutionAdapter,
+)
 from strategies.trend_breakout_atr.strategy import (
     _CLOSE,
     _HIGH,
@@ -33,7 +36,7 @@ def build_specs(config: TrendBreakoutAtrConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="trend_breakout_atr",
     config_cls=TrendBreakoutAtrConfig,
-    strategy_cls=TrendBreakoutAtrStrategy,
+    strategy_cls=TrendBreakoutAtrExecutionAdapter,
     build_specs=build_specs,
     default_config_path="configs/backtests/trend_breakout_atr_btcusdt_1m_3d.yaml",
 )

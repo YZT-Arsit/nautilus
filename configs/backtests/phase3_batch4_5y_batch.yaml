@@ -1,0 +1,13 @@
+batch_name: phase3/batch4/5y
+configs:
+  - configs/backtests/phase3_batch4_trading_range_breakout_long_5y.yaml
+  - configs/backtests/phase3_batch4_trading_range_breakout_short_5y.yaml
+  - configs/backtests/phase3_batch4_traffic_jam_long_5y.yaml
+  - configs/backtests/phase3_batch4_traffic_jam_short_5y.yaml
+  - configs/backtests/phase3_batch4_trendscore_long_5y.yaml
+  - configs/backtests/phase3_batch4_trendscore_short_5y.yaml
+  - configs/backtests/phase3_batch4_bollinger_bandit_long_5y.yaml
+  - configs/backtests/phase3_batch4_bollinger_bandit_short_5y.yaml
+  - configs/backtests/phase3_batch4_displaced_boll_long_5y.yaml
+  - configs/backtests/phase3_batch4_displaced_boll_short_5y.yaml
+output: {root: outputs/batches}

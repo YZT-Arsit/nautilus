@@ -66,7 +66,7 @@ def _detail_row(parts: dict) -> dict:
     freq = parts.get("freq", "")
     row = {
         "exchange": parts.get("exchange", ""), "venue_type": parts.get("venue_type", ""),
-        "symbol": parts.get("symbol", ""), "bar_type": freq, "date": parts.get("date", ""),
+        "symbol": parts.get("symbol", ""), "freq": freq, "date": parts.get("date", ""),
         "file_path": str(files[0]) if files else str(d),
         "row_count": 0, "ts_min": "", "ts_max": "", "expected_rows": _EXPECTED_PER_DAY.get(freq, ""),
         "missing_rows": "", "duplicate_ts_count": "", "monotonic_ts": "",
@@ -169,7 +169,7 @@ def main() -> None:
         total_rows = sum(i.get("row_count", 0) for i in detailed) if detailed else ""
         statuses = sorted({i.get("status", "") for i in detailed if i.get("status")})
         summary_rows.append({
-            "exchange": ex, "venue_type": vt, "symbol": sym, "bar_type": freq, "date": "ALL",
+            "exchange": ex, "venue_type": vt, "symbol": sym, "freq": freq, "date": "ALL",
             "file_path": "", "row_count": total_rows,
             "ts_min": dates[0] if dates else "", "ts_max": dates[-1] if dates else "",
             "expected_rows": "", "missing_rows": "",
@@ -179,13 +179,13 @@ def main() -> None:
             "notes": "detail rows present" if detailed else "group summary only (metadata)",
         })
 
-    cols = ["exchange", "venue_type", "symbol", "bar_type", "date", "file_path",
+    cols = ["exchange", "venue_type", "symbol", "freq", "date", "file_path",
             "row_count", "ts_min", "ts_max", "expected_rows", "missing_rows",
             "duplicate_ts_count", "monotonic_ts", "schema", "status", "notes"]
     with (out / "data_storage_inventory.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
-        w.writerows(summary_rows + sorted(detail_rows, key=lambda r: (r["symbol"], r["bar_type"], r["date"])))
+        w.writerows(summary_rows + sorted(detail_rows, key=lambda r: (r["symbol"], r["freq"], r["date"])))
 
     (out / "data_schema_samples.json").write_text(json.dumps(samples, indent=2, default=str),
                                                   encoding="utf-8")

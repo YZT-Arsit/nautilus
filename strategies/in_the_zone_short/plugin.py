@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.in_the_zone_short.config import InTheZoneShortConfig
+from strategies.in_the_zone_short.execution_adapter import InTheZoneShortExecutionAdapter
 from strategies.in_the_zone_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: InTheZoneShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="in_the_zone_short",
     config_cls=InTheZoneShortConfig,
-    strategy_cls=InTheZoneShortStrategy,
+    strategy_cls=InTheZoneShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/in_the_zone_short/config.yaml",
 )

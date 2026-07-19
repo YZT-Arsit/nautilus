@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import sma
 from strategies.swinger_long.config import SwingerLongConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -66,6 +67,29 @@ class SwingerLongEngine:
         self._prev_mp = 0                          # MP[1] = MarketPosition at end of prev bar
 
     def update(self, open_: float, high: float, low: float, close: float, volume: float):
+        """Legacy immediate-fill wrapper retained for baseline compatibility."""
+        signal, reason = self.generate_signal(
+            open_, high, low, close, volume,
+            position=self.position,
+            previous_position=self._prev_mp,
+            bars_since_entry=self.bars_since_entry,
+        )
+        if signal == BUY:
+            self.position = 1
+            self.bars_since_entry = 0
+        elif signal == SELL:
+            self.position = 0
+            self.bars_since_entry = 0
+        self._prev_mp = self.position
+        if self.position == 1:
+            self.bars_since_entry += 1
+        return signal, reason
+
+    def generate_signal(
+        self, open_: float, high: float, low: float, close: float, volume: float,
+        *, position: int, previous_position: int, bars_since_entry: int,
+    ):
+        """Return the unchanged Swinger signal without assuming a fill."""
         cfg = self.cfg
         self.current_bar += 1
 
@@ -74,13 +98,13 @@ class SwingerLongEngine:
         self._slow.append(close)
         self._trend.append(close)
         self._lows.append(low)
-        trend_ma = sum(self._trend) / len(self._trend) if len(self._trend) == cfg.trend_ma_length else None
-        fast = sum(self._fast) / len(self._fast) if len(self._fast) == cfg.fast_ma_length else None
-        slow = sum(self._slow) / len(self._slow) if len(self._slow) == cfg.slow_ma_length else None
+        trend_ma = sma(self._trend) if len(self._trend) == cfg.trend_ma_length else None
+        fast = sma(self._fast) if len(self._fast) == cfg.fast_ma_length else None
+        slow = sma(self._slow) if len(self._slow) == cfg.slow_ma_length else None
         osci = fast - slow if (fast is not None and slow is not None) else None
         exitl = min(self._lows) if len(self._lows) == cfg.exit_stop_n else None
 
-        mp_start = self.position
+        mp_start = position
         signal, reason = HOLD, "hold"
         acted = False
 
@@ -93,20 +117,16 @@ class SwingerLongEngine:
             and self._prev_osci <= 0 and self._prev_osci > self._prev2_osci
             and volume > 0
         ):
-            self.position = 1
-            self.bars_since_entry = 0
             signal, reason, acted = BUY, "enter_long", True
 
         # 3. EXIT (sell): long a full bar, momentum weakening, break the N-bar low.
         if (
-            not acted and mp_start == 1 and self._prev_mp == 1
+            not acted and mp_start == 1 and previous_position == 1
             and self._prev_osci is not None and self._prev2_osci is not None
             and self._prev_osci < self._prev2_osci
             and self._prev_exitl is not None and low <= self._prev_exitl
             and volume > 0
         ):
-            self.position = 0
-            self.bars_since_entry = 0
             signal, reason, acted = SELL, "exit_sell", True
 
         # 4. Roll the prev-bar snapshots, then advance counters.
@@ -115,8 +135,5 @@ class SwingerLongEngine:
         self._prev2_osci = self._prev_osci
         self._prev_osci = osci
         self._prev_exitl = exitl
-        self._prev_mp = self.position
-        if self.position == 1:
-            self.bars_since_entry += 1
 
         return signal, reason

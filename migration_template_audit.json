@@ -1,0 +1,41 @@
+{
+  "prototype": "reference_deviation_long",
+  "common_execution_contract": [
+    "pending target position kept separately from filled position",
+    "filled quantity and position updated only from FillRecord",
+    "cumulative ExecutionReport synchronization using a fill cursor",
+    "decision bars-since-entry used to preserve legacy signal cadence during latency",
+    "signal-to-intent and PnL remain in the existing execution/backend/result layers"
+  ],
+  "reference_deviation_long_specific": [
+    "RDV indicator history and BUY/SELL/HOLD predicates",
+    "FeatureSnapshot OHLCV field names",
+    "BUY maps to target long and SELL maps to target flat",
+    "ReferenceDeviationLongConfig and plugin wiring"
+  ],
+  "adapter_abstraction": {
+    "component": "strategy_framework/execution/legacy_adapter.py",
+    "reusable_inputs": [
+      "instrument_id",
+      "signal-to-target-position mapping"
+    ],
+    "reusable_state": [
+      "pending target position",
+      "previous decision position",
+      "decision bars since entry",
+      "filled quantity",
+      "last fill price",
+      "entry fill price",
+      "exit fill price",
+      "fill cursor"
+    ],
+    "excluded": [
+      "indicators",
+      "strategy parameters",
+      "entry and exit predicates",
+      "order execution",
+      "fee, funding, slippage, PnL, or result generation"
+    ]
+  },
+  "migration_boundary": "Strategy-specific adapters supply signal mapping and call unchanged signal functions. LegacyExecutionState observes signals as pending targets and observes fills as actual positions."
+}

@@ -10,6 +10,7 @@ from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.ma_sup_res_short.config import MaSupResShortConfig
+from strategies.ma_sup_res_short.execution_adapter import MaSupResShortExecutionAdapter
 from strategies.ma_sup_res_short.strategy import (
     _CLOSE,
     _HIGH,
@@ -35,7 +36,7 @@ def build_specs(config: MaSupResShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="ma_sup_res_short",
     config_cls=MaSupResShortConfig,
-    strategy_cls=MaSupResShortStrategy,
+    strategy_cls=MaSupResShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/ma_sup_res_short/config.yaml",
 )

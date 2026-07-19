@@ -87,7 +87,8 @@ def run_config(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     config_obj = _build_config_obj(plugin.config_cls, cfg.get("params", {}))
     specs = plugin.build_specs(config_obj)
     spec_names = [s.name for s in specs]
-    runner = FeatureStrategyRunner(specs, plugin.strategy_cls(config_obj))
+    strategy = plugin.strategy_cls(config_obj)
+    runner = FeatureStrategyRunner(specs, strategy)
 
     data_cfg = dict(cfg.get("data", {}))
     for location_key in ("path", "root"):
@@ -108,28 +109,22 @@ def run_config(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     # no-fee vs with-fee comparison is a single command. ``fee_rate`` (scalar) is
     # the single-scenario shorthand. With no execution backend, neither applies.
     exec_cfg = dict(cfg.get("execution", {}))
+    funding_events = []
+    funding_cfg = cfg.get("funding_data")
+    if funding_cfg:
+        resolved_funding_cfg = dict(funding_cfg)
+        for location_key in ("path", "root"):
+            if location_key in resolved_funding_cfg:
+                resolved_funding_cfg[location_key] = str(_resolve(resolved_funding_cfg[location_key]))
+        _, funding_stream = load_events(resolved_funding_cfg)
+        funding_events = list(funding_stream)
     fee_scenarios = exec_cfg.get("fee_scenarios")
     if fee_scenarios is None:
         fee_scenarios = [exec_cfg.get("fee_rate", 0.0)] if exec_cfg.get("backend") else []
     multi = len(fee_scenarios) > 1
     base_run = cfg.get("run_name") or name
 
-    # The signal loop is deterministic, so run it ONCE and replay the recorded
-    # stream into each fee scenario's backend (no recompute, identical signals).
-    if print_table:
-        output.print_event_table_header(spec_names)
-    records: list[tuple[Any, Any, str]] = []
-    for event, snapshot, signal in runner.run(live_events):
-        if print_table:
-            output.print_event_row(event, snapshot, signal, spec_names)
-        if recorder is not None:
-            recorder.record(event, snapshot, signal)
-        records.append((event, snapshot, signal))
-    if recorder is not None:
-        output.print_signal_summary(recorder.signal_counts())
-
-    results: list[dict[str, Any]] = []
-    for fee in fee_scenarios:
+    def _backend_for_fee(fee: float):
         per_exec = {k: v for k, v in exec_cfg.items() if k != "fee_scenarios"}
         per_exec["fee_rate"] = float(fee)
         run_name = f"{base_run}/{_fee_label(fee)}" if multi else base_run
@@ -139,8 +134,84 @@ def run_config(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             "data": data_cfg,
             "config": cfg,
             "repo_root": str(_REPO_ROOT),
+            "funding_events": funding_events,
         }
-        backend = build_backend(per_exec, spec_names, per_ctx)
+        return run_name, build_backend(per_exec, spec_names, per_ctx)
+
+    # Simulated fee scenarios share identical signals/fills. Stream once and let
+    # the backend re-account the same fills for each fee, avoiding a second
+    # five-year feature pass and avoiding millions of retained snapshots.
+    streaming_backend = None
+    streaming_run_name = None
+    if len(fee_scenarios) == 1:
+        streaming_run_name, streaming_backend = _backend_for_fee(float(fee_scenarios[0]))
+    elif multi and exec_cfg.get("mode", "simulated") == "simulated":
+        per_exec = dict(exec_cfg)
+        per_exec["fee_rate"] = float(fee_scenarios[0])
+        per_ctx = {
+            "run_name": base_run,
+            "output": output_cfg,
+            "data": data_cfg,
+            "config": cfg,
+            "repo_root": str(_REPO_ROOT),
+            "funding_events": funding_events,
+        }
+        streaming_run_name = base_run
+        streaming_backend = build_backend(per_exec, spec_names, per_ctx)
+
+    # The signal loop is deterministic, so run it ONCE and replay the recorded
+    # stream into each fee scenario's backend (no recompute, identical signals).
+    if print_table:
+        output.print_event_table_header(spec_names)
+    records: list[tuple[Any, Any, str]] = []
+
+    def _sync_execution_state(backend: Any) -> None:
+        """Feed cumulative fills to opt-in migrated strategy adapters."""
+        hook = getattr(strategy, "on_execution_report", None)
+        if hook is None:
+            return
+        report = getattr(backend, "report", None)
+        if report is None:
+            raise RuntimeError("fill-synchronized strategy requires backend.report()")
+        hook(report())
+
+    for event, snapshot, signal in runner.run(live_events):
+        if print_table:
+            output.print_event_row(event, snapshot, signal, spec_names)
+        if recorder is not None:
+            recorder.record(event, snapshot, signal)
+        if streaming_backend is not None:
+            streaming_backend.on_signal(event, snapshot, signal)
+        elif multi:
+            records.append((event, snapshot, signal))
+    if recorder is not None:
+        output.print_signal_summary(recorder.signal_counts())
+
+    results: list[dict[str, Any]] = []
+    if streaming_backend is not None:
+        streaming_backend.close()
+        # Backtests generate decisions from the adapter's pending target state;
+        # accounting remains execution-owned. Reconcile the strategy's public
+        # position once from the completed fill report. Live/event-driven
+        # integrations may call the same hook incrementally per fill.
+        _sync_execution_state(streaming_backend)
+        backend_results = getattr(streaming_backend, "last_results", None)
+        if backend_results:
+            return [{
+                "run_name": result.run_name,
+                "fee": float(result.metrics.get("fee_rate", 0.0)),
+                "output_dir": str(result.output_dir),
+            } for result in backend_results]
+        output_dir = None
+        if output_cfg.get("root"):
+            output_dir = str(_resolve(output_cfg["root"]) / streaming_run_name)
+        return [{
+            "run_name": streaming_run_name,
+            "fee": float(fee_scenarios[0]),
+            "output_dir": output_dir,
+        }]
+    for fee in fee_scenarios:
+        run_name, backend = _backend_for_fee(float(fee))
         output_dir = None
         if output_cfg.get("root"):
             output_dir = str(_resolve(output_cfg["root"]) / run_name)

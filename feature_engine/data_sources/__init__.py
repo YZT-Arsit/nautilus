@@ -12,6 +12,10 @@ from feature_engine.data_sources.binance_vision import (
     normalize_binance_kline,
     read_binance_aggtrades_zip,
     read_binance_kline_zip,
+    build_binance_vision_funding_url,
+    read_binance_funding_zip,
+    normalize_binance_funding,
+    read_binance_funding_api,
     Frequency,
     Market,
 )
@@ -24,6 +28,10 @@ __all__ = [
     "build_binance_vision_aggtrades_url",
     "read_binance_aggtrades_zip",
     "normalize_binance_aggtrades",
+    "build_binance_vision_funding_url",
+    "read_binance_funding_zip",
+    "normalize_binance_funding",
+    "read_binance_funding_api",
     "Market",
     "Frequency",
 ]

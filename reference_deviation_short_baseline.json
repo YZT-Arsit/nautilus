@@ -1,0 +1,10 @@
+{
+  "strategy_name": "reference_deviation_short",
+  "signal_functions": ["ReferenceDeviationShortStrategy.on_snapshot", "ReferenceDeviationShortEngine.update"],
+  "entry": "position == 0 and RDV[1] < et_short and volume > 0 -> SELL",
+  "exit": "position == -1 and RDV[1] > 0 and volume > 0 -> BUY",
+  "position_state": ["position", "bars_since_entry"],
+  "entry_price_source": "No price is stored; source documentation assumes Open and the string signal carries no price.",
+  "exit_price_source": "No price is stored; source documentation assumes Open and the string signal carries no price.",
+  "execution_assumptions": ["SELL immediately sets internal position to -1", "BUY immediately sets internal position to 0"]
+}

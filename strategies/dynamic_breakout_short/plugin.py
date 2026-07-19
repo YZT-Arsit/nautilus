@@ -9,6 +9,8 @@ from __future__ import annotations
 from feature_engine.api import FeatureSpec, rolling_mean_spec
 from strategy_framework.plugin import StrategyPlugin
 
+from strategies.dynamic_breakout_short.execution_adapter import DynamicBreakoutShortExecutionAdapter
+
 from strategies.dynamic_breakout_short.config import DynamicBreakoutShortConfig
 from strategies.dynamic_breakout_short.strategy import (
     _CLOSE,
@@ -35,7 +37,7 @@ def build_specs(config: DynamicBreakoutShortConfig) -> list[FeatureSpec]:
 PLUGIN = StrategyPlugin(
     name="dynamic_breakout_short",
     config_cls=DynamicBreakoutShortConfig,
-    strategy_cls=DynamicBreakoutShortStrategy,
+    strategy_cls=DynamicBreakoutShortExecutionAdapter,
     build_specs=build_specs,
     default_config_path="strategies/dynamic_breakout_short/config.yaml",
 )

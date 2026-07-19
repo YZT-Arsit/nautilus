@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from feature_engine.indicators import sma
 from strategies.escalator_short.config import EscalatorShortConfig
 
 BUY, SELL, HOLD = "BUY", "SELL", "HOLD"
@@ -70,7 +71,7 @@ class EscalatorShortEngine:
     def _sma(self, period: int) -> float | None:
         if len(self._closes) < period:
             return None
-        return sum(list(self._closes)[-period:]) / period
+        return sma(list(self._closes)[-period:])
 
     def update(self, open_: float, high: float, low: float, close: float, volume: float):
         cfg = self.cfg
