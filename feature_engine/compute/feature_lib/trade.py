@@ -8,6 +8,7 @@ Consume ``TradeEvent`` (input_type ``trade``).  Two windowing styles are used:
   intensity (trades per second), via ``TimeWindowState``.
 
     TradeCountFeature          — number of trades in the time window
+    TradePriceMeanFeature      — arithmetic mean(price) in the time window
     TradeVolumeSumFeature      — rolling sum(quantity)
     TradeQuoteVolumeSumFeature — rolling sum(quote_quantity)
     AvgTradeSizeFeature        — rolling mean(quantity)
@@ -160,6 +161,80 @@ class TradeIntensityFeature(_AbstractFeature):
         ready = self._event_count > 0
         intensity = self._state.count / max(self._window_seconds, _EPS)
         _restore_cached(self, intensity if ready else None, ready)
+
+
+class TradePriceMeanFeature(_AbstractFeature):
+    """Arithmetic mean of trade prices in the trailing event-time window.
+
+    The window is expressed by ``FeatureSpec.window`` + ``window_unit`` and is
+    maintained by :class:`TimeWindowState`, so it follows actual trade
+    timestamps rather than a trade count or a synthetic bar clock.  Readiness
+    is withheld until one complete duration has elapsed from the first event;
+    this prevents the first partial 5/10-minute window from producing a signal.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        super().__init__(spec)
+        self._state = TimeWindowState(window_ns=_window_ns(spec))
+        self._first_ts_ns: int | None = None
+
+    def warmup_required(self) -> WarmupRequirement:
+        return WarmupRequirement(
+            n_events=self._state.window_ns,
+            unit="nanoseconds",
+            mandatory=True,
+        )
+
+    @property
+    def is_ready(self) -> bool:
+        newest = self._state.newest_ts_ns
+        return (
+            self._first_ts_ns is not None
+            and newest is not None
+            and newest - self._first_ts_ns >= self._state.window_ns
+        )
+
+    def reset(self) -> None:
+        self._state.reset()
+        self._first_ts_ns = None
+        self._reset_base()
+
+    def update(self, event: Any) -> FeatureUpdate:
+        self._event_count += 1
+        ts_ns = _ts_ns(event, self._spec.trigger.time_semantics)
+        price = _bar_field(event, self._spec.input_field or "price")
+        if price is None:
+            return self._missing_field(self._spec.input_field or "price")
+        if self._first_ts_ns is None:
+            self._first_ts_ns = ts_ns
+        self._state.push(ts_ns, price)
+        triggered = self._should_trigger(ts_ns)
+        if triggered:
+            self._last_trigger_ts = ts_ns
+        ready = self.is_ready
+        return self._emit(
+            self._state.mean if ready else None,
+            ready,
+            triggered,
+            window_start_ns=ts_ns - self._state.window_ns,
+            window_end_ns=ts_ns,
+            source_event_time_ns=ts_ns,
+            update_status="updated" if ready else "not_ready",
+        )
+
+    def state_dict(self) -> dict:
+        return {
+            **self._base_state(),
+            "tw": self._state.state_dict(),
+            "first_ts_ns": self._first_ts_ns,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        self._load_base(state)
+        self._state.load_state_dict(state["tw"])
+        self._first_ts_ns = state.get("first_ts_ns")
+        ready = self.is_ready
+        _restore_cached(self, self._state.mean if ready else None, ready)
 
 
 # ---------------------------------------------------------------------------

@@ -46,6 +46,7 @@ from feature_engine.builders import (
     trade_count_spec,
     trade_imbalance_spec,
     trade_intensity_spec,
+    trade_price_mean_spec,
     trade_quote_volume_sum_spec,
     trade_volume_sum_spec,
     trade_vwap_spec,
@@ -101,4 +102,5 @@ __all__ = [
     "trade_vwap_spec",
     "large_trade_ratio_spec",
     "trade_intensity_spec",
+    "trade_price_mean_spec",
 ]

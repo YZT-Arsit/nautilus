@@ -76,6 +76,7 @@ from feature_engine.compute.feature_lib import (
     TradeCountFeature,
     TradeImbalanceFeature,
     TradeIntensityFeature,
+    TradePriceMeanFeature,
     TradeQuoteVolumeSumFeature,
     TradeVolumeSumFeature,
     TradeVWAPFeature,
@@ -163,6 +164,7 @@ _FEATURE_CLASSES: dict[str, type] = {
     "trade_vwap": TradeVWAPFeature,
     "large_trade_ratio": LargeTradeRatioFeature,
     "trade_intensity": TradeIntensityFeature,
+    "trade_price_mean": TradePriceMeanFeature,
 }
 
 # Sorted longest-first to avoid prefix ambiguity (e.g. "rolling_std" vs "rolling_std_dev")

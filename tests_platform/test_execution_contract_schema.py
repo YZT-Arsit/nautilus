@@ -10,10 +10,11 @@ from strategy_framework.execution.reports import FillRecord
 
 
 _ROOT = Path(__file__).resolve().parents[1]
+_AUDIT_ROOT = _ROOT / "outputs" / "internal_audit" / "execution_migration"
 
 
-def _rows(name: str):
-    with (_ROOT / name).open(newline="", encoding="utf-8") as fh:
+def _rows(relative_path: str):
+    with (_AUDIT_ROOT / relative_path).open(newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         return reader.fieldnames, list(reader)
 
@@ -32,7 +33,7 @@ def test_legacy_adapter_interface_is_fill_synchronized():
 
 
 def test_migration_registry_schema_and_status_values():
-    fields, rows = _rows("strategy_execution_migration_registry.csv")
+    fields, rows = _rows("registry/strategy_execution_migration_registry.csv")
     assert fields == [
         "strategy_name", "strategy_type", "execution_status", "adapter_type",
         "signal_contract", "position_contract", "fill_contract", "fee_supported",
@@ -49,7 +50,7 @@ def test_migration_registry_schema_and_status_values():
 
 
 def test_strategy_priority_schema_and_categories():
-    fields, rows = _rows("strategy_refactor_priority.csv")
+    fields, rows = _rows("inventory/strategy_refactor_priority.csv")
     assert fields == [
         "strategy", "current_status", "category", "execution_issue",
         "complexity", "risk", "priority",
@@ -62,7 +63,7 @@ def test_strategy_priority_schema_and_categories():
 
 
 def test_strategy_migration_pattern_mapping_schema_and_coverage():
-    fields, rows = _rows("strategy_migration_pattern_mapping.csv")
+    fields, rows = _rows("coverage/strategy_migration_pattern_mapping.csv")
     assert fields == [
         "strategy", "current_status", "migration_pattern", "state_complexity",
         "execution_dependency", "requires_new_pattern", "priority", "notes",
@@ -79,7 +80,7 @@ def test_strategy_migration_pattern_mapping_schema_and_coverage():
 
 
 def test_migration_pattern_coverage_schema():
-    path = _ROOT / "migration_pattern_coverage.json"
+    path = _AUDIT_ROOT / "coverage" / "migration_pattern_coverage.json"
     rows = json.loads(path.read_text(encoding="utf-8"))
     assert len(rows) == 8
     assert all(set(row) == {

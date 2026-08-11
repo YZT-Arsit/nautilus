@@ -12,6 +12,7 @@ from strategies.avg_channel_range_leader_long import PLUGIN as AVG_CHANNEL_RANGE
 from strategies.avg_channel_range_leader_short import PLUGIN as AVG_CHANNEL_RANGE_LEADER_SHORT_PLUGIN
 from strategies.bollinger_bandit_long import PLUGIN as BOLLINGER_BANDIT_LONG_PLUGIN
 from strategies.bollinger_bandit_short import PLUGIN as BOLLINGER_BANDIT_SHORT_PLUGIN
+from strategies.continuous_tick_ma import PLUGIN as CONTINUOUS_TICK_MA_PLUGIN
 from strategies.displaced_boll_long import PLUGIN as DISPLACED_BOLL_LONG_PLUGIN
 from strategies.displaced_boll_short import PLUGIN as DISPLACED_BOLL_SHORT_PLUGIN
 from strategies.double_your_fun_long import PLUGIN as DOUBLE_YOUR_FUN_LONG_PLUGIN
@@ -75,6 +76,7 @@ from strategies.vwm_short import PLUGIN as VWM_SHORT_PLUGIN
 from strategy_framework.plugin import StrategyPlugin
 
 STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
+    CONTINUOUS_TICK_MA_PLUGIN.name: CONTINUOUS_TICK_MA_PLUGIN,
     MA_CROSSOVER_PLUGIN.name: MA_CROSSOVER_PLUGIN,
     VWM_SHORT_PLUGIN.name: VWM_SHORT_PLUGIN,
     VWM_LONG_PLUGIN.name: VWM_LONG_PLUGIN,

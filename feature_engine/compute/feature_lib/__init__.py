@@ -38,6 +38,7 @@ from feature_engine.compute.feature_lib.trade import (
     TradeCountFeature,
     TradeImbalanceFeature,
     TradeIntensityFeature,
+    TradePriceMeanFeature,
     TradeQuoteVolumeSumFeature,
     TradeVolumeSumFeature,
     TradeVWAPFeature,
@@ -85,4 +86,5 @@ __all__ = [
     "TradeVWAPFeature",
     "LargeTradeRatioFeature",
     "TradeIntensityFeature",
+    "TradePriceMeanFeature",
 ]

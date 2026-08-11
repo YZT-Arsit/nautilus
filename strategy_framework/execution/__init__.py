@@ -14,6 +14,11 @@ Architecture::
                                   -> strategy_framework.backends   (intent -> backend)
 """
 from strategy_framework.execution.intents import OrderIntent, PositionIntent
+from strategy_framework.execution.duration_lag import (
+    DurationExecutionAttempt,
+    DurationLagTargetAdapter,
+    PendingTarget,
+)
 from strategy_framework.execution.legacy_adapter import LegacyExecutionState
 from strategy_framework.execution.reports import ExecutionReport, FillRecord, PositionRecord
 from strategy_framework.execution.signal_policy import SignalToOrderPolicy
@@ -26,4 +31,7 @@ __all__ = [
     "PositionRecord",
     "ExecutionReport",
     "LegacyExecutionState",
+    "PendingTarget",
+    "DurationExecutionAttempt",
+    "DurationLagTargetAdapter",
 ]

@@ -1,0 +1,36 @@
+strategy: continuous_tick_ma
+
+params:
+  fast_minutes: 5
+  slow_minutes: 10
+
+data:
+  mode: hive_parquet_trades
+  root: historical_data/market_data
+  instrument_id: BTCUSDT.BINANCE
+  filters:
+    asset_class: crypto
+    exchange: BINANCE
+    venue_type: futures_um
+    symbol: BTCUSDT
+    data_type: trade
+    freq: tick
+  start: 2021-07-01
+  end: 2026-06-30
+
+# Full-history execution is orchestrated by scripts/internal so the existing
+# loader can be invoked one date partition at a time while feature state stays
+# alive across days.  This avoids loading all five years of ticks into memory.
+execution:
+  backend: nautilus_backtest
+  mode: simulated
+  initial_cash: 100000
+  allow_short: true
+  price_field: price
+  fee_rate: 0.0
+  slippage_bps: 0.0
+
+output:
+  root: outputs/batches
+  print_table: false
+  record_signals: false

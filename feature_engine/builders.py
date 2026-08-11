@@ -292,3 +292,21 @@ def trade_intensity_spec(
         name, input_type="trade", window=window, window_unit=window_unit,
         params={"type": "trade_intensity"},
     )
+
+
+def trade_price_mean_spec(
+    name: str,
+    *,
+    window: int,
+    window_unit: str = "minutes",
+    input_field: str = "price",
+) -> FeatureSpec:
+    """Arithmetic mean of trade prices in the trailing event-time window."""
+    return FeatureSpec(
+        name,
+        input_type="trade",
+        input_field=input_field,
+        window=window,
+        window_unit=window_unit,
+        params={"type": "trade_price_mean"},
+    )

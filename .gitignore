@@ -83,6 +83,12 @@ python/nautilus_trader/_libnautilus.pyi
 # stay tracked because git does not un-track already-committed files via
 # .gitignore; new files under outputs/ are ignored going forward.
 outputs/
+!outputs/
+outputs/*
+!outputs/internal_audit/
+outputs/internal_audit/*
+!outputs/internal_audit/execution_migration/
+!outputs/internal_audit/execution_migration/**
 outputs/crypto_backtest_outputs/
 outputs/generated_bars/
 outputs/multi_strategy_comparison/
