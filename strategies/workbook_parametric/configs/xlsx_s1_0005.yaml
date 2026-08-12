@@ -1,0 +1,8 @@
+strategy: xlsx_s1_0005
+params:
+  source_registry_id: xlsx_s1_0005
+  family: ma_envelope
+  window: 20
+  envelope_fraction: 0.02
+data: {mode: synthetic, instrument_id: BTCUSDT-PERP.BINANCE, warmup_bars: 20, live_bars: 120}
+output: {print_table: false, record_signals: true}

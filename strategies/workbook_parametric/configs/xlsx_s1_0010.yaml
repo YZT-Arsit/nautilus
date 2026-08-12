@@ -1,0 +1,9 @@
+strategy: xlsx_s1_0010
+params:
+  source_registry_id: xlsx_s1_0010
+  family: bollinger
+  window: 20
+  multiplier: 2.0
+  consecutive_bars: 2
+data: {mode: synthetic, instrument_id: BTCUSDT-PERP.BINANCE, warmup_bars: 20, live_bars: 120}
+output: {print_table: false, record_signals: true}

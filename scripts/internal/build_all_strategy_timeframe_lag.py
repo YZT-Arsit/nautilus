@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -24,6 +25,11 @@ from results.strategy_evaluation import (
     render_additive_strategy_evaluation,
     validate_strategy_evaluation,
 )
+from results.trade_episode import (
+    build_de_risk_episodes,
+    render_episode_break_even,
+    write_episode_csv,
+)
 
 
 CASES = ("1m_lag0", "1m_lag1", "10m_lag0", "10m_lag1")
@@ -39,17 +45,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--symbol", default="BTCUSDT")
     parser.add_argument("--source-config-root", type=Path)
     parser.add_argument("--strategy", action="append", dest="strategies")
+    parser.add_argument(
+        "--case", action="append", dest="cases",
+        help="Case directory to render, e.g. 1m_lag0 (repeatable; defaults to legacy four).",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
 
-def discover(batch_root: Path) -> list[str]:
+def discover(batch_root: Path, cases: tuple[str, ...] = CASES) -> list[str]:
     return sorted(
         path.name
         for path in batch_root.iterdir()
         if path.is_dir()
-        and all((path / case / "timeseries.parquet").is_file() for case in CASES)
-        and all((path / case / "summary.json").is_file() for case in CASES)
+        and all((path / case / "timeseries.parquet").is_file() for case in cases)
+        and all((path / case / "summary.json").is_file() for case in cases)
     )
 
 
@@ -329,6 +339,42 @@ def build_canonical_case(
         "figure": str(Path(figure).resolve()),
     }
     case_dir.mkdir(parents=True, exist_ok=True)
+    episode_rows: list[dict] = []
+    episode_summaries: dict[str, dict] = {}
+    for premium, gross_return in (
+        (
+            "included",
+            frame["normal_trading_return"].to_numpy(copy=False)
+            + frame["normal_funding_return"].to_numpy(copy=False),
+        ),
+        ("excluded", frame["normal_trading_return"].to_numpy(copy=False)),
+    ):
+        premium_rows, premium_summary = build_de_risk_episodes(
+            event_time_ns=frame["event_time_ns"].to_numpy(copy=False),
+            executed_position=frame["normal_direction"].to_numpy(copy=False),
+            turnover_increment=frame["normal_turnover"].to_numpy(copy=False),
+            gross_return_increment=gross_return,
+            strategy=strategy,
+            symbol=symbol,
+            granularity=f"{frequency} bar",
+            lag=f"{lag_minutes}m physical-time",
+            premium_mode=premium,
+        )
+        episode_rows.extend(premium_rows)
+        episode_summaries[premium] = premium_summary
+    episode_table = write_episode_csv(case_dir / "per_trade_break_even.csv", episode_rows)
+    episode_figure = render_episode_break_even(
+        episode_rows,
+        destination=case_dir / f"{symbol}_{frequency}_lag{lag_minutes}m_per_trade_be.png",
+        title=(
+            f"{strategy}/{symbol}/{frequency} bar — Per-Episode Break-even Cost "
+            f"(lag={lag_minutes}m physical-time)"
+        ),
+    )
+    _atomic_json(case_dir / "per_trade_break_even_summary.json", episode_summaries)
+    metadata["per_trade_break_even_table"] = str(Path(episode_table).resolve())
+    metadata["per_trade_break_even_figure"] = str(Path(episode_figure).resolve())
+    metadata["per_trade_break_even_summary"] = episode_summaries
     _atomic_json(case_dir / "metrics.json", metadata)
     if source_config_root is not None:
         config = source_config_root / strategy / "fee_5bps" / "config.yaml"
@@ -359,11 +405,11 @@ def build_canonical_case(
     return rows
 
 
-def build_canonical(args: argparse.Namespace, strategies: list[str]) -> None:
+def build_canonical(args: argparse.Namespace, strategies: list[str], cases: tuple[str, ...]) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
     for strategy in strategies:
-        for case in CASES:
+        for case in cases:
             rows.extend(
                 build_canonical_case(
                     batch_root=args.batch_root,
@@ -387,10 +433,12 @@ def build_canonical(args: argparse.Namespace, strategies: list[str]) -> None:
         args.output_dir / "artifact_manifest.json",
         {
             "strategy_count": len(strategies),
-            "case_count": len(CASES),
+            "case_count": len(cases),
             "premium_case_count": 2,
             "summary_rows": len(summary),
-            "figure_count": len(strategies) * len(CASES),
+            "performance_figure_count": len(strategies) * len(cases),
+            "per_trade_figure_count": len(strategies) * len(cases),
+            "figure_count": len(strategies) * len(cases) * 2,
             "primary_variant": "normal",
             "reverse_variant_regenerated": False,
             "reverse_reason": "strict_reverse is an exact sign inversion of executed direction",
@@ -401,7 +449,11 @@ def build_canonical(args: argparse.Namespace, strategies: list[str]) -> None:
 
 def main() -> int:
     args = parse_args()
-    strategies = discover(args.batch_root)
+    cases = tuple(dict.fromkeys(args.cases or CASES))
+    for case in cases:
+        if not re.fullmatch(r"\d+m_lag\d+", case):
+            raise ValueError(f"invalid case {case!r}; expected e.g. 5m_lag1")
+    strategies = discover(args.batch_root, cases)
     if not strategies:
         raise ValueError("no complete strategies found")
     if args.strategies:
@@ -412,10 +464,10 @@ def main() -> int:
     if args.canonical_layout:
         if args.output_dir.exists() and any(args.output_dir.iterdir()) and not args.overwrite:
             raise ValueError(f"output exists: {args.output_dir}")
-        build_canonical(args, strategies)
+        build_canonical(args, strategies, cases)
         print(
             f"COMPLETE canonical strategies={len(strategies)} "
-            f"figures={len(strategies) * len(CASES)} output={args.output_dir}"
+            f"figures={len(strategies) * len(cases) * 2} output={args.output_dir}"
         )
         return 0
     if args.output_dir.exists():

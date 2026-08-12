@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Run every validated strategy on 1m/10m clocks with 0m/1m execution lag.
+"""Run validated strategies on independent N-minute clocks and M-minute lag.
 
 This is an experiment orchestrator.  It reuses the canonical market loader,
 feature runner, registered strategy plugin, execution intent/fill records, and
-the existing constant-notional accounting overlay.  Strategy logic and all
-core engines remain unchanged.
+the existing constant-notional accounting overlay.  Defaults preserve the
+historical 1m/10m × 0m/1m matrix; repeatable ``--case N:M`` selects any
+supported positive N and non-negative M. Strategy logic and all core engines
+remain unchanged.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import os
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -35,7 +37,7 @@ from strategy_framework.registry import get_entry
 
 
 MINUTE_NS = 60_000_000_000
-CASES = (("1m", 0), ("1m", 1), ("10m", 0), ("10m", 1))
+DEFAULT_CASES = (("1m", 0), ("1m", 1), ("10m", 0), ("10m", 1))
 RESULT_COLUMNS = (
     "direction",
     "target_quantity",
@@ -65,8 +67,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--strategy", action="append", dest="strategies")
+    parser.add_argument(
+        "--case",
+        action="append",
+        dest="cases",
+        metavar="N:M",
+        help=(
+            "strategy bar minutes and independent physical execution lag minutes; "
+            "repeatable, e.g. --case 5:0 --case 5:1"
+        ),
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
+
+
+def parse_cases(values: list[str] | None) -> tuple[tuple[str, int], ...]:
+    if not values:
+        return DEFAULT_CASES
+    parsed: list[tuple[str, int]] = []
+    for value in values:
+        frequency_text, separator, lag_text = value.partition(":")
+        if not separator:
+            raise ValueError(f"invalid --case {value!r}; expected N:M")
+        bar_minutes = int(frequency_text.removesuffix("m"))
+        lag_minutes = int(lag_text.removesuffix("m"))
+        if bar_minutes <= 0 or lag_minutes < 0:
+            raise ValueError("bar minutes must be positive and lag minutes non-negative")
+        case = (f"{bar_minutes}m", lag_minutes)
+        if case not in parsed:
+            parsed.append(case)
+    return tuple(parsed)
 
 
 def _build_config_obj(config_cls: type, params: dict[str, Any], frequency: str) -> Any:
@@ -130,15 +160,11 @@ def funding_config(root: Path, start: str, end: str) -> dict[str, Any]:
 
 def load_market_and_funding(
     market_root: Path, start: str, end: str
-) -> tuple[list[BarEvent], list[BarEvent], pd.DataFrame]:
+) -> tuple[list[BarEvent], pd.DataFrame]:
     _, stream = load_events(market_config(market_root, start, end))
     bars = list(stream)
     if not bars:
         raise ValueError("market stream is empty")
-    ten_minute = [
-        replace(bar, event_time_ns=bar.event_time_ns + 10 * MINUTE_NS)
-        for bar in resample_bars(bars, "10m")
-    ]
     _, funding_stream = load_events(funding_config(market_root, start, end))
     funding = pd.DataFrame(
         [
@@ -150,15 +176,17 @@ def load_market_and_funding(
             for event in funding_stream
         ]
     )
-    return bars, ten_minute, funding
+    return bars, funding
 
 
-def strategy_events(
-    bars_1m: list[BarEvent], bars_10m: list[BarEvent], frequency: str
-) -> Iterable[BarEvent]:
-    if frequency == "10m":
-        return bars_10m
-    return (replace(bar, event_time_ns=bar.event_time_ns + MINUTE_NS) for bar in bars_1m)
+def build_strategy_clock(bars_1m: list[BarEvent], frequency: str) -> list[BarEvent]:
+    """Build completed N-minute observations independently of execution lag."""
+    minutes = int(frequency.removesuffix("m"))
+    source = bars_1m if minutes == 1 else resample_bars(bars_1m, frequency)
+    return [
+        replace(bar, event_time_ns=bar.event_time_ns + minutes * MINUTE_NS)
+        for bar in source
+    ]
 
 
 def execution_bar(
@@ -258,7 +286,7 @@ def run_decision_lifecycle(
     frequency: str,
     lag_minutes: int,
     bars_1m: list[BarEvent],
-    bars_10m: list[BarEvent],
+    strategy_bars: list[BarEvent],
     end_exclusive_ns: int,
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     plugin = get_entry(strategy_name)
@@ -279,7 +307,7 @@ def run_decision_lifecycle(
     signal_count = 0
     dropped_tail = 0
 
-    for event in strategy_events(bars_1m, bars_10m, frequency):
+    for event in strategy_bars:
         snapshot, signal = runner.on_event(event)
         signal_text = str(signal)
         if event.event_time_ns >= end_exclusive_ns:
@@ -439,15 +467,16 @@ def run_strategy(
     source_root: Path,
     output_root: Path,
     bars_1m: list[BarEvent],
-    bars_10m: list[BarEvent],
+    strategy_clocks: dict[str, list[BarEvent]],
     funding: pd.DataFrame,
+    cases: tuple[tuple[str, int], ...],
     args: argparse.Namespace,
 ) -> list[dict[str, Any]]:
     config_path = source_root / strategy_name / "fee_5bps" / "config.yaml"
     source_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     end_exclusive_ns = int(pd.Timestamp(args.end, tz="UTC").value) + 86_400_000_000_000
     rows: list[dict[str, Any]] = []
-    for frequency, lag_minutes in CASES:
+    for frequency, lag_minutes in cases:
         case = f"{frequency}_lag{lag_minutes}"
         destination = output_root / strategy_name / case
         summary_path = destination / "summary.json"
@@ -461,7 +490,7 @@ def run_strategy(
                 frequency=frequency,
                 lag_minutes=lag_minutes,
                 bars_1m=bars_1m,
-                bars_10m=bars_10m,
+                strategy_bars=strategy_clocks[frequency],
                 end_exclusive_ns=end_exclusive_ns,
             )
             summaries = write_case(
@@ -496,6 +525,7 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 def main() -> int:
     args = parse_args()
+    cases = parse_cases(args.cases)
     if args.shard_count < 1 or not 0 <= args.shard_index < args.shard_count:
         raise ValueError("invalid shard index/count")
     if args.notional_usdt <= 0:
@@ -518,9 +548,13 @@ def main() -> int:
             "completed": 0,
         },
     )
-    bars_1m, bars_10m, funding = load_market_and_funding(
+    bars_1m, funding = load_market_and_funding(
         args.market_root, args.start, args.end
     )
+    strategy_clocks = {
+        frequency: build_strategy_clock(bars_1m, frequency)
+        for frequency in sorted({frequency for frequency, _ in cases})
+    }
     rows: list[dict[str, Any]] = []
     started = datetime.now(UTC)
     for index, strategy_name in enumerate(selected, start=1):
@@ -542,8 +576,9 @@ def main() -> int:
                 source_root=args.source_root,
                 output_root=args.output_root,
                 bars_1m=bars_1m,
-                bars_10m=bars_10m,
+                strategy_clocks=strategy_clocks,
                 funding=funding,
+                cases=cases,
                 args=args,
             )
         )

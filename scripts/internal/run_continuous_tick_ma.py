@@ -27,6 +27,11 @@ from results.strategy_evaluation import (
     render_strategy_evaluation,
     validate_strategy_evaluation,
 )
+from results.trade_episode import (
+    build_de_risk_episodes,
+    render_episode_break_even,
+    write_episode_csv,
+)
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
 from strategy_framework.execution.backtest_report import (
     write_artifact_manifest,
@@ -305,6 +310,16 @@ def run(
                             variant.intents.append(_intent_row(attempt.intent))
                         if attempt.fill is not None:
                             variant.fills.append(attempt.fill)
+                            # Preserve the exact executable event in the report
+                            # clock so episode completion is not rounded to a
+                            # later minute mark.
+                            marks.append(
+                                _mark(
+                                    attempt.fill_time_ns,
+                                    config.instrument_id,
+                                    attempt.fill.price,
+                                )
+                            )
                         notional_after = abs(attempt.position_after * attempt.price)
                         audit_writer.writerow({
                             "lag_ns": variant.lag_ns,
@@ -496,6 +511,58 @@ def run(
             output_dir=variant_dir,
             run_name=run_name,
             lag_ns=variant.lag_ns,
+        )
+        episode_rows: list[dict[str, Any]] = []
+        episode_summaries: dict[str, dict[str, Any]] = {}
+        positions = [float(row["position"]) for row in evaluation_series]
+        cumulative_turnover = [
+            float(row["cumulative_turnover"]) for row in evaluation_series
+        ]
+        turnover_increment = [
+            value - (cumulative_turnover[index - 1] if index else 0.0)
+            for index, value in enumerate(cumulative_turnover)
+        ]
+        for premium, return_column in (
+            ("included", "return_with_premium"),
+            ("excluded", "return_without_premium"),
+        ):
+            cumulative_return = [
+                float(row[return_column]) for row in evaluation_series
+            ]
+            return_increment = [
+                value - (cumulative_return[index - 1] if index else 0.0)
+                for index, value in enumerate(cumulative_return)
+            ]
+            premium_rows, premium_summary = build_de_risk_episodes(
+                event_time_ns=[
+                    int(row["event_time_ns"]) for row in evaluation_series
+                ],
+                executed_position=positions,
+                turnover_increment=turnover_increment,
+                gross_return_increment=return_increment,
+                strategy="continuous_tick_ma",
+                symbol="BTCUSDT",
+                granularity="native trade tick",
+                lag=(
+                    "0s physical-time (first following TradeEvent)"
+                    if variant.lag_ns == 0
+                    else f"{variant.lag_ns / 1e9:g}s physical-time"
+                ),
+                premium_mode=premium,
+            )
+            episode_rows.extend(premium_rows)
+            episode_summaries[premium] = premium_summary
+        write_episode_csv(variant_dir / "per_trade_break_even.csv", episode_rows)
+        render_episode_break_even(
+            episode_rows,
+            destination=variant_dir / "charts" / "per_trade_break_even.png",
+            title=(
+                "continuous_tick_ma/BTCUSDT/native tick — Per-Episode "
+                f"Break-even Cost (lag={variant.lag_ns / 1e9:g}s physical-time)"
+            ),
+        )
+        _atomic_json(
+            variant_dir / "per_trade_break_even_summary.json", episode_summaries
         )
         _atomic_json(variant_dir / "strategy_evaluation_validation.json", validation)
         write_artifact_manifest(variant_dir, run_name)

@@ -73,9 +73,11 @@ from strategies.trendscore_short import PLUGIN as TRENDSCORE_SHORT_PLUGIN
 from strategies.turtle_trader import PLUGIN as TURTLE_TRADER_PLUGIN
 from strategies.vwm_long import PLUGIN as VWM_LONG_PLUGIN
 from strategies.vwm_short import PLUGIN as VWM_SHORT_PLUGIN
+from strategies.workbook_parametric import PLUGINS as WORKBOOK_PARAMETRIC_PLUGINS
 from strategy_framework.plugin import StrategyPlugin
 
 STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
+    **{plugin.name: plugin for plugin in WORKBOOK_PARAMETRIC_PLUGINS},
     CONTINUOUS_TICK_MA_PLUGIN.name: CONTINUOUS_TICK_MA_PLUGIN,
     MA_CROSSOVER_PLUGIN.name: MA_CROSSOVER_PLUGIN,
     VWM_SHORT_PLUGIN.name: VWM_SHORT_PLUGIN,
