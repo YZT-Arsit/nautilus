@@ -359,6 +359,10 @@ def write_backtest_report(
                 "close": close,
                 "cash": round(acct.cash, 8),
                 "position": round(pos.qty, 10),
+                "position_leverage_pct": round(
+                    (pos.qty * close / float(initial_cash) * 100.0) if initial_cash else 0.0,
+                    8,
+                ),
                 "realized_pnl": round(acct.realized_total(), 8),
                 "commission": round(acct.total_commission, 8),
                 "funding_pnl": round(acct.total_funding, 8),
@@ -529,7 +533,8 @@ def write_backtest_report(
     equity_name = _write_series(
         out, "equity_curve", equity_rows,
         ["event_time_ns", "event_time", "instrument_id", "close", "cash", "position",
-         "realized_pnl", "commission", "funding_pnl", "unrealized_pnl", "net_pnl", "equity"],
+         "position_leverage_pct", "realized_pnl", "commission", "funding_pnl",
+         "unrealized_pnl", "net_pnl", "equity"],
     )
     files["equity_curve"] = str(out / equity_name)
 

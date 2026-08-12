@@ -1,16 +1,19 @@
 """Construct :class:`TradeEvent` objects from raw values.
 
-``make_trade_event`` fills ``quote_quantity`` (``price * quantity``) and derives
-``side`` from ``is_buyer_maker`` when not supplied. ``make_trades`` builds an
-evenly spaced list of trades — the synthetic/demo helper.
+``make_trade_event`` explicitly marks whether ``quote_quantity`` was supplied
+or had to fall back to ``price * quantity`` and derives ``side`` from
+``is_buyer_maker`` when not supplied. ``make_trades`` builds an evenly spaced
+list of trades — the synthetic/demo helper.
 
 Side convention (Binance): ``is_buyer_maker=True`` -> aggressive ``SELL``;
 ``is_buyer_maker=False`` -> aggressive ``BUY``.
 """
+
 from __future__ import annotations
 
 from data_engine.events import TradeEvent
 from data_engine.time import ONE_SECOND_NS
+
 
 BUY, SELL = "BUY", "SELL"
 
@@ -29,6 +32,7 @@ def make_trade_event(
     instrument_id: str,
     event_time_ns: int,
     quote_quantity: float | None = None,
+    quote_quantity_source: str | None = None,
     side: str | None = None,
     is_buyer_maker: bool | None = None,
     trade_id: int | str | None = None,
@@ -39,6 +43,9 @@ def make_trade_event(
     """Build one :class:`TradeEvent`, filling notional and side when omitted."""
     if quote_quantity is None:
         quote_quantity = price * quantity
+        quote_quantity_source = "price_x_quantity_fallback"
+    elif quote_quantity_source is None:
+        quote_quantity_source = "provided"
     if side is None:
         side = side_from_is_buyer_maker(is_buyer_maker)
     return TradeEvent(
@@ -47,6 +54,7 @@ def make_trade_event(
         price=price,
         quantity=quantity,
         quote_quantity=quote_quantity,
+        quote_quantity_source=quote_quantity_source,
         side=side,
         is_buyer_maker=is_buyer_maker,
         trade_id=trade_id,

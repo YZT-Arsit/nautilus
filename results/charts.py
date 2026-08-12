@@ -18,6 +18,7 @@ epoch-ns), titles carry the run/strategy + end return, axes are labelled, and lo
 per-bar series (a 2-year 1m run is ~1.05M points) are down-sampled to keep the PNG
 crisp and small.
 """
+
 from __future__ import annotations
 
 import csv
@@ -30,9 +31,11 @@ _TIME_COLS = ("event_time_ns", "ts_event", "time_ns", "time", "ts")
 _EQUITY_COLS = ("equity", "total_equity")
 _PNL_COLS = ("net_pnl", "pnl", "realized_pnl")
 _POS_COLS = ("position", "position_qty", "net_position")
+_PRICE_COLS = ("close", "mark_price", "price")
+_LEVERAGE_COLS = ("position_leverage_pct", "signed_leverage_pct")
 
-_MAX_POINTS = 2500          # down-sample target for plotting
-_NS_THRESHOLD = 10 ** 17    # values above this are treated as epoch-ns timestamps
+_MAX_POINTS = 2500  # down-sample target for plotting
+_NS_THRESHOLD = 10**17  # values above this are treated as epoch-ns timestamps
 
 
 def _pick(header: list[str], candidates: tuple[str, ...]) -> str | None:
@@ -80,13 +83,17 @@ def _load_series(equity_path: Path) -> dict[str, list[float]]:
         ecol = _pick(header, _EQUITY_COLS)
         pcol = _pick(header, _PNL_COLS)
         poscol = _pick(header, _POS_COLS)
+        pricecol = _pick(header, _PRICE_COLS)
+        leveragecol = _pick(header, _LEVERAGE_COLS)
         n = len(next(iter(data.values()))) if data else 0
-        get = lambda c: (data[c] if c in data else [None] * n)  # noqa: E731
+        get = lambda c: data[c] if c in data else [None] * n  # noqa: E731
         return {
             "t": [_num(v, i) for i, v in enumerate(get(tcol))],
             "equity": [_num(v) for v in get(ecol)],
             "pnl": [_num(v) for v in get(pcol)],
             "position": [_num(v) for v in get(poscol)],
+            "price": [_num(v) for v in get(pricecol)],
+            "leverage": [_num(v) for v in get(leveragecol)] if leveragecol else [],
         }
     with open(equity_path, newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
@@ -95,12 +102,24 @@ def _load_series(equity_path: Path) -> dict[str, list[float]]:
         ecol = _pick(header, _EQUITY_COLS)
         pcol = _pick(header, _PNL_COLS)
         poscol = _pick(header, _POS_COLS)
-        cols: dict[str, list[float]] = {"t": [], "equity": [], "pnl": [], "position": []}
+        pricecol = _pick(header, _PRICE_COLS)
+        leveragecol = _pick(header, _LEVERAGE_COLS)
+        cols: dict[str, list[float]] = {
+            "t": [],
+            "equity": [],
+            "pnl": [],
+            "position": [],
+            "price": [],
+            "leverage": [],
+        }
         for i, row in enumerate(reader):
             cols["t"].append(_num(row.get(tcol), i))
             cols["equity"].append(_num(row.get(ecol)))
             cols["pnl"].append(_num(row.get(pcol)))
             cols["position"].append(_num(row.get(poscol)))
+            cols["price"].append(_num(row.get(pricecol)))
+            if leveragecol:
+                cols["leverage"].append(_num(row.get(leveragecol)))
     return cols
 
 
@@ -146,6 +165,19 @@ def _ret_label(metrics: dict) -> str:
     return f"  (ret {r:+.1%})" if isinstance(r, (int, float)) else ""
 
 
+def _signed_leverage_percent(series: dict[str, list[float]], metrics: dict) -> list[float]:
+    """Return signed notional / fixed initial capital; 100% means one-times leverage."""
+    if len(series["leverage"]) == len(series["t"]):
+        return series["leverage"]
+    capital = _num(metrics.get("initial_cash") or metrics.get("notional_usdt"))
+    if capital <= 0:
+        raise ValueError("position leverage chart requires positive initial_cash/notional_usdt")
+    return [
+        position * price / capital * 100.0
+        for position, price in zip(series["position"], series["price"], strict=True)
+    ]
+
+
 def _plt():
     """Lazy matplotlib (Agg); returns the pyplot module or ``None`` if absent."""
     try:
@@ -177,9 +209,10 @@ def render_run_charts(run_dir: str | Path) -> dict[str, str]:
         return {}
     metrics = _read_metrics(run_dir)
     name_prefix = str(metrics.get("run_name", run_dir.name))
+    leverage = _signed_leverage_percent(s, metrics)
     x, is_date = _x_axis(s["t"])
-    x, (equity, pnl, position, dd) = _downsample(
-        x, s["equity"], s["pnl"], s["position"], _drawdown(s["equity"])
+    x, (equity, pnl, leverage, dd) = _downsample(
+        x, s["equity"], s["pnl"], leverage, _drawdown(s["equity"])
     )
 
     charts_dir = run_dir / "charts"
@@ -189,13 +222,15 @@ def render_run_charts(run_dir: str | Path) -> dict[str, str]:
         ("equity_curve", "Equity" + _ret_label(metrics), "Equity (USDT)", equity),
         ("drawdown", "Drawdown", "Drawdown (%)", dd),
         ("pnl", "PnL", "PnL (USDT)", pnl),
-        ("position", "Position", "Position (units)", position),
+        ("position", "Signed leverage (100% = 1x)", "Signed leverage (%)", leverage),
     ]
     for fname, title, ylabel, series in panels:
         fig, ax = plt.subplots(figsize=(11, 3.4))
         ax.plot(x, series, linewidth=0.9)
         ax.set_title(f"{name_prefix} — {title}")
         ax.set_ylabel(ylabel)
+        if fname == "position":
+            ax.axhline(0.0, color="grey", linewidth=0.7, linestyle="--", alpha=0.6)
         ax.grid(True, alpha=0.3)
         if is_date:
             fig.autofmt_xdate()

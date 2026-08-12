@@ -15,21 +15,24 @@ Expected dataset layout (locked canonical partitioning)::
 This module imports no ``nautilus_trader`` — it is part of the self-owned
 ``data_engine`` layer.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
-from data_engine.adapters.trade_adapter import make_trade_event, side_from_is_buyer_maker
+from data_engine.adapters.trade_adapter import make_trade_event
+from data_engine.adapters.trade_adapter import side_from_is_buyer_maker
 from data_engine.events import TradeEvent
-from data_engine.sources.hive_partitioning import (
-    matching_fragments,
-    select_date_window_fragments,
-    validate_market_filters,
-)
+from data_engine.sources.hive_partitioning import matching_fragments
+from data_engine.sources.hive_partitioning import select_date_window_fragments
+from data_engine.sources.hive_partitioning import validate_market_filters
 from data_engine.sources.parquet_bars import coerce_partition_date
 from data_engine.split import split_warmup_live
-from data_engine.time import ONE_SECOND_NS, to_event_time_ns, validate_time_unit
-from data_engine.validation import optional_numeric, require_numeric
+from data_engine.time import ONE_SECOND_NS
+from data_engine.time import to_event_time_ns
+from data_engine.time import validate_time_unit
+from data_engine.validation import optional_numeric
+from data_engine.validation import require_numeric
 
 
 class ParquetTradeSource:
@@ -48,7 +51,8 @@ class ParquetTradeSource:
         quote_quantity_column: str | None = "quote_quantity",
         side_column: str | None = "side",
         is_buyer_maker_column: str | None = "is_buyer_maker",
-        trade_id_column: str | None = "agg_trade_id",
+        trade_id_column: str | None = None,
+        quote_quantity_source_column: str | None = "quote_quantity_source",
         start: object | None = None,
         end: object | None = None,
     ) -> None:
@@ -68,6 +72,7 @@ class ParquetTradeSource:
         self._side_column = side_column
         self._is_buyer_maker_column = is_buyer_maker_column
         self._trade_id_column = trade_id_column
+        self._quote_quantity_source_column = quote_quantity_source_column
         self._trades: list[TradeEvent] | None = None
 
     def _row_to_trade(self, row: dict[str, Any], index: int) -> TradeEvent:
@@ -77,8 +82,10 @@ class ParquetTradeSource:
         quote_quantity: float | None = None
         if self._quote_quantity_column and row.get(self._quote_quantity_column) is not None:
             quote_quantity = optional_numeric(
-                row[self._quote_quantity_column], price * quantity,
-                self._quote_quantity_column, index,
+                row[self._quote_quantity_column],
+                price * quantity,
+                self._quote_quantity_column,
+                index,
             )
 
         is_buyer_maker = None
@@ -95,6 +102,13 @@ class ParquetTradeSource:
         if self._trade_id_column and row.get(self._trade_id_column) is not None:
             trade_id = row[self._trade_id_column]
 
+        quote_quantity_source = None
+        if (
+            self._quote_quantity_source_column
+            and row.get(self._quote_quantity_source_column) is not None
+        ):
+            quote_quantity_source = str(row[self._quote_quantity_source_column])
+
         ts_col = self._timestamp_column
         if ts_col and row.get(ts_col) is not None:
             try:
@@ -108,6 +122,7 @@ class ParquetTradeSource:
             price=price,
             quantity=quantity,
             quote_quantity=quote_quantity,
+            quote_quantity_source=quote_quantity_source,
             instrument_id=self._instrument_id,
             event_time_ns=event_time_ns,
             side=side,
@@ -133,7 +148,10 @@ class ParquetTradeSource:
             )
         if self._start is not None or self._end is not None:
             fragments = select_date_window_fragments(
-                fragments, self._start, self._end, self._warmup,
+                fragments,
+                self._start,
+                self._end,
+                self._warmup,
             )
             if not fragments:
                 raise ValueError("no trade fragments match the requested date window")
@@ -147,6 +165,15 @@ class ParquetTradeSource:
         if self._timestamp_column not in schema_names:
             raise ValueError(f"required timestamp column {self._timestamp_column!r} is missing")
 
+        # Raw Binance trades use ``trade_id``. The legacy aggTrades dataset used
+        # ``agg_trade_id``. Auto-detect only when the caller did not explicitly
+        # configure a column, preserving compatibility during schema evolution.
+        if self._trade_id_column is None:
+            if "trade_id" in schema_names:
+                self._trade_id_column = "trade_id"
+            elif "agg_trade_id" in schema_names:
+                self._trade_id_column = "agg_trade_id"
+
         wanted = [
             self._timestamp_column,
             self._price_column,
@@ -155,6 +182,7 @@ class ParquetTradeSource:
             self._side_column,
             self._is_buyer_maker_column,
             self._trade_id_column,
+            self._quote_quantity_source_column,
         ]
         columns = [c for c in wanted if c and c in schema_names]
 
@@ -165,7 +193,17 @@ class ParquetTradeSource:
             self._row_to_trade({col: data[col][i] for col in columns}, i)
             for i in range(table.num_rows)
         ]
-        trades.sort(key=lambda t: t.event_time_ns)
+
+        def _trade_id_key(trade: TradeEvent) -> tuple[int, object]:
+            value = trade.trade_id
+            if value is None:
+                return (2, "")
+            try:
+                return (0, int(value))
+            except (TypeError, ValueError):
+                return (1, str(value))
+
+        trades.sort(key=lambda trade: (trade.event_time_ns, _trade_id_key(trade)))
         return trades
 
     def _trades_cached(self) -> list[TradeEvent]:
@@ -183,11 +221,16 @@ class ParquetTradeSource:
         trades = self._trades_cached()
         if self._start is None:
             return split_warmup_live(trades, self._warmup)
-        from datetime import datetime, time, timezone  # noqa: PLC0415
-        start_ns = int(datetime.combine(self._start, time.min, timezone.utc).timestamp() * 1_000_000_000)
+        from datetime import datetime  # noqa: PLC0415
+        from datetime import time  # noqa: PLC0415
+        from datetime import timezone  # noqa: PLC0415
+
+        start_ns = int(
+            datetime.combine(self._start, time.min, timezone.utc).timestamp() * 1_000_000_000
+        )
         prior = [trade for trade in trades if trade.event_time_ns < start_ns]
         live = [trade for trade in trades if trade.event_time_ns >= start_ns]
-        return prior[-self._warmup:] if self._warmup else [], live
+        return prior[-self._warmup :] if self._warmup else [], live
 
 
 def load_parquet_trades(data_config: dict[str, Any]) -> tuple[list[TradeEvent], list[TradeEvent]]:
@@ -207,7 +250,11 @@ def load_parquet_trades(data_config: dict[str, Any]) -> tuple[list[TradeEvent], 
         quote_quantity_column=data_config.get("quote_quantity_column", "quote_quantity"),
         side_column=data_config.get("side_column", "side"),
         is_buyer_maker_column=data_config.get("is_buyer_maker_column", "is_buyer_maker"),
-        trade_id_column=data_config.get("trade_id_column", "agg_trade_id"),
+        trade_id_column=data_config.get("trade_id_column"),
+        quote_quantity_source_column=data_config.get(
+            "quote_quantity_source_column",
+            "quote_quantity_source",
+        ),
         start=data_config.get("start"),
         end=data_config.get("end"),
     )

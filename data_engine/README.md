@@ -44,7 +44,7 @@ from data_engine import BarEvent, load_events, make_bar_event, make_bars
 | `synthetic` | generated flat→rise→fall demo path | list |
 | `csv_bars` | historical replay from a local CSV (small demos/tests) | list |
 | `hive_parquet_bars` | bars from the locked `market_data` Hive dataset | list |
-| `hive_parquet_trades` | trades from the same locked Hive dataset → `TradeEvent` | list |
+| `hive_parquet_trades` | one normalized raw trade per row from the locked Hive dataset → `TradeEvent` | list |
 | `hive_parquet_funding` | perpetual funding settlements → `FundingRateEvent` | list |
 | `live_synthetic` | streaming skeleton (no real feed) | generator |
 | `live_gateway` | CTP-like gateway skeleton (`provider: mock` by default) | generator |
@@ -106,6 +106,24 @@ window. The locked Parquet schema requires the configured timestamp column.
 
   `pyarrow` is the only added dependency; **no pandas**. The source returns plain
   `BarEvent` objects.
+
+### Trade-tick contract
+
+In this project a tick means one exchange raw trade, not an aggTrade, quote,
+order-book update, synthetic observation, or one-second bar. Binance USD-M raw
+trade rows are normalized one-to-one to `TradeEvent`, ordered by
+`(event_time_ns, trade_id)`, and stored in the same locked layout with
+`data_type=trade/freq=tick`. Source `quoteQty` is retained as
+`quote_quantity`; `price * quantity` is only an explicitly marked fallback for
+sources that genuinely omit quote notional.
+
+Trade features and strategies may consume this irregular stream directly via
+`hive_parquet_trades`. Clock-time windows use event timestamps and represent
+`(t - window, t]`; they do not first collapse events to bars. Execution lag is
+not a data-layer property: `DurationLagTargetAdapter(lag_ns=...)` uses physical
+time and fills at the first following trade reaching the due time. Its
+`lag_ns=0` means the next observed trade, never an instantaneous fill on the
+signal-producing trade.
 
 ## Adding a real live source later
 

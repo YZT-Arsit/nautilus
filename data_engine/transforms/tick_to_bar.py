@@ -19,21 +19,25 @@ OHLCV 行（dict，列见 ``OHLCV_COLUMNS``）。
 ----
 * bar 以**桶左沿**（bucket start）作为 ``event_time_ns`` 标签，``label="left"``。
 * OHLC 由构造保证 ``low <= open/close <= high``，并再做一次显式校验。
-* 输入允许乱序：按 (instrument, ts) 排序后聚合。
+* 输入允许乱序：按 (instrument, ts, trade_id) 稳定排序后聚合。
+* ``quote_volume`` 优先累加事件原始 ``quote_quantity``；只有字段缺失时才
+  显式回退到 ``price * quantity``，并记录 fallback count。
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Iterable
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
+from typing import Any
+from typing import Iterable
 
 from data_engine.events import BarEvent
-from data_engine.transforms.bars import (
-    OHLCV_COLUMNS,
-    derive_trading_date,
-    parse_frequency,
-    validate_bars,
-)
+from data_engine.transforms.bars import OHLCV_COLUMNS
+from data_engine.transforms.bars import derive_trading_date
+from data_engine.transforms.bars import parse_frequency
+from data_engine.transforms.bars import validate_bars
+
 
 _PRICE_FALLBACKS = ("price", "last", "close")
 _SIZE_FALLBACKS = ("size", "volume", "quantity", "qty")
@@ -70,8 +74,7 @@ def _price(obj: Any, price_field: str | None) -> float:
     if bid is not None and ask is not None:
         return (float(bid) + float(ask)) / 2.0
     raise ValueError(
-        "事件缺少价格：尝试过 price/last/close/(bid,ask)，都没有。"
-        "可用 price_field 显式指定。"
+        "事件缺少价格：尝试过 price/last/close/(bid,ask)，都没有。可用 price_field 显式指定。"
     )
 
 
@@ -94,6 +97,7 @@ class MinuteBarResult:
     rows: list[dict]  # 可直接落盘的 OHLCV 行（列见 OHLCV_COLUMNS）
     frequency: str
     volume_is_synthetic: bool
+    quote_quantity_fallback_count: int = 0
     issues: list[str] = field(default_factory=list)
 
     def __len__(self) -> int:
@@ -101,21 +105,77 @@ class MinuteBarResult:
 
 
 class _Bucket:
-    __slots__ = ("open", "high", "low", "close", "volume", "turnover", "n")
+    __slots__ = (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "_volume_c",
+        "turnover",
+        "_turnover_c",
+        "quote_volume",
+        "_quote_volume_c",
+        "taker_buy_volume",
+        "_taker_buy_volume_c",
+        "taker_buy_quote_volume",
+        "_taker_buy_quote_volume_c",
+        "n",
+    )
 
-    def __init__(self, price: float, size: float) -> None:
+    def __init__(self, price: float, size: float, quote_quantity: float, is_buy: bool) -> None:
         self.open = self.high = self.low = self.close = price
         self.volume = size
+        self._volume_c = 0.0
         self.turnover = price * size
+        self._turnover_c = 0.0
+        self.quote_volume = quote_quantity
+        self._quote_volume_c = 0.0
+        self.taker_buy_volume = size if is_buy else 0.0
+        self._taker_buy_volume_c = 0.0
+        self.taker_buy_quote_volume = quote_quantity if is_buy else 0.0
+        self._taker_buy_quote_volume_c = 0.0
         self.n = 1
 
-    def update(self, price: float, size: float) -> None:
+    def _add(self, field: str, compensation_field: str, value: float) -> None:
+        """Neumaier compensated addition without retaining every trade value."""
+        current = float(getattr(self, field))
+        total = current + value
+        correction = float(getattr(self, compensation_field))
+        if abs(current) >= abs(value):
+            correction += (current - total) + value
+        else:
+            correction += (value - total) + current
+        setattr(self, field, total)
+        setattr(self, compensation_field, correction)
+
+    def update(self, price: float, size: float, quote_quantity: float, is_buy: bool) -> None:
         self.high = max(self.high, price)
         self.low = min(self.low, price)
         self.close = price
-        self.volume += size
-        self.turnover += price * size
+        self._add("volume", "_volume_c", size)
+        self._add("turnover", "_turnover_c", price * size)
+        self._add("quote_volume", "_quote_volume_c", quote_quantity)
+        if is_buy:
+            self._add("taker_buy_volume", "_taker_buy_volume_c", size)
+            self._add(
+                "taker_buy_quote_volume",
+                "_taker_buy_quote_volume_c",
+                quote_quantity,
+            )
         self.n += 1
+
+    def total(self, field: str) -> float:
+        return float(getattr(self, field)) + float(getattr(self, f"_{field}_c"))
+
+
+def _trade_id_key(value: Any, input_order: int) -> tuple[int, object, int]:
+    if value is None:
+        return (2, "", input_order)
+    try:
+        return (0, int(value), input_order)
+    except (TypeError, ValueError):
+        return (1, str(value), input_order)
 
 
 def aggregate_ticks_to_bars(
@@ -142,37 +202,57 @@ def aggregate_ticks_to_bars(
     interval = parse_frequency(frequency)
 
     # 1) 提取并按 (instrument, ts) 排序，允许乱序输入。
-    extracted: list[tuple[str, int, float, float | None]] = []
+    extracted: list[
+        tuple[str, int, tuple[int, object, int], float, float | None, float | None, bool]
+    ] = []
     any_real_size = False
-    for ev in ticks:
+    quote_quantity_fallback_count = 0
+    for input_order, ev in enumerate(ticks):
         inst = _get(ev, "instrument_id") or default_instrument
         if inst is None:
-            raise ValueError(
-                "事件缺少 instrument_id，且未提供 default_instrument"
-            )
+            raise ValueError("事件缺少 instrument_id，且未提供 default_instrument")
         ts = _ts_ns(ev)
         price = _price(ev, price_field)
         size = _size(ev, size_field)
         if size is not None:
             any_real_size = True
-        extracted.append((str(inst), ts, price, size))
+        quote_quantity_raw = _get(ev, "quote_quantity")
+        quote_quantity = None if quote_quantity_raw is None else float(quote_quantity_raw)
+        quote_quantity_source = _get(ev, "quote_quantity_source")
+        if quote_quantity is None or quote_quantity_source == "price_x_quantity_fallback":
+            quote_quantity_fallback_count += 1
+        side = _get(ev, "side")
+        is_buyer_maker = _get(ev, "is_buyer_maker")
+        is_buy = str(side).upper() == "BUY" if side is not None else is_buyer_maker is False
+        extracted.append(
+            (
+                str(inst),
+                ts,
+                _trade_id_key(_get(ev, "trade_id"), input_order),
+                price,
+                size,
+                quote_quantity,
+                is_buy,
+            )
+        )
 
     volume_is_synthetic = not any_real_size
-    extracted.sort(key=lambda r: (r[0], r[1]))
+    extracted.sort(key=lambda row: (row[0], row[1], row[2]))
 
     # 2) 分桶聚合（桶左沿对齐 epoch）。
     buckets: dict[tuple[str, int], _Bucket] = {}
     order: list[tuple[str, int]] = []
-    for inst, ts, price, size in extracted:
+    for inst, ts, _trade_key, price, size, quote_quantity, is_buy in extracted:
         bucket_start = (ts // interval) * interval
         size_val = 1.0 if size is None else size  # 无真实 size -> 计数
+        quote_value = price * size_val if quote_quantity is None else quote_quantity
         key = (inst, bucket_start)
         b = buckets.get(key)
         if b is None:
-            buckets[key] = _Bucket(price, size_val)
+            buckets[key] = _Bucket(price, size_val, quote_value, is_buy)
             order.append(key)
         else:
-            b.update(price, size_val)
+            b.update(price, size_val, quote_value, is_buy)
 
     # 3) 物化成 BarEvent + OHLCV 行（按 instrument, ts 稳定排序）。
     order.sort()
@@ -186,7 +266,7 @@ def aggregate_ticks_to_bars(
                 open=b.open,
                 high=b.high,
                 low=b.low,
-                volume=b.volume,
+                volume=b.total("volume"),
                 instrument_id=inst,
                 event_time_ns=bucket_start,
             )
@@ -201,8 +281,12 @@ def aggregate_ticks_to_bars(
                 "high": b.high,
                 "low": b.low,
                 "close": b.close,
-                "volume": b.volume,
-                "turnover": b.turnover,
+                "volume": b.total("volume"),
+                "turnover": b.total("turnover"),
+                "quote_volume": b.total("quote_volume"),
+                "trade_count": b.n,
+                "taker_buy_volume": b.total("taker_buy_volume"),
+                "taker_buy_quote_volume": b.total("taker_buy_quote_volume"),
                 "trading_date": td,
                 "frequency": frequency,
                 "volume_is_synthetic": volume_is_synthetic,
@@ -215,6 +299,7 @@ def aggregate_ticks_to_bars(
         rows=rows,
         frequency=frequency,
         volume_is_synthetic=volume_is_synthetic,
+        quote_quantity_fallback_count=quote_quantity_fallback_count,
         issues=issues,
     )
 

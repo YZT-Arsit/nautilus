@@ -189,8 +189,13 @@ def execute_planned(
     signal: PlannedSignal,
     event: BarEvent,
     simulator: IntentFillSimulator,
-    fills: list[FillRecord],
 ) -> list[FillRecord]:
+    """Execute planned actions and return only the fills created by this signal.
+
+    Ownership of the cumulative fill ledger stays with the lifecycle caller.  In
+    particular, this helper must not append a fill to both a local and caller-
+    owned collection as a side effect.
+    """
     new_fills: list[FillRecord] = []
     for action in signal.actions:
         metadata = dict(action.metadata or {})
@@ -216,7 +221,6 @@ def execute_planned(
             )
         fill = simulator.on_intent(intent, event)
         if fill is not None:
-            fills.append(fill)
             new_fills.append(fill)
     return new_fills
 
@@ -304,7 +308,8 @@ def run_decision_lifecycle(
             continue
         before = current_direction
         if actions:
-            new_fills = execute_planned(signal, fill_event, simulator, fills)
+            new_fills = execute_planned(signal, fill_event, simulator)
+            fills.extend(new_fills)
             if new_fills:
                 for fill in new_fills:
                     signed = float(fill.quantity) if fill.side == "BUY" else -float(fill.quantity)

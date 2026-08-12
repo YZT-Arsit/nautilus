@@ -4,6 +4,7 @@ These are deliberately plain — no dependency on Nautilus Trader native data
 objects. They carry the minimal surface the feature engine routes on:
 ``event_type``, ``instrument_id``, ``event_time_ns``, and the per-type fields.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -48,6 +49,7 @@ class TradeEvent:
     source: str | None = None
     raw: dict | None = None
     event_type: str = "trade"
+    quote_quantity_source: str | None = None
 
 
 @dataclass

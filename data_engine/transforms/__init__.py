@@ -7,19 +7,19 @@
 落盘（Hive Parquet）由 ``feature_engine.services`` / ``storage`` 负责，本层
 只产出标准事件（:class:`data_engine.events.BarEvent`）与标准 OHLCV 行（dict）。
 """
-from data_engine.transforms.bars import (
-    derive_trading_date,
-    parse_frequency,
-    resample_bars,
-    validate_bars,
-)
-from data_engine.transforms.tick_to_bar import (
-    MinuteBarResult,
-    aggregate_ticks_to_bars,
-)
+
+from data_engine.transforms.bar_resample import resample_standard_bars
+from data_engine.transforms.bars import derive_trading_date
+from data_engine.transforms.bars import parse_frequency
+from data_engine.transforms.bars import resample_bars
+from data_engine.transforms.bars import validate_bars
+from data_engine.transforms.tick_to_bar import MinuteBarResult
+from data_engine.transforms.tick_to_bar import aggregate_ticks_to_bars
+
 
 __all__ = [
     "aggregate_ticks_to_bars",
+    "resample_standard_bars",
     "MinuteBarResult",
     "parse_frequency",
     "resample_bars",

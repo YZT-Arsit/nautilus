@@ -16,14 +16,22 @@ import json
 import math
 import time
 from dataclasses import asdict, dataclass, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 from data_engine.loader import load_events
 from feature_engine.runner import FeatureStrategyRunner
+from results.strategy_evaluation import (
+    build_strategy_evaluation,
+    render_strategy_evaluation,
+    validate_strategy_evaluation,
+)
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
-from strategy_framework.execution.backtest_report import write_backtest_report
+from strategy_framework.execution.backtest_report import (
+    write_artifact_manifest,
+    write_backtest_report,
+)
 from strategy_framework.execution.duration_lag import DurationLagTargetAdapter
 from strategy_framework.registry import get_entry
 
@@ -47,7 +55,10 @@ class ExperimentConfig:
 
 @dataclass
 class _Variant:
-    name: str
+    lag_name: str
+    direction_name: str
+    lag_ns: int
+    reverse: bool
     adapter: DurationLagTargetAdapter
     simulator: IntentFillSimulator
     fills: list[Any]
@@ -62,6 +73,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--end", default="2026-06-30")
     parser.add_argument("--lag-seconds", type=float, default=60.0)
     parser.add_argument("--notional-usdt", type=float, default=100_000.0)
+    parser.add_argument(
+        "--compare-lag-zero",
+        action="store_true",
+        help="run lag=0 and --lag-seconds in one shared signal pass",
+    )
+    parser.add_argument(
+        "--include-reverse",
+        action="store_true",
+        help="also run the redundant sign-inverted execution control",
+    )
     return parser.parse_args()
 
 
@@ -134,46 +155,50 @@ def _intent_row(intent: Any) -> dict[str, Any]:
     }
 
 
-def _summary_row(
+def _summary_rows(
     variant: _Variant,
     metrics: dict[str, Any],
     config: ExperimentConfig,
-) -> dict[str, Any]:
-    turnover = sum(abs(fill.quantity * fill.price) for fill in variant.fills) / config.notional_usdt
-    trading_return = (
-        float(metrics["gross_realized_pnl"]) + float(metrics["unrealized_pnl"])
-    ) / config.notional_usdt
-    funding_return = float(metrics["funding_pnl"]) / config.notional_usdt
-    total_return = trading_return + funding_return
-    signed_ex_funding = trading_return / turnover * 10_000 if turnover else math.nan
-    signed_in_funding = total_return / turnover * 10_000 if turnover else math.nan
-    return {
-        "strategy": "continuous_tick_ma",
-        "variant": variant.name,
-        "start": config.start,
-        "end": config.end,
-        "lag_ns": config.lag_ns,
-        "notional_usdt": config.notional_usdt,
-        "signal_count": metrics["signal_count"],
-        "fill_count": metrics["fill_count"],
-        "trading_arithmetic_return": trading_return,
-        "funding_arithmetic_return": funding_return,
-        "total_arithmetic_return": total_return,
-        "total_turnover_x": turnover,
-        "signed_breakeven_bps_excl_funding": signed_ex_funding,
-        "signed_breakeven_bps_incl_funding": signed_in_funding,
-        "vip9_taker_return_after_fee": (
-            total_return - turnover * config.fee_bps_vip9_taker / 10_000
-        ),
-        "vip0_taker_return_after_fee": (
-            total_return - turnover * config.fee_bps_vip0_taker / 10_000
-        ),
-        "funding_event_count": metrics["funding_event_count"],
-        "output_dir": str(metrics["run_name"]),
-    }
+    evaluation: dict[str, dict[str, float]],
+    output_dir: Path,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for premium, values in evaluation.items():
+        rows.append(
+            {
+                "strategy": "continuous_tick_ma",
+                "direction": variant.direction_name,
+                "start": config.start,
+                "end": config.end,
+                "lag_ns": variant.lag_ns,
+                "lag_definition": (
+                    "first following TradeEvent"
+                    if variant.lag_ns == 0
+                    else f"first TradeEvent at or after signal_time + {variant.lag_ns}ns"
+                ),
+                "premium": premium,
+                "notional_usdt": config.notional_usdt,
+                "leverage": 1.0,
+                "signal_count": metrics["signal_count"],
+                "fill_count": metrics["fill_count"],
+                "final_return_1x": values["final_return_1x"],
+                "turnover": values["turnover"],
+                "break_even_bps": values["break_even_bps"],
+                "max_drawdown": values["max_drawdown"],
+                "funding_pnl": metrics["funding_pnl"],
+                "funding_event_count": metrics["funding_event_count"],
+                "output_dir": str(output_dir),
+            }
+        )
+    return rows
 
 
-def run(config: ExperimentConfig) -> Path:
+def run(
+    config: ExperimentConfig,
+    *,
+    compare_lag_zero: bool = False,
+    include_reverse: bool = False,
+) -> Path:
     if config.notional_usdt <= 0 or config.lag_ns < 0:
         raise ValueError("notional must be positive and lag_ns non-negative")
     out = Path(config.output_root)
@@ -189,30 +214,30 @@ def run(config: ExperimentConfig) -> Path:
         engine_kwargs={"is_live": False},
     )
 
-    variants = [
-        _Variant(
-            name="normal",
-            adapter=DurationLagTargetAdapter(
-                lag_ns=config.lag_ns,
-                notional=config.notional_usdt,
-                reverse=False,
-            ),
-            simulator=IntentFillSimulator(default_price_field="price", allow_short=True),
-            fills=[],
-            intents=[],
-        ),
-        _Variant(
-            name="strict_reverse",
-            adapter=DurationLagTargetAdapter(
-                lag_ns=config.lag_ns,
-                notional=config.notional_usdt,
-                reverse=True,
-            ),
-            simulator=IntentFillSimulator(default_price_field="price", allow_short=True),
-            fills=[],
-            intents=[],
-        ),
-    ]
+    lag_values = [config.lag_ns]
+    if compare_lag_zero and config.lag_ns != 0:
+        lag_values.insert(0, 0)
+    variants: list[_Variant] = []
+    for lag_ns in lag_values:
+        for reverse in ((False, True) if include_reverse else (False,)):
+            variants.append(
+                _Variant(
+                    lag_name=f"lag_{lag_ns / 1e9:g}s",
+                    direction_name="strict_reverse" if reverse else "normal",
+                    lag_ns=lag_ns,
+                    reverse=reverse,
+                    adapter=DurationLagTargetAdapter(
+                        lag_ns=lag_ns,
+                        notional=config.notional_usdt,
+                        reverse=reverse,
+                    ),
+                    simulator=IntentFillSimulator(
+                        default_price_field="price", allow_short=True
+                    ),
+                    fills=[],
+                    intents=[],
+                )
+            )
 
     _, funding_stream = load_events(_funding_config(config))
     funding_source = list(funding_stream)
@@ -230,7 +255,7 @@ def run(config: ExperimentConfig) -> Path:
 
     audit_path = out / "execution_audit.csv"
     audit_fields = [
-        "variant", "signal", "signal_time_ns", "due_time_ns", "fill_time_ns",
+        "lag_ns", "direction", "signal", "signal_time_ns", "due_time_ns", "fill_time_ns",
         "observed_lag_ns", "lag_overshoot_ns", "side", "quantity", "fill_price",
         "position_before", "position_after", "position_notional_after",
         "target_notional_error",
@@ -282,7 +307,8 @@ def run(config: ExperimentConfig) -> Path:
                             variant.fills.append(attempt.fill)
                         notional_after = abs(attempt.position_after * attempt.price)
                         audit_writer.writerow({
-                            "variant": variant.name,
+                            "lag_ns": variant.lag_ns,
+                            "direction": variant.direction_name,
                             "signal": attempt.target.signal,
                             "signal_time_ns": attempt.target.signal_time_ns,
                             "due_time_ns": attempt.target.due_time_ns,
@@ -337,8 +363,10 @@ def run(config: ExperimentConfig) -> Path:
                 "total_days": len(day_list),
                 "processed_events": total_events,
                 "signals": len(signals),
-                "fills_normal": len(variants[0].fills),
-                "fills_reverse": len(variants[1].fills),
+                "fills": {
+                    f"{variant.lag_name}/{variant.direction_name}": len(variant.fills)
+                    for variant in variants
+                },
                 "events_per_second": total_events / elapsed,
             })
             del events, event_stream
@@ -369,20 +397,31 @@ def run(config: ExperimentConfig) -> Path:
     gaps = [b - a for a, b in zip(signal_times, signal_times[1:])]
     if len(gaps) > 1 and len(set(gaps)) == 1:
         raise RuntimeError("signal timestamps unexpectedly form a fixed interval")
-    normal_fills = variants[0].fills
-    reverse_fills = variants[1].fills
-    inverse_fill_match = (
-        len(normal_fills) == len(reverse_fills)
-        and all(
-            left.event_time_ns == right.event_time_ns
-            and left.side != right.side
-            and math.isclose(left.quantity, right.quantity, rel_tol=1e-12, abs_tol=1e-12)
-            and left.price == right.price
-            for left, right in zip(normal_fills, reverse_fills)
-        )
-    )
-    if not inverse_fill_match:
-        raise RuntimeError("strict reverse fills are not exact opposites")
+    inverse_fill_match: bool | None = None
+    if include_reverse:
+        inverse_checks = []
+        for lag_ns in lag_values:
+            normal = next(
+                variant for variant in variants if variant.lag_ns == lag_ns and not variant.reverse
+            )
+            reverse = next(
+                variant for variant in variants if variant.lag_ns == lag_ns and variant.reverse
+            )
+            inverse_checks.append(
+                len(normal.fills) == len(reverse.fills)
+                and all(
+                    left.event_time_ns == right.event_time_ns
+                    and left.side != right.side
+                    and math.isclose(
+                        left.quantity, right.quantity, rel_tol=1e-12, abs_tol=1e-12
+                    )
+                    and left.price == right.price
+                    for left, right in zip(normal.fills, reverse.fills)
+                )
+            )
+        inverse_fill_match = all(inverse_checks)
+        if not inverse_fill_match:
+            raise RuntimeError("strict reverse fills are not exact opposites")
 
     _atomic_json(out / "signal_gap_audit.json", {
         "signal_count": len(signal_times),
@@ -405,6 +444,8 @@ def run(config: ExperimentConfig) -> Path:
         "feature_names": [spec.name for spec in specs],
         "signal_contract": "BUY/SELL/HOLD",
         "execution_timing": "first TradeEvent with event_time_ns >= signal_time_ns + lag_ns",
+        "compared_lag_ns": lag_values,
+        "include_reverse": include_reverse,
         "turnover_formula": "sum(abs(fill_quantity * fill_price)) / 100000",
         "signed_breakeven_bps_formula": "arithmetic_return / turnover * 10000",
     })
@@ -412,10 +453,17 @@ def run(config: ExperimentConfig) -> Path:
     report_results = []
     marks.sort(key=lambda row: row["event_time_ns"])
     for variant in variants:
-        variant_dir = out / variant.name / "nofee"
+        if compare_lag_zero or include_reverse:
+            variant_dir = out / variant.lag_name / variant.direction_name / "nofee"
+        else:
+            variant_dir = out / variant.direction_name / "nofee"
+        run_name = (
+            f"continuous_tick_ma/BTCUSDT/{variant.lag_name}/"
+            f"{variant.direction_name}/nofee"
+        )
         result = write_backtest_report(
             output_dir=variant_dir,
-            run_name=f"continuous_tick_ma/BTCUSDT/{variant.name}/nofee",
+            run_name=run_name,
             mode="simulated",
             backend="nautilus_backtest",
             initial_cash=config.notional_usdt,
@@ -436,20 +484,48 @@ def run(config: ExperimentConfig) -> Path:
             config=config_payload,
         )
         report_results.append(result)
-        rows.append(_summary_row(variant, result.metrics, config))
+        evaluation_series, evaluation_metrics = build_strategy_evaluation(
+            result.equity_curve,
+            variant.fills,
+            initial_cash=config.notional_usdt,
+        )
+        validation = validate_strategy_evaluation(evaluation_series, evaluation_metrics)
+        render_strategy_evaluation(
+            evaluation_series,
+            evaluation_metrics,
+            output_dir=variant_dir,
+            run_name=run_name,
+            lag_ns=variant.lag_ns,
+        )
+        _atomic_json(variant_dir / "strategy_evaluation_validation.json", validation)
+        write_artifact_manifest(variant_dir, run_name)
+        rows.extend(
+            _summary_rows(
+                variant,
+                result.metrics,
+                config,
+                evaluation_metrics,
+                variant_dir,
+            )
+        )
 
     if len(resolved_funding) != len(funding_source):
         raise RuntimeError(
             f"funding coverage mismatch: {len(resolved_funding)} != {len(funding_source)}"
         )
-    funding_inverse = math.isclose(
-        report_results[0].metrics["funding_pnl"],
-        -report_results[1].metrics["funding_pnl"],
-        rel_tol=1e-10,
-        abs_tol=1e-8,
-    )
-    if not funding_inverse:
-        raise RuntimeError("strict reverse funding PnL is not the exact opposite")
+    funding_inverse: bool | None = None
+    if include_reverse:
+        funding_inverse = all(
+            math.isclose(
+                report_results[index].metrics["funding_pnl"],
+                -report_results[index + 1].metrics["funding_pnl"],
+                rel_tol=1e-10,
+                abs_tol=1e-8,
+            )
+            for index in range(0, len(report_results), 2)
+        )
+        if not funding_inverse:
+            raise RuntimeError("strict reverse funding PnL is not the exact opposite")
 
     evaluation_path = out / "evaluation_table.csv"
     with evaluation_path.open("w", newline="", encoding="utf-8") as handle:
@@ -459,20 +535,19 @@ def run(config: ExperimentConfig) -> Path:
 
     _atomic_json(out / "control_validation.json", {
         "signal_stream_shared": True,
+        "lag_comparison_changes_only_lag": compare_lag_zero and not include_reverse,
+        "premium_comparison_changes_only_funding_treatment": True,
         "strict_reverse_fill_match": inverse_fill_match,
         "strict_reverse_funding_match": funding_inverse,
-        "normal_final_position_qty": variants[0].adapter.position_qty,
-        "reverse_final_position_qty": variants[1].adapter.position_qty,
-        "final_positions_are_opposites": math.isclose(
-            variants[0].adapter.position_qty,
-            -variants[1].adapter.position_qty,
-            rel_tol=1e-12,
-            abs_tol=1e-12,
-        ),
+        "final_position_qty": {
+            f"{variant.lag_name}/{variant.direction_name}": variant.adapter.position_qty
+            for variant in variants
+        },
         "funding_source_events": len(funding_source),
         "funding_resolved_events": len(resolved_funding),
         "pending_targets": {
-            variant.name: variant.adapter.pending_count for variant in variants
+            f"{variant.lag_name}/{variant.direction_name}": variant.adapter.pending_count
+            for variant in variants
         },
     })
     _atomic_json(out / "progress.json", {
@@ -480,8 +555,10 @@ def run(config: ExperimentConfig) -> Path:
         "processed_days": len(list(_dates(config.start, config.end))),
         "processed_events": total_events,
         "signals": len(signals),
-        "fills_normal": len(variants[0].fills),
-        "fills_reverse": len(variants[1].fills),
+        "fills": {
+            f"{variant.lag_name}/{variant.direction_name}": len(variant.fills)
+            for variant in variants
+        },
         "evaluation_table": str(evaluation_path),
     })
     return evaluation_path
@@ -497,7 +574,13 @@ def main() -> None:
         notional_usdt=float(args.notional_usdt),
         lag_ns=int(args.lag_seconds * 1_000_000_000),
     )
-    print(run(config))
+    print(
+        run(
+            config,
+            compare_lag_zero=args.compare_lag_zero,
+            include_reverse=args.include_reverse,
+        )
+    )
 
 
 if __name__ == "__main__":

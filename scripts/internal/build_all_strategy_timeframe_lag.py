@@ -19,6 +19,12 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from results.strategy_evaluation import (
+    build_additive_strategy_evaluation_from_columns,
+    render_additive_strategy_evaluation,
+    validate_strategy_evaluation,
+)
+
 
 CASES = ("1m_lag0", "1m_lag1", "10m_lag0", "10m_lag1")
 VARIANTS = ("normal", "strict_reverse")
@@ -29,6 +35,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--blocked-strategy", action="append", default=[])
+    parser.add_argument("--canonical-layout", action="store_true")
+    parser.add_argument("--symbol", default="BTCUSDT")
+    parser.add_argument("--source-config-root", type=Path)
+    parser.add_argument("--strategy", action="append", dest="strategies")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -238,11 +248,176 @@ def summary_rows(strategy: str, case: str, summary: dict) -> list[dict]:
     return rows
 
 
+def _atomic_json(path: Path, value: dict) -> None:
+    def safe(item):
+        if isinstance(item, dict):
+            return {key: safe(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [safe(child) for child in item]
+        if isinstance(item, float) and not math.isfinite(item):
+            return None
+        return item
+
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(safe(value), indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def build_canonical_case(
+    *,
+    batch_root: Path,
+    output_dir: Path,
+    source_config_root: Path | None,
+    strategy: str,
+    symbol: str,
+    case: str,
+) -> list[dict]:
+    frequency, lag_text = case.split("_", 1)
+    lag_minutes = int(lag_text.removeprefix("lag"))
+    source = batch_root / strategy / case / "timeseries.parquet"
+    frame = pd.read_parquet(
+        source,
+        columns=[
+            "event_time_ns",
+            "normal_direction",
+            "normal_trading_return",
+            "normal_funding_return",
+            "normal_turnover",
+        ],
+    )
+    series, metrics = build_additive_strategy_evaluation_from_columns(
+        event_time_ns=frame["event_time_ns"].to_numpy(copy=False),
+        trading_return=frame["normal_trading_return"].to_numpy(copy=False),
+        funding_return=frame["normal_funding_return"].to_numpy(copy=False),
+        turnover=frame["normal_turnover"].to_numpy(copy=False),
+        executed_direction=frame["normal_direction"].to_numpy(copy=False),
+    )
+    validation = validate_strategy_evaluation(series, metrics, tolerance=1e-9)
+    case_dir = output_dir / strategy / symbol / frequency / f"lag{lag_minutes}m"
+    figure_name = f"{symbol}_{frequency}_lag{lag_minutes}m_performance.png"
+    figure = render_additive_strategy_evaluation(
+        series,
+        metrics,
+        destination=case_dir / figure_name,
+        run_name=f"{strategy}/{symbol}/{frequency} bar",
+        lag_label=f"{lag_minutes} minute additional execution lag",
+    )
+    source_summary = json.loads(
+        (batch_root / strategy / case / "summary.json").read_text(encoding="utf-8")
+    )["normal"]
+    metadata = {
+        "strategy": strategy,
+        "symbol": symbol,
+        "granularity": f"{frequency} bar",
+        "lag": f"{lag_minutes}m additional execution lag",
+        "lag_minutes": lag_minutes,
+        "premium_definition": "funding_return",
+        "turnover_definition": "sum(abs(delta_quantity) * fill_price) / 100000",
+        "cost_equation": "net_return = return - turnover * cost_bps / 10000",
+        "leverage": 1.0,
+        "position_definition": "executed direction expressed as signed leverage percent",
+        "source_timeseries": str(source.resolve()),
+        "source_summary": str((batch_root / strategy / case / "summary.json").resolve()),
+        "source_row_count": int(len(frame)),
+        "start_time": source_summary["first_event_time_utc"],
+        "end_time": source_summary["last_event_time_utc"],
+        "cases": metrics,
+        "validation": validation,
+        "figure": str(Path(figure).resolve()),
+    }
+    case_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_json(case_dir / "metrics.json", metadata)
+    if source_config_root is not None:
+        config = source_config_root / strategy / "fee_5bps" / "config.yaml"
+        if config.is_file():
+            shutil.copy2(config, case_dir / "config.yaml")
+            metadata["source_config"] = str(config.resolve())
+            _atomic_json(case_dir / "metrics.json", metadata)
+    rows: list[dict] = []
+    for premium in ("included", "excluded"):
+        values = metrics[premium]
+        rows.append(
+            {
+                "strategy": strategy,
+                "symbol": symbol,
+                "granularity": f"{frequency} bar",
+                "lag": f"{lag_minutes}m additional execution lag",
+                "premium": premium,
+                "final_return_1x": values["final_return_1x"],
+                "turnover": values["turnover"],
+                "break_even_bps": values["break_even_bps"],
+                "max_drawdown": values["max_drawdown"],
+                "start_time": source_summary["first_event_time_utc"],
+                "end_time": source_summary["last_event_time_utc"],
+                "source_timeseries": str(source.resolve()),
+                "figure": str(Path(figure).resolve()),
+            }
+        )
+    return rows
+
+
+def build_canonical(args: argparse.Namespace, strategies: list[str]) -> None:
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    for strategy in strategies:
+        for case in CASES:
+            rows.extend(
+                build_canonical_case(
+                    batch_root=args.batch_root,
+                    output_dir=args.output_dir,
+                    source_config_root=args.source_config_root,
+                    strategy=strategy,
+                    symbol=args.symbol,
+                    case=case,
+                )
+            )
+        print(f"CANONICAL_COMPLETE {strategy}", flush=True)
+    summary = pd.DataFrame(rows).sort_values(
+        ["strategy", "granularity", "lag", "premium"]
+    )
+    summary.to_csv(args.output_dir / "canonical_summary.csv", index=False)
+    (args.output_dir / "canonical_summary.html").write_text(
+        summary.to_html(index=False, float_format=lambda value: f"{value:.8f}"),
+        encoding="utf-8",
+    )
+    _atomic_json(
+        args.output_dir / "artifact_manifest.json",
+        {
+            "strategy_count": len(strategies),
+            "case_count": len(CASES),
+            "premium_case_count": 2,
+            "summary_rows": len(summary),
+            "figure_count": len(strategies) * len(CASES),
+            "primary_variant": "normal",
+            "reverse_variant_regenerated": False,
+            "reverse_reason": "strict_reverse is an exact sign inversion of executed direction",
+            "batch_root": str(args.batch_root.resolve()),
+        },
+    )
+
+
 def main() -> int:
     args = parse_args()
     strategies = discover(args.batch_root)
     if not strategies:
         raise ValueError("no complete strategies found")
+    if args.strategies:
+        missing = sorted(set(args.strategies) - set(strategies))
+        if missing:
+            raise ValueError(f"strategies unavailable: {missing}")
+        strategies = sorted(set(args.strategies))
+    if args.canonical_layout:
+        if args.output_dir.exists() and any(args.output_dir.iterdir()) and not args.overwrite:
+            raise ValueError(f"output exists: {args.output_dir}")
+        build_canonical(args, strategies)
+        print(
+            f"COMPLETE canonical strategies={len(strategies)} "
+            f"figures={len(strategies) * len(CASES)} output={args.output_dir}"
+        )
+        return 0
     if args.output_dir.exists():
         if not args.overwrite:
             raise ValueError(f"output exists: {args.output_dir}")
