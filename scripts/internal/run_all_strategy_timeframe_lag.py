@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run validated strategies on independent N-minute clocks and M-minute lag.
+"""
+Run validated strategies on independent N-minute clocks and M-minute lag.
 
 This is an experiment orchestrator.  It reuses the canonical market loader,
 feature runner, registered strategy plugin, execution intent/fill records, and
@@ -12,12 +13,14 @@ remain unchanged.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
-import math
 import os
-from dataclasses import fields, replace
-from datetime import UTC, datetime
+from dataclasses import fields
+from dataclasses import replace
+from datetime import UTC
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,11 +32,21 @@ from data_engine.events import BarEvent
 from data_engine.loader import load_events
 from data_engine.transforms import resample_bars
 from data_engine.transforms.bars import parse_frequency
+from feature_engine.api import atr_spec
 from feature_engine.runner import FeatureStrategyRunner
 from scripts.internal.run_constant_notional_overlay import calculate_overlay
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
-from strategy_framework.execution.intents import OrderIntent, PlannedSignal, PositionIntent
-from strategy_framework.execution.reports import ExecutionReport, FillRecord
+from strategy_framework.execution.intents import OrderIntent
+from strategy_framework.execution.intents import PlannedSignal
+from strategy_framework.execution.intents import PositionIntent
+from strategy_framework.execution.reports import ExecutionReport
+from strategy_framework.execution.reports import FillRecord
+from strategy_framework.execution.state_adapter import StrategyStateAdapter
+from strategy_framework.module_registry import MODULE_METADATA
+from strategy_framework.module_registry import MODULE_REGISTRY
+from strategy_framework.module_registry import load_module_configs
+from strategy_framework.modules import ModuleContext
+from strategy_framework.modules import StrategyModule
 from strategy_framework.registry import get_entry
 
 
@@ -86,7 +99,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
-        "--continue-on-error", action="store_true",
+        "--module-config",
+        type=Path,
+        action="append",
+        default=[],
+        help="Compiled strategy-module JSON config (repeatable; never reads Excel).",
+    )
+    parser.add_argument("--module-id", help="Attach one registered module to each selected host.")
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
         help="record a strategy failure and continue the resumable batch",
     )
     return parser.parse_args()
@@ -114,7 +136,10 @@ def parse_cases(values: list[str] | None) -> tuple[tuple[str, int], ...]:
 
 
 def _build_config_obj(
-    config_cls: type, params: dict[str, Any], frequency: str, lag_minutes: int = 0,
+    config_cls: type,
+    params: dict[str, Any],
+    frequency: str,
+    lag_minutes: int = 0,
 ) -> Any:
     allowed = {field.name for field in fields(config_cls)}
     values = {key: value for key, value in params.items() if key in allowed}
@@ -217,10 +242,7 @@ def build_strategy_clock(bars_1m: list[BarEvent], frequency: str) -> list[BarEve
     """Build completed N-minute observations independently of execution lag."""
     interval_ns = parse_frequency(frequency)
     source = bars_1m if interval_ns == MINUTE_NS else resample_bars(bars_1m, frequency)
-    return [
-        replace(bar, event_time_ns=bar.event_time_ns + interval_ns)
-        for bar in source
-    ]
+    return [replace(bar, event_time_ns=bar.event_time_ns + interval_ns) for bar in source]
 
 
 def execution_bar(
@@ -268,14 +290,7 @@ def validate_direction_variants(
             }
         )
     reverse_magnitude_residual = (
-        float(
-            np.max(
-                np.abs(
-                    np.abs(variants["strict_reverse"])
-                    - np.abs(source)
-                )
-            )
-        )
+        float(np.max(np.abs(np.abs(variants["strict_reverse"]) - np.abs(source))))
         if len(source)
         else 0.0
     )
@@ -304,7 +319,8 @@ def execute_planned(
     event: BarEvent,
     simulator: IntentFillSimulator,
 ) -> list[FillRecord]:
-    """Execute planned actions and return only the fills created by this signal.
+    """
+    Execute planned actions and return only the fills created by this signal.
 
     Ownership of the cumulative fill ledger stays with the lifecycle caller.  In
     particular, this helper must not append a fill to both a local and caller-
@@ -374,13 +390,20 @@ def run_decision_lifecycle(
     bars_1m: list[BarEvent],
     strategy_bars: list[BarEvent],
     end_exclusive_ns: int,
+    strategy_module: StrategyModule | None = None,
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     plugin = get_entry(strategy_name)
     config_obj = _build_config_obj(
-        plugin.config_cls, source_config.get("params", {}), frequency, lag_minutes,
+        plugin.config_cls,
+        source_config.get("params", {}),
+        frequency,
+        lag_minutes,
     )
     strategy = plugin.strategy_cls(config_obj)
-    runner = FeatureStrategyRunner(plugin.build_specs(config_obj), strategy)
+    specs = list(plugin.build_specs(config_obj))
+    if strategy_module is not None:
+        specs.append(atr_spec("__phase2_4_module_atr", window=20))
+    runner = FeatureStrategyRunner(specs, strategy)
     simulator = IntentFillSimulator(
         default_price_field="open", allow_short=True, backend="timeframe_lag_experiment"
     )
@@ -394,6 +417,14 @@ def run_decision_lifecycle(
     audit_rows: list[dict[str, Any]] = []
     signal_count = 0
     dropped_tail = 0
+    module_state = (
+        StrategyStateAdapter(bars_1m[0].instrument_id) if strategy_module is not None else None
+    )
+    module_suppressed_side = 0
+    module_bars_held = 0
+    module_high: float | None = None
+    module_low: float | None = None
+    module_decision_count = 0
 
     for event in strategy_bars:
         snapshot, signal = runner.on_event(event)
@@ -402,6 +433,7 @@ def run_decision_lifecycle(
             continue
         if signal_text != "HOLD":
             signal_count += 1
+            module_suppressed_side = 0
         actions = signal.actions if isinstance(signal, PlannedSignal) else ()
         decision_target = getattr(strategy, "decision_position", None)
         if decision_target is None and not actions:
@@ -411,9 +443,67 @@ def run_decision_lifecycle(
                 fallback_target = -1
             decision_target = fallback_target
 
+        if strategy_module is not None and decision_target is not None:
+            raw_target = float(decision_target)
+            raw_side = signed_direction(raw_target)
+            if (
+                current_quantity == 0
+                and raw_side == module_suppressed_side
+                and signal_text == "HOLD"
+            ):
+                decision_target = 0.0
+                actions = ()
+            else:
+                active_side = signed_direction(current_quantity) or raw_side
+                atr_value = snapshot.value("__phase2_4_module_atr")
+                if active_side and atr_value is not None and float(atr_value) > 0:
+                    if current_quantity:
+                        module_high = max(
+                            module_high if module_high is not None else event.high, event.high
+                        )
+                        module_low = min(
+                            module_low if module_low is not None else event.low, event.low
+                        )
+                    entry_price = (
+                        module_state.average_fill_price
+                        if module_state is not None and module_state.average_fill_price is not None
+                        else float(event.close)
+                    )
+                    module_context = ModuleContext(
+                        side=active_side,
+                        entry_price=float(entry_price),
+                        current_price=float(event.close),
+                        atr=float(atr_value),
+                        initial_exposure=max(abs(raw_target), abs(current_quantity), 1e-12),
+                        current_exposure=float(current_quantity),
+                        bars_held=module_bars_held,
+                        highest_price_since_entry=module_high,
+                        lowest_price_since_entry=module_low,
+                    )
+                    module_decision = strategy_module.evaluate(module_context)
+                    if raw_target == 0 or current_quantity * raw_target < 0:
+                        effective_target = raw_target
+                    else:
+                        effective_abs = min(abs(raw_target), abs(module_decision.target_exposure))
+                        effective_target = active_side * effective_abs
+                    if (
+                        current_quantity
+                        and abs(effective_target) <= 1e-12
+                        and raw_side == active_side
+                    ):
+                        module_suppressed_side = active_side
+                    if abs(effective_target - raw_target) > 1e-15:
+                        module_decision_count += 1
+                    decision_target = effective_target
+                    # A module target supersedes a rich alpha plan at the target boundary;
+                    # order/fill creation remains in the same canonical execution path.
+                    actions = ()
+
         needs_execution = bool(actions)
         if not actions and decision_target is not None:
             needs_execution = abs(float(decision_target) - current_quantity) > 1e-15
+        if current_quantity:
+            module_bars_held += 1
         if not needs_execution:
             continue
 
@@ -439,6 +529,17 @@ def run_decision_lifecycle(
         hook = getattr(strategy, "on_execution_report", None)
         if hook is not None and new_fills:
             hook(report_for(fills))
+        if strategy_module is not None and module_state is not None and new_fills:
+            previous_state_side = module_state.position
+            for fill in new_fills:
+                module_state.on_fill(fill)
+            synchronize = getattr(strategy_module, "synchronize_fill", None)
+            if synchronize is not None:
+                synchronize(position=current_quantity, fill_price=float(new_fills[-1].price))
+            if module_state.position != previous_state_side or previous_state_side == 0:
+                module_bars_held = 0
+                module_high = float(fill_event.high) if current_quantity else None
+                module_low = float(fill_event.low) if current_quantity else None
         if abs(current_quantity - quantity_before) > 1e-15:
             change_times.append(fill_event.event_time_ns)
             change_quantities.append(current_quantity)
@@ -461,6 +562,7 @@ def run_decision_lifecycle(
                 "exposure_after": current_quantity,
                 "decision_target": decision_target,
                 "fill_price": fill_event.open if new_fills else None,
+                "module_id": strategy_module.module_id if strategy_module is not None else "",
             }
         )
 
@@ -478,6 +580,7 @@ def run_decision_lifecycle(
         "dropped_tail": dropped_tail,
         "final_direction": int(current_direction),
         "final_exposure": float(current_quantity),
+        "module_decision_count": module_decision_count,
     }
     return direction, audit_rows, meta
 
@@ -552,11 +655,25 @@ def write_case(
         encoding="utf-8",
     )
     with open(output_dir / "execution_events.csv", "w", newline="", encoding="utf-8") as fh:
-        fieldnames = list(audit_rows[0]) if audit_rows else [
-            "strategy", "case", "signal_time_ns", "due_time_ns", "fill_time_ns",
-            "observed_lag_ns", "signal", "action_count", "fill_count",
-            "direction_before", "direction_after", "decision_target", "fill_price",
-        ]
+        fieldnames = (
+            list(audit_rows[0])
+            if audit_rows
+            else [
+                "strategy",
+                "case",
+                "signal_time_ns",
+                "due_time_ns",
+                "fill_time_ns",
+                "observed_lag_ns",
+                "signal",
+                "action_count",
+                "fill_count",
+                "direction_before",
+                "direction_after",
+                "decision_target",
+                "fill_price",
+            ]
+        )
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(audit_rows)
@@ -573,6 +690,8 @@ def run_strategy(
     funding: pd.DataFrame,
     cases: tuple[tuple[str, int], ...],
     args: argparse.Namespace,
+    strategy_module: StrategyModule | None = None,
+    module_metadata: dict[str, object] | None = None,
 ) -> list[dict[str, Any]]:
     config_path = source_config_path(source_root, strategy_name)
     source_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -580,7 +699,12 @@ def run_strategy(
     rows: list[dict[str, Any]] = []
     for frequency, lag_minutes in cases:
         case = f"{frequency}_lag{lag_minutes}"
-        destination = output_root / strategy_name / case
+        result_name = (
+            f"{strategy_name}__module__{strategy_module.module_id}"
+            if strategy_module is not None
+            else strategy_name
+        )
+        destination = output_root / result_name / case
         summary_path = destination / "summary.json"
         timeseries_path = destination / "timeseries.parquet"
         if not args.overwrite and summary_path.is_file() and timeseries_path.is_file():
@@ -594,9 +718,10 @@ def run_strategy(
                 bars_1m=bars_1m,
                 strategy_bars=strategy_clocks[frequency],
                 end_exclusive_ns=end_exclusive_ns,
+                strategy_module=copy.deepcopy(strategy_module),
             )
             summaries = write_case(
-                strategy_name=strategy_name,
+                strategy_name=result_name,
                 case=case,
                 direction=direction,
                 lifecycle_meta=lifecycle_meta,
@@ -618,11 +743,17 @@ def run_strategy(
                     "defaulted_parameters": source_config.get("params", {}).get(
                         "defaulted_parameters", ""
                     ),
+                    "host_strategy": strategy_name,
+                    "module_id": strategy_module.module_id if strategy_module is not None else "",
+                    "module_family": (module_metadata or {}).get("module_family", ""),
+                    "module_semantic_provenance": (module_metadata or {}).get(
+                        "semantic_provenance", ""
+                    ),
                 },
             )
         rows.extend(summaries.values())
         print(
-            f"COMPLETE {strategy_name} {case} "
+            f"COMPLETE {result_name} {case} "
             f"signals={summaries['normal']['signal_count']} "
             f"fills={summaries['normal']['execution_fill_count']}",
             flush=True,
@@ -649,6 +780,19 @@ def main() -> int:
     if missing:
         raise ValueError(f"strategies unavailable: {missing}")
     selected = sorted(selected)[args.shard_index :: args.shard_count]
+    strategy_module = None
+    module_metadata: dict[str, object] | None = None
+    if args.module_id:
+        MODULE_REGISTRY.clear()
+        MODULE_METADATA.clear()
+        for config_path in args.module_config:
+            load_module_configs(config_path)
+        if args.module_id not in MODULE_REGISTRY:
+            raise ValueError(f"module unavailable: {args.module_id!r}")
+        strategy_module = MODULE_REGISTRY[args.module_id]
+        module_metadata = MODULE_METADATA.get(args.module_id, {})
+    elif args.module_config:
+        raise ValueError("--module-config requires --module-id")
     args.output_root.mkdir(parents=True, exist_ok=True)
     progress_path = args.output_root / f"progress_shard_{args.shard_index}.json"
     atomic_json(
@@ -661,9 +805,7 @@ def main() -> int:
             "completed": 0,
         },
     )
-    bars_1m, funding = load_market_and_funding(
-        args.market_root, args.start, args.end
-    )
+    bars_1m, funding = load_market_and_funding(args.market_root, args.start, args.end)
     strategy_clocks = {
         frequency: build_strategy_clock(bars_1m, frequency)
         for frequency in sorted({frequency for frequency, _ in cases})
@@ -695,6 +837,8 @@ def main() -> int:
                     funding=funding,
                     cases=cases,
                     args=args,
+                    strategy_module=strategy_module,
+                    module_metadata=module_metadata,
                 )
             )
         except Exception as exc:

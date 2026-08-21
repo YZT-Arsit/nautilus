@@ -1,9 +1,14 @@
 """Composable, source-independent strategy risk/exit module contracts."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import Literal
+from typing import Mapping
+from typing import Protocol
+from typing import runtime_checkable
 
 
 DAY_NS = 86_400_000_000_000
@@ -19,6 +24,14 @@ class ModuleContext:
     upper_channel: float | None = None
     lower_channel: float | None = None
     adx: float | None = None
+    event_time_ns: int | None = None
+    current_exposure: float | None = None
+    bars_held: int = 0
+    highest_price_since_entry: float | None = None
+    lowest_price_since_entry: float | None = None
+    volatility_percentile: float | None = None
+    account_drawdown: float | None = None
+    feature_values: Mapping[str, float | bool] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.side not in (-1, 1):
@@ -29,6 +42,10 @@ class ModuleContext:
             raise ValueError("initial_exposure must be in (0, 1]")
         if self.adx is not None and self.adx < 0:
             raise ValueError("adx cannot be negative")
+        if self.bars_held < 0:
+            raise ValueError("bars_held cannot be negative")
+        if self.volatility_percentile is not None and not 0 <= self.volatility_percentile <= 100:
+            raise ValueError("volatility_percentile must be in [0, 100]")
 
 
 @dataclass(frozen=True)
@@ -41,13 +58,13 @@ class ModuleDecision:
 class StrategyModule(Protocol):
     module_id: str
 
-    def evaluate(self, context: ModuleContext) -> ModuleDecision:
-        ...
+    def evaluate(self, context: ModuleContext) -> ModuleDecision: ...
 
 
 @dataclass(frozen=True)
 class AtrLadderExitModule:
-    """Deterministic ATR profit ladder plus hard stop.
+    """
+    Deterministic ATR profit ladder plus hard stop.
 
     Reduction fractions are fractions of original exposure, matching workbook
     wording such as "减 20%".  The returned exposure is a target; execution and
@@ -83,7 +100,8 @@ class AtrLadderExitModule:
         if pnl_atr >= self.final_profit_atr:
             return ModuleDecision(0.0, "atr_final_take_profit")
         reduced = sum(
-            fraction for level, fraction in zip(self.profit_levels_atr, self.reduction_fractions)
+            fraction
+            for level, fraction in zip(self.profit_levels_atr, self.reduction_fractions)
             if pnl_atr >= level
         )
         target = context.initial_exposure * max(0.0, 1.0 - reduced)
@@ -122,12 +140,14 @@ class DonchianExitModule:
     def evaluate(self, context: ModuleContext) -> ModuleDecision:
         if context.upper_channel is None or context.lower_channel is None:
             raise ValueError("Donchian exit requires upper_channel and lower_channel")
-        hit = (
-            context.side > 0 and context.current_price < context.lower_channel
-        ) or (
+        hit = (context.side > 0 and context.current_price < context.lower_channel) or (
             context.side < 0 and context.current_price > context.upper_channel
         )
-        return ModuleDecision(0.0, "donchian_exit" ) if hit else ModuleDecision(context.initial_exposure, "hold")
+        return (
+            ModuleDecision(0.0, "donchian_exit")
+            if hit
+            else ModuleDecision(context.initial_exposure, "hold")
+        )
 
 
 @dataclass(frozen=True)
@@ -149,10 +169,434 @@ class AdxExposureModule:
     def evaluate(self, context: ModuleContext) -> ModuleDecision:
         if context.adx is None:
             raise ValueError("ADX exposure module requires adx")
-        multiplier = 1.0 if context.adx > self.full_threshold else (
-            self.medium_exposure if context.adx >= self.medium_threshold else self.low_exposure
+        multiplier = (
+            1.0
+            if context.adx > self.full_threshold
+            else (
+                self.medium_exposure if context.adx >= self.medium_threshold else self.low_exposure
+            )
         )
         return ModuleDecision(context.initial_exposure * multiplier, "adx_exposure_regime")
+
+
+@dataclass(frozen=True)
+class FixedPercentageStopModule:
+    """Fill-anchored symmetric percentage stop; no alpha or execution ownership."""
+
+    module_id: str
+    stop_fraction: float
+
+    def __post_init__(self) -> None:
+        if not 0 < self.stop_fraction < 1:
+            raise ValueError("stop_fraction must be in (0, 1)")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        loss = -context.side * (context.current_price / context.entry_price - 1.0)
+        return (
+            ModuleDecision(0.0, "fixed_percentage_stop")
+            if loss + 1e-12 >= self.stop_fraction
+            else ModuleDecision(context.initial_exposure, "hold")
+        )
+
+
+@dataclass(frozen=True)
+class TimeExitModule:
+    """Exit after an explicit number of completed host bars."""
+
+    module_id: str
+    maximum_holding_bars: int
+
+    def __post_init__(self) -> None:
+        if self.maximum_holding_bars <= 0:
+            raise ValueError("maximum_holding_bars must be positive")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        return (
+            ModuleDecision(0.0, "maximum_holding_bars")
+            if context.bars_held >= self.maximum_holding_bars
+            else ModuleDecision(context.initial_exposure, "hold")
+        )
+
+
+@dataclass(frozen=True)
+class ExposureCapModule:
+    """Clamp desired absolute exposure without creating a direction."""
+
+    module_id: str
+    max_abs_exposure: float
+
+    def __post_init__(self) -> None:
+        if not 0 < self.max_abs_exposure <= 1:
+            raise ValueError("max_abs_exposure must be in (0, 1]")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        return ModuleDecision(
+            min(context.initial_exposure, self.max_abs_exposure),
+            "exposure_cap",
+        )
+
+
+@dataclass(frozen=True)
+class EntryExposureCapModule:
+    """Cap a new entry while leaving an already-filled smaller episode intact."""
+
+    module_id: str
+    max_entry_exposure: float
+
+    def __post_init__(self) -> None:
+        if not 0 < self.max_entry_exposure <= 1:
+            raise ValueError("max_entry_exposure must be in (0, 1]")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        current = abs(context.current_exposure or 0.0)
+        target = (
+            current if current > 1e-12 else min(context.initial_exposure, self.max_entry_exposure)
+        )
+        return ModuleDecision(target, "entry_exposure_cap")
+
+
+@dataclass(frozen=True)
+class VolatilityExposureModule:
+    """Map an already-computed volatility percentile to explicit exposure tiers."""
+
+    module_id: str
+    upper_bounds: tuple[float, ...]
+    exposures: tuple[float, ...]
+    prohibit_entry_at_or_above: float | None = None
+
+    def __post_init__(self) -> None:
+        if len(self.exposures) != len(self.upper_bounds) + 1:
+            raise ValueError("volatility exposures require one more exposure than bounds")
+        if tuple(sorted(self.upper_bounds)) != self.upper_bounds:
+            raise ValueError("volatility percentile bounds must increase")
+        if any(not 0 <= value <= 100 for value in self.upper_bounds):
+            raise ValueError("volatility percentile bounds must be in [0, 100]")
+        if any(not 0 <= value <= 1 for value in self.exposures):
+            raise ValueError("volatility exposures must be in [0, 1]")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        if context.volatility_percentile is None:
+            raise ValueError("volatility exposure module requires volatility_percentile")
+        percentile = context.volatility_percentile
+        if (
+            self.prohibit_entry_at_or_above is not None
+            and percentile >= self.prohibit_entry_at_or_above
+        ):
+            current = abs(context.current_exposure or 0.0)
+            return ModuleDecision(
+                min(current, context.initial_exposure), "volatility_entry_prohibited"
+            )
+        index = next(
+            (i for i, bound in enumerate(self.upper_bounds) if percentile < bound),
+            len(self.upper_bounds),
+        )
+        return ModuleDecision(
+            context.initial_exposure * self.exposures[index],
+            "volatility_exposure_tier",
+        )
+
+
+@dataclass
+class AtrBreakevenTrailingModule:
+    """Fill-synchronized ATR hard stop and monotonic breakeven/trailing stop."""
+
+    module_id: str
+    activation_atr: float
+    lock_atr: float
+    hard_stop_atr: float
+    trail_distance_atr: float | None = None
+    episode_side: int = 0
+    entry_price: float | None = None
+    stop_price: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.activation_atr <= 0 or self.hard_stop_atr <= 0 or self.lock_atr < 0:
+            raise ValueError("invalid breakeven ATR parameters")
+        if self.trail_distance_atr is not None and self.trail_distance_atr <= 0:
+            raise ValueError("trail_distance_atr must be positive")
+
+    def synchronize_fill(self, *, position: float, fill_price: float) -> None:
+        if fill_price <= 0:
+            raise ValueError("fill_price must be positive")
+        side = 1 if position > 0 else -1 if position < 0 else 0
+        if side == 0:
+            self.episode_side = 0
+            self.entry_price = None
+            self.stop_price = None
+        elif side != self.episode_side:
+            self.episode_side = side
+            self.entry_price = fill_price
+            self.stop_price = None
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        entry = self.entry_price if self.entry_price is not None else context.entry_price
+        side = self.episode_side or context.side
+        pnl_atr = side * (context.current_price - entry) / context.atr
+        if pnl_atr <= -self.hard_stop_atr:
+            return ModuleDecision(0.0, "atr_hard_stop")
+        if pnl_atr >= self.activation_atr:
+            candidate = entry + side * self.lock_atr * context.atr
+            if self.trail_distance_atr is not None:
+                extreme = (
+                    context.highest_price_since_entry
+                    if side > 0
+                    else context.lowest_price_since_entry
+                )
+                if extreme is not None:
+                    candidate = extreme - side * self.trail_distance_atr * context.atr
+            if self.stop_price is None:
+                self.stop_price = candidate
+            elif side > 0:
+                self.stop_price = max(self.stop_price, candidate)
+            else:
+                self.stop_price = min(self.stop_price, candidate)
+        hit = self.stop_price is not None and (
+            (side > 0 and context.current_price <= self.stop_price)
+            or (side < 0 and context.current_price >= self.stop_price)
+        )
+        return (
+            ModuleDecision(0.0, "breakeven_trailing_stop")
+            if hit
+            else ModuleDecision(context.initial_exposure, "hold")
+        )
+
+
+@dataclass(frozen=True)
+class AccountDrawdownControlModule:
+    """Explicit account drawdown tiers; accounting remains execution-owned."""
+
+    module_id: str
+    reduce_at: float
+    flatten_at: float
+    reduced_exposure: float = 0.5
+
+    def __post_init__(self) -> None:
+        if not 0 < self.reduce_at < self.flatten_at < 1:
+            raise ValueError("drawdown thresholds must satisfy 0 < reduce < flatten < 1")
+        if not 0 <= self.reduced_exposure <= 1:
+            raise ValueError("reduced_exposure must be in [0, 1]")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        if context.account_drawdown is None:
+            raise ValueError("drawdown module requires account_drawdown")
+        drawdown = abs(min(0.0, context.account_drawdown))
+        if drawdown >= self.flatten_at:
+            return ModuleDecision(0.0, "account_drawdown_flatten")
+        if drawdown >= self.reduce_at:
+            return ModuleDecision(
+                context.initial_exposure * self.reduced_exposure, "account_drawdown_reduce"
+            )
+        return ModuleDecision(context.initial_exposure, "hold")
+
+
+@dataclass(frozen=True)
+class AtrTakeProfitModule:
+    """Symmetric fill-anchored ATR take-profit and optional hard stop."""
+
+    module_id: str
+    take_profit_atr: float
+    stop_loss_atr: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.take_profit_atr <= 0:
+            raise ValueError("take_profit_atr must be positive")
+        if self.stop_loss_atr is not None and self.stop_loss_atr <= 0:
+            raise ValueError("stop_loss_atr must be positive")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        pnl_atr = context.side * (context.current_price - context.entry_price) / context.atr
+        if self.stop_loss_atr is not None and pnl_atr <= -self.stop_loss_atr:
+            return ModuleDecision(0.0, "atr_hard_stop")
+        if pnl_atr >= self.take_profit_atr:
+            return ModuleDecision(0.0, "atr_take_profit")
+        return ModuleDecision(context.initial_exposure, "hold")
+
+
+@dataclass(frozen=True)
+class AtrAdverseReductionModule:
+    """
+    Reduce exposure at explicit adverse ATR distances.
+
+    ``target_fractions`` are fractions of the initial episode exposure remaining,
+    not order quantities. This makes re-evaluation idempotent before a fill.
+    """
+
+    module_id: str
+    loss_levels_atr: tuple[float, ...]
+    target_fractions: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.loss_levels_atr) != len(self.target_fractions) or not self.loss_levels_atr:
+            raise ValueError("loss levels and targets must be non-empty and equal length")
+        if tuple(sorted(self.loss_levels_atr)) != self.loss_levels_atr:
+            raise ValueError("loss levels must increase")
+        if any(level <= 0 for level in self.loss_levels_atr):
+            raise ValueError("loss levels must be positive")
+        if any(not 0 <= target <= 1 for target in self.target_fractions):
+            raise ValueError("target fractions must be in [0, 1]")
+        if any(a < b for a, b in zip(self.target_fractions, self.target_fractions[1:])):
+            raise ValueError("remaining exposure cannot increase as losses deepen")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        loss_atr = -context.side * (context.current_price - context.entry_price) / context.atr
+        target = 1.0
+        for level, remaining in zip(self.loss_levels_atr, self.target_fractions):
+            if loss_atr >= level:
+                target = remaining
+        return ModuleDecision(
+            context.initial_exposure * target,
+            "atr_adverse_reduce" if target < 1.0 else "hold",
+        )
+
+
+@dataclass(frozen=True)
+class FeatureExitCondition:
+    """Typed condition over a canonical feature supplied by the host runner."""
+
+    feature_key: str
+    operator: Literal["true", "false", "gt", "ge", "lt", "le", "eq"] = "true"
+    threshold: float | None = None
+    side: Literal["both", "long", "short"] = "both"
+
+    def __post_init__(self) -> None:
+        if not self.feature_key:
+            raise ValueError("feature_key is required")
+        if self.operator not in {"true", "false"} and self.threshold is None:
+            raise ValueError("numeric feature conditions require a threshold")
+
+    def matches(self, context: ModuleContext) -> bool:
+        if (self.side == "long" and context.side < 0) or (self.side == "short" and context.side > 0):
+            return False
+        if self.feature_key not in context.feature_values:
+            raise ValueError(f"missing module feature {self.feature_key!r}")
+        value = context.feature_values[self.feature_key]
+        if self.operator == "true":
+            return bool(value)
+        if self.operator == "false":
+            return not bool(value)
+        numeric = float(value)
+        threshold = float(self.threshold)
+        return {
+            "gt": numeric > threshold,
+            "ge": numeric >= threshold,
+            "lt": numeric < threshold,
+            "le": numeric <= threshold,
+            "eq": numeric == threshold,
+        }[self.operator]
+
+
+@dataclass(frozen=True)
+class FeatureExitModule:
+    """Flatten when any explicit typed feature condition is true."""
+
+    module_id: str
+    conditions: tuple[FeatureExitCondition, ...]
+
+    def __post_init__(self) -> None:
+        if not self.conditions:
+            raise ValueError("at least one exit condition is required")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        for condition in self.conditions:
+            if condition.matches(context):
+                return ModuleDecision(0.0, f"feature_exit:{condition.feature_key}")
+        return ModuleDecision(context.initial_exposure, "hold")
+
+
+@dataclass(frozen=True)
+class FeatureExposureModule:
+    """Apply an explicit exposure fraction when a typed feature condition holds."""
+
+    module_id: str
+    condition: FeatureExitCondition
+    target_fraction: float
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.target_fraction <= 1:
+            raise ValueError("target_fraction must be in [0, 1]")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        if self.condition.matches(context):
+            return ModuleDecision(
+                context.initial_exposure * self.target_fraction,
+                f"feature_exposure:{self.condition.feature_key}",
+            )
+        return ModuleDecision(context.initial_exposure, "hold")
+
+
+@dataclass
+class DailyRiskControlModule:
+    """UTC-session loss and executed-entry limits using fill/account feedback."""
+
+    module_id: str
+    maximum_loss: float | None = None
+    maximum_entries: int | None = None
+    state: SessionRiskState = field(default_factory=lambda: SessionRiskState())
+
+    def __post_init__(self) -> None:
+        if self.maximum_loss is None and self.maximum_entries is None:
+            raise ValueError("at least one daily risk limit is required")
+        if self.maximum_loss is not None and self.maximum_loss <= 0:
+            raise ValueError("maximum_loss must be positive")
+        if self.maximum_entries is not None and self.maximum_entries <= 0:
+            raise ValueError("maximum_entries must be positive")
+
+    def update_execution(
+        self,
+        *,
+        event_time_ns: int,
+        realized_pnl_delta: float = 0.0,
+        unrealized_pnl: float = 0.0,
+        executed_entry: bool = False,
+    ) -> None:
+        self.state.update(
+            event_time_ns=event_time_ns,
+            realized_pnl_delta=realized_pnl_delta,
+            unrealized_pnl=unrealized_pnl,
+            executed_entry=executed_entry,
+        )
+
+    def entry_allowed(self) -> bool:
+        loss_hit = self.maximum_loss is not None and self.state.loss_limit_hit(self.maximum_loss)
+        count_hit = self.maximum_entries is not None and self.state.entry_limit_hit(
+            self.maximum_entries
+        )
+        return not (loss_hit or count_hit)
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        if self.entry_allowed():
+            return ModuleDecision(context.initial_exposure, "daily_risk_clear")
+        # A daily entry lock must not fabricate a close for an existing episode.
+        current = abs(context.current_exposure or 0.0)
+        return ModuleDecision(current, "daily_entry_locked")
+
+
+@dataclass
+class CompositeRiskModule:
+    """
+    Compose risk-reducing modules without introducing alpha intent.
+
+    Child modules return absolute episode exposure targets. The most
+    risk-reducing target wins, so an exit cannot be overwritten by a sizing or
+    reduction module evaluated later in the same timestamp.
+    """
+
+    module_id: str
+    modules: tuple[StrategyModule, ...]
+
+    def __post_init__(self) -> None:
+        if not self.modules:
+            raise ValueError("composite module requires at least one child")
+
+    def evaluate(self, context: ModuleContext) -> ModuleDecision:
+        decisions = [module.evaluate(context) for module in self.modules]
+        return min(decisions, key=lambda decision: (abs(decision.target_exposure), decision.reason))
+
+    def synchronize_fill(self, *, position: float, fill_price: float) -> None:
+        for module in self.modules:
+            callback = getattr(module, "synchronize_fill", None)
+            if callback is not None:
+                callback(position=position, fill_price=fill_price)
 
 
 class PyramidDirection(str, Enum):
@@ -162,7 +606,8 @@ class PyramidDirection(str, Enum):
 
 @dataclass
 class GridPyramidState:
-    """Fill-reconciled decision state for a finite grid/pyramid episode.
+    """
+    Fill-reconciled decision state for a finite grid/pyramid episode.
 
     It proposes exposure targets but does not execute orders. A proposal stays
     pending until a confirmed fill synchronizes the position, so repeated
@@ -231,17 +676,32 @@ class GridPyramidState:
         return target
 
     def add_target(
-        self, *, price: float, atr: float, direction: PyramidDirection,
+        self,
+        *,
+        price: float,
+        atr: float,
+        direction: PyramidDirection,
     ) -> float | None:
         if price <= 0 or atr <= 0:
             raise ValueError("price and ATR must be positive")
-        if self.episode_side == 0 or self.latest_add_price is None or self.pending_target is not None:
+        if (
+            self.episode_side == 0
+            or self.latest_add_price is None
+            or self.pending_target is not None
+        ):
             return None
-        if self.grid_layer_index >= self.layers or abs(self.current_exposure) >= self.max_abs_exposure - 1e-12:
+        if (
+            self.grid_layer_index >= self.layers
+            or abs(self.current_exposure) >= self.max_abs_exposure - 1e-12
+        ):
             return None
         signed_move = self.episode_side * (price - self.latest_add_price)
         threshold = self.step_atr * atr
-        qualifies = signed_move >= threshold if direction is PyramidDirection.FAVORABLE else signed_move <= -threshold
+        qualifies = (
+            signed_move >= threshold
+            if direction is PyramidDirection.FAVORABLE
+            else signed_move <= -threshold
+        )
         if not qualifies:
             return None
         target_abs = min(abs(self.current_exposure) + self.layer_fraction, self.max_abs_exposure)
@@ -280,8 +740,15 @@ class LevelEventState:
     state: LevelEvent = LevelEvent.UNTOUCHED
 
     def update(
-        self, *, previous_close: float | None, open_: float, high: float,
-        low: float, close: float, level: float, tolerance: float,
+        self,
+        *,
+        previous_close: float | None,
+        open_: float,
+        high: float,
+        low: float,
+        close: float,
+        level: float,
+        tolerance: float,
     ) -> LevelEvent:
         if low > high or tolerance < 0:
             raise ValueError("invalid bar range or tolerance")
@@ -311,7 +778,8 @@ class LevelEventState:
 
 @dataclass(frozen=True)
 class SessionFlattenModule:
-    """Calendar control that proposes flat before UTC midnight.
+    """
+    Calendar control that proposes flat before UTC midnight.
 
     The module only decides *when* a flat target is due.  Orders and fills stay
     in the normal execution contract, and no synthetic 24:00 price is created.
@@ -336,8 +804,12 @@ class SessionRiskState:
     entry_count: int = 0
 
     def update(
-        self, *, event_time_ns: int, realized_pnl_delta: float = 0.0,
-        unrealized_pnl: float = 0.0, executed_entry: bool = False,
+        self,
+        *,
+        event_time_ns: int,
+        realized_pnl_delta: float = 0.0,
+        unrealized_pnl: float = 0.0,
+        executed_entry: bool = False,
     ) -> None:
         session = event_time_ns // DAY_NS * DAY_NS
         if session != self.session_start_ns:

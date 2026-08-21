@@ -1,0 +1,1072 @@
+[
+  {
+    "module_id": "xlsx_s1_0036",
+    "module_type": "atr_adverse_reduction",
+    "loss_levels_atr": [
+      1.0,
+      2.0,
+      3.0
+    ],
+    "target_fractions": [
+      0.7,
+      0.4,
+      0.0
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ATR_ADVERSE_REDUCTION_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s1_0036",
+    "source_sheet": "Sheet1",
+    "source_strategy_number": "36",
+    "source_strategy_name": "三重 ATR 动态止损配套模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s1_0455",
+    "module_type": "atr_breakeven_trailing",
+    "activation_atr": 1.8,
+    "lock_atr": 0.6,
+    "hard_stop_atr": 0.7,
+    "trail_distance_atr": 1.0,
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "FILL_SYNCHRONIZED_BREAKEVEN_TRAIL_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s1_0455",
+    "source_sheet": "Sheet1",
+    "source_strategy_number": "455",
+    "source_strategy_name": "趋势跟踪标准出场模块（移动 ATR 止盈）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s1_0518",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.8,
+      1.6,
+      2.4
+    ],
+    "reduction_fractions": [
+      0.2,
+      0.3,
+      0.3
+    ],
+    "final_profit_atr": 3.2,
+    "stop_loss_atr": 0.6,
+    "module_family": "LAYERED_TAKE_PROFIT",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ATR_LADDER_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s1_0518",
+    "source_sheet": "Sheet1",
+    "source_strategy_number": "518",
+    "source_strategy_name": "ATR 阶梯止盈模块（4 档阶梯减仓 0.8/1.6/2.4/3.2ATR）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s1_0537",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s1_0537__drawdown",
+        "module_type": "account_drawdown",
+        "reduce_at": 0.1,
+        "flatten_at": 0.12,
+        "reduced_exposure": 0.5
+      },
+      {
+        "module_id": "xlsx_s1_0537__pct_stop",
+        "module_type": "fixed_percentage_stop",
+        "stop_fraction": 0.08
+      },
+      {
+        "module_id": "xlsx_s1_0537__cap",
+        "module_type": "exposure_cap",
+        "max_abs_exposure": 0.2
+      },
+      {
+        "module_id": "xlsx_s1_0537__entry_cap",
+        "module_type": "entry_exposure_cap",
+        "max_entry_exposure": 0.02
+      }
+    ],
+    "module_family": "HARD_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ABS_EXPOSURE_CAP_V1",
+      "ACCOUNT_DRAWDOWN_TIER_V1",
+      "ENTRY_EXPOSURE_CAP_V1",
+      "FILL_ANCHORED_PERCENT_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s1_0537",
+    "source_sheet": "Sheet1",
+    "source_strategy_number": "537",
+    "source_strategy_name": "全策略通用总风控整合模块（总回撤、单票、仓位三重限制）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0010",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0010__daily_risk",
+        "module_type": "daily_risk",
+        "maximum_loss": 0.03,
+        "maximum_entries": 4
+      },
+      {
+        "module_id": "xlsx_s2_0010__session_reduce",
+        "module_type": "feature_exposure",
+        "condition": {
+          "feature_key": "session_flatten_due",
+          "operator": "true",
+          "side": "both"
+        },
+        "target_fraction": 0.5
+      }
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SESSION_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CRYPTO_UTC_SESSION_V1",
+      "EXECUTED_ENTRY_DAILY_RISK_V1",
+      "SESSION_FLATTEN_UTC_V1",
+      "TYPED_FEATURE_EXPOSURE_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0010",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "10",
+    "source_strategy_name": "单品种日内限制风控模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0044",
+    "module_type": "atr_breakeven_trailing",
+    "activation_atr": 1.5,
+    "lock_atr": 0.4,
+    "hard_stop_atr": 0.7,
+    "trail_distance_atr": null,
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "FILL_SYNCHRONIZED_BREAKEVEN_TRAIL_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0044",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "44",
+    "source_strategy_name": "ATR 阶梯保本止盈模块（1.5ATR 启动保本）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0050",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0050__drawdown",
+        "module_type": "account_drawdown",
+        "reduce_at": 0.1,
+        "flatten_at": 0.12,
+        "reduced_exposure": 0.5
+      },
+      {
+        "module_id": "xlsx_s2_0050__pct_stop",
+        "module_type": "fixed_percentage_stop",
+        "stop_fraction": 0.08
+      },
+      {
+        "module_id": "xlsx_s2_0050__cap",
+        "module_type": "exposure_cap",
+        "max_abs_exposure": 0.2
+      }
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ABS_EXPOSURE_CAP_V1",
+      "ACCOUNT_DRAWDOWN_TIER_V1",
+      "FILL_ANCHORED_PERCENT_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0050",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "50",
+    "source_strategy_name": "账户总风控基础模块（总回撤 10% 预警）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0078",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0078__drawdown",
+        "module_type": "account_drawdown",
+        "reduce_at": 0.1,
+        "flatten_at": 0.12,
+        "reduced_exposure": 0.5
+      },
+      {
+        "module_id": "xlsx_s2_0078__pct_stop",
+        "module_type": "fixed_percentage_stop",
+        "stop_fraction": 0.08
+      },
+      {
+        "module_id": "xlsx_s2_0078__cap",
+        "module_type": "exposure_cap",
+        "max_abs_exposure": 0.2
+      },
+      {
+        "module_id": "xlsx_s2_0078__entry_cap",
+        "module_type": "entry_exposure_cap",
+        "max_entry_exposure": 0.02
+      }
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ABS_EXPOSURE_CAP_V1",
+      "ACCOUNT_DRAWDOWN_TIER_V1",
+      "ENTRY_EXPOSURE_CAP_V1",
+      "FILL_ANCHORED_PERCENT_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0078",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "78",
+    "source_strategy_name": "全账户三重总风控整合模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0144",
+    "module_type": "atr_breakeven_trailing",
+    "activation_atr": 1.8,
+    "lock_atr": 0.6,
+    "hard_stop_atr": 0.7,
+    "trail_distance_atr": 1.0,
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "FILL_SYNCHRONIZED_BREAKEVEN_TRAIL_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0144",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "144",
+    "source_strategy_name": "趋势跟踪标准出场模块（移动 ATR 保本止盈）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0207",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      1.6,
+      2.4
+    ],
+    "reduction_fractions": [
+      0.3,
+      0.3
+    ],
+    "final_profit_atr": 3.2,
+    "stop_loss_atr": 0.6,
+    "module_family": "LAYERED_TAKE_PROFIT",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ATR_LADDER_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0207",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "207",
+    "source_strategy_name": "ATR 阶梯止盈模块（4 档阶梯减仓 0.8/1.6/2.4/3.2ATR）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0226",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0226__drawdown",
+        "module_type": "account_drawdown",
+        "reduce_at": 0.1,
+        "flatten_at": 0.12,
+        "reduced_exposure": 0.5
+      },
+      {
+        "module_id": "xlsx_s2_0226__pct_stop",
+        "module_type": "fixed_percentage_stop",
+        "stop_fraction": 0.08
+      },
+      {
+        "module_id": "xlsx_s2_0226__cap",
+        "module_type": "exposure_cap",
+        "max_abs_exposure": 0.2
+      },
+      {
+        "module_id": "xlsx_s2_0226__entry_cap",
+        "module_type": "entry_exposure_cap",
+        "max_entry_exposure": 0.02
+      }
+    ],
+    "module_family": "HARD_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ABS_EXPOSURE_CAP_V1",
+      "ACCOUNT_DRAWDOWN_TIER_V1",
+      "ENTRY_EXPOSURE_CAP_V1",
+      "FILL_ANCHORED_PERCENT_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0226",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "226",
+    "source_strategy_name": "全策略通用总风控整合模块（总回撤、单票、仓位三重限制）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0236",
+    "module_type": "donchian_exit",
+    "window": 10,
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "COMPLETED_DONCHIAN_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0236",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "236",
+    "source_strategy_name": "唐奇安 10 周期跟踪止盈精简模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0239",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0239__daily_risk",
+        "module_type": "daily_risk",
+        "maximum_loss": 0.03,
+        "maximum_entries": null
+      },
+      {
+        "module_id": "xlsx_s2_0239__feature_exit",
+        "module_type": "feature_exit",
+        "conditions": [
+          {
+            "feature_key": "session_flatten_due",
+            "operator": "true",
+            "side": "both"
+          }
+        ]
+      },
+      {
+        "module_id": "xlsx_s2_0239__session_reduce",
+        "module_type": "feature_exposure",
+        "condition": {
+          "feature_key": "next_session_open_due",
+          "operator": "true",
+          "side": "both"
+        },
+        "target_fraction": 0.5
+      }
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SESSION_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CRYPTO_UTC_SESSION_V1",
+      "EXECUTED_ENTRY_DAILY_RISK_V1",
+      "NEXT_COMPLETED_UTC_SESSION_OPEN_V1",
+      "SESSION_FLATTEN_UTC_V1",
+      "TYPED_FEATURE_EXIT_V1",
+      "TYPED_FEATURE_EXPOSURE_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0239",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "239",
+    "source_strategy_name": "海龟日内禁止持仓风控模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0246",
+    "module_type": "atr_hard_stop",
+    "stop_loss_atr": 2.0,
+    "module_family": "HARD_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0246",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "246",
+    "source_strategy_name": "海龟 2ATR 固定止损精简模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0284",
+    "module_type": "feature_exit",
+    "conditions": [
+      {
+        "feature_key": "psar_reversal",
+        "operator": "true",
+        "side": "both"
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "TYPED_FEATURE_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0284",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "284",
+    "source_strategy_name": "PSAR 分层移动止盈模块（无开仓逻辑）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0313",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0313__drawdown",
+        "module_type": "account_drawdown",
+        "reduce_at": 0.1,
+        "flatten_at": 0.12,
+        "reduced_exposure": 0.5
+      },
+      {
+        "module_id": "xlsx_s2_0313__pct_stop",
+        "module_type": "fixed_percentage_stop",
+        "stop_fraction": 0.08
+      },
+      {
+        "module_id": "xlsx_s2_0313__cap",
+        "module_type": "exposure_cap",
+        "max_abs_exposure": 0.2
+      },
+      {
+        "module_id": "xlsx_s2_0313__entry_cap",
+        "module_type": "entry_exposure_cap",
+        "max_entry_exposure": 0.02
+      }
+    ],
+    "module_family": "HARD_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ABS_EXPOSURE_CAP_V1",
+      "ACCOUNT_DRAWDOWN_TIER_V1",
+      "ENTRY_EXPOSURE_CAP_V1",
+      "FILL_ANCHORED_PERCENT_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0313",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "313",
+    "source_strategy_name": "全账户三重总风控整合模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0322",
+    "module_type": "donchian_exit",
+    "window": 10,
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "COMPLETED_DONCHIAN_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0322",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "322",
+    "source_strategy_name": "10 周期唐奇安跟踪止盈精简出场模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0325",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0325__daily_risk",
+        "module_type": "daily_risk",
+        "maximum_loss": 0.03,
+        "maximum_entries": null
+      },
+      {
+        "module_id": "xlsx_s2_0325__feature_exit",
+        "module_type": "feature_exit",
+        "conditions": [
+          {
+            "feature_key": "session_flatten_due",
+            "operator": "true",
+            "side": "both"
+          }
+        ]
+      },
+      {
+        "module_id": "xlsx_s2_0325__session_reduce",
+        "module_type": "feature_exposure",
+        "condition": {
+          "feature_key": "next_session_open_due",
+          "operator": "true",
+          "side": "both"
+        },
+        "target_fraction": 0.5
+      }
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SESSION_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CRYPTO_UTC_SESSION_V1",
+      "EXECUTED_ENTRY_DAILY_RISK_V1",
+      "NEXT_COMPLETED_UTC_SESSION_OPEN_V1",
+      "SESSION_FLATTEN_UTC_V1",
+      "TYPED_FEATURE_EXIT_V1",
+      "TYPED_FEATURE_EXPOSURE_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0325",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "325",
+    "source_strategy_name": "海龟隔夜持仓风控模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0332",
+    "module_type": "atr_hard_stop",
+    "stop_loss_atr": 2.0,
+    "module_family": "HARD_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0332",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "332",
+    "source_strategy_name": "海龟 2ATR 固定止损通用配套模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0370",
+    "module_type": "feature_exit",
+    "conditions": [
+      {
+        "feature_key": "psar_reversal",
+        "operator": "true",
+        "side": "both"
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "TYPED_FEATURE_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0370",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "370",
+    "source_strategy_name": "PSAR 分层动态止盈配套模块（无开仓逻辑）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0402",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0402__donchian",
+        "module_type": "donchian_exit",
+        "window": 10
+      },
+      {
+        "module_id": "xlsx_s2_0402__breakeven",
+        "module_type": "atr_breakeven_trailing",
+        "activation_atr": 1.2,
+        "lock_atr": 0.0,
+        "hard_stop_atr": 0.7,
+        "trail_distance_atr": null
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "COMPLETED_DONCHIAN_EXIT_V1",
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "FILL_SYNCHRONIZED_BREAKEVEN_TRAIL_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0402",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "402",
+    "source_strategy_name": "唐奇安 10 周期出场 + ATR 保本组合模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0455",
+    "module_type": "atr_breakeven_trailing",
+    "activation_atr": 1.8,
+    "lock_atr": 0.6,
+    "hard_stop_atr": 0.7,
+    "trail_distance_atr": 1.0,
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "FILL_SYNCHRONIZED_BREAKEVEN_TRAIL_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0455",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "455",
+    "source_strategy_name": "趋势跟踪标准出场模块（ATR 移动保本止盈）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0510",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0510__drawdown",
+        "module_type": "account_drawdown",
+        "reduce_at": 0.1,
+        "flatten_at": 0.12,
+        "reduced_exposure": 0.5
+      },
+      {
+        "module_id": "xlsx_s2_0510__pct_stop",
+        "module_type": "fixed_percentage_stop",
+        "stop_fraction": 0.08
+      },
+      {
+        "module_id": "xlsx_s2_0510__cap",
+        "module_type": "exposure_cap",
+        "max_abs_exposure": 0.2
+      },
+      {
+        "module_id": "xlsx_s2_0510__entry_cap",
+        "module_type": "entry_exposure_cap",
+        "max_entry_exposure": 0.02
+      }
+    ],
+    "module_family": "HARD_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "ABS_EXPOSURE_CAP_V1",
+      "ACCOUNT_DRAWDOWN_TIER_V1",
+      "ENTRY_EXPOSURE_CAP_V1",
+      "FILL_ANCHORED_PERCENT_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0510",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "510",
+    "source_strategy_name": "全账户三重总风控整合模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0519",
+    "module_type": "donchian_exit",
+    "window": 10,
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "COMPLETED_DONCHIAN_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0519",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "519",
+    "source_strategy_name": "10 周期唐奇安跟踪止盈精简出场模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0522",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0522__daily_risk",
+        "module_type": "daily_risk",
+        "maximum_loss": 0.03,
+        "maximum_entries": null
+      },
+      {
+        "module_id": "xlsx_s2_0522__feature_exit",
+        "module_type": "feature_exit",
+        "conditions": [
+          {
+            "feature_key": "session_flatten_due",
+            "operator": "true",
+            "side": "both"
+          }
+        ]
+      },
+      {
+        "module_id": "xlsx_s2_0522__session_reduce",
+        "module_type": "feature_exposure",
+        "condition": {
+          "feature_key": "next_session_open_due",
+          "operator": "true",
+          "side": "both"
+        },
+        "target_fraction": 0.5
+      }
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SESSION_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CRYPTO_UTC_SESSION_V1",
+      "EXECUTED_ENTRY_DAILY_RISK_V1",
+      "NEXT_COMPLETED_UTC_SESSION_OPEN_V1",
+      "SESSION_FLATTEN_UTC_V1",
+      "TYPED_FEATURE_EXIT_V1",
+      "TYPED_FEATURE_EXPOSURE_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0522",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "522",
+    "source_strategy_name": "海龟隔夜持仓风控模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0529",
+    "module_type": "atr_hard_stop",
+    "stop_loss_atr": 2.0,
+    "module_family": "HARD_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0529",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "529",
+    "source_strategy_name": "海龟 2ATR 固定止损通用配套模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0567",
+    "module_type": "feature_exit",
+    "conditions": [
+      {
+        "feature_key": "psar_reversal",
+        "operator": "true",
+        "side": "both"
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "TYPED_FEATURE_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0567",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "567",
+    "source_strategy_name": "PSAR 分层动态止盈配套模块（无开仓逻辑）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0599",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0599__donchian",
+        "module_type": "donchian_exit",
+        "window": 10
+      },
+      {
+        "module_id": "xlsx_s2_0599__breakeven",
+        "module_type": "atr_breakeven_trailing",
+        "activation_atr": 1.2,
+        "lock_atr": 0.0,
+        "hard_stop_atr": 0.7,
+        "trail_distance_atr": null
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "COMPLETED_DONCHIAN_EXIT_V1",
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "FILL_SYNCHRONIZED_BREAKEVEN_TRAIL_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0599",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "599",
+    "source_strategy_name": "唐奇安 10 周期出场 + ATR 保本组合模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0651",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0651__atr_stop",
+        "module_type": "atr_hard_stop",
+        "stop_loss_atr": 0.7
+      },
+      {
+        "module_id": "xlsx_s2_0651__feature_exit",
+        "module_type": "feature_exit",
+        "conditions": [
+          {
+            "feature_key": "dif_cross_below_zero",
+            "operator": "true",
+            "side": "long"
+          }
+        ]
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "TYPED_FEATURE_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0651",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "651",
+    "source_strategy_name": "MACD 水上多头跟踪止盈模块（10 周期价格高点）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0667",
+    "module_type": "feature_exit",
+    "conditions": [
+      {
+        "feature_key": "vwap_long_exit",
+        "operator": "true",
+        "side": "long"
+      },
+      {
+        "feature_key": "session_flatten_due",
+        "operator": "true",
+        "side": "both"
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SESSION_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "SESSION_FLATTEN_UTC_V1",
+      "TYPED_FEATURE_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0667",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "667",
+    "source_strategy_name": "分时 VWAP 移动止盈日内模块（无开仓逻辑）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0680",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0680__atr_stop",
+        "module_type": "atr_hard_stop",
+        "stop_loss_atr": 0.7
+      },
+      {
+        "module_id": "xlsx_s2_0680__donchian",
+        "module_type": "donchian_exit",
+        "window": 10
+      },
+      {
+        "module_id": "xlsx_s2_0680__adx_reduce",
+        "module_type": "feature_exposure",
+        "condition": {
+          "feature_key": "adx",
+          "operator": "lt",
+          "threshold": 20.0,
+          "side": "both"
+        },
+        "target_fraction": 0.5
+      }
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "COMPLETED_DONCHIAN_EXIT_V1",
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "TYPED_FEATURE_EXPOSURE_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0680",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "680",
+    "source_strategy_name": "唐奇安 10 周期出场 + ADX 过滤组合模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0744",
+    "module_type": "feature_exit",
+    "conditions": [
+      {
+        "feature_key": "psar_reversal",
+        "operator": "true",
+        "side": "both"
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "TYPED_FEATURE_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0744",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "744",
+    "source_strategy_name": "PSAR 分层动态止盈配套模块（无开仓逻辑）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0776",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0776__donchian",
+        "module_type": "donchian_exit",
+        "window": 10
+      },
+      {
+        "module_id": "xlsx_s2_0776__breakeven",
+        "module_type": "atr_breakeven_trailing",
+        "activation_atr": 1.2,
+        "lock_atr": 0.0,
+        "hard_stop_atr": 0.7,
+        "trail_distance_atr": null
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "COMPLETED_DONCHIAN_EXIT_V1",
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "FILL_SYNCHRONIZED_BREAKEVEN_TRAIL_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0776",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "776",
+    "source_strategy_name": "唐奇安 10 周期出场 + ATR 保本组合模块",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0828",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0828__atr_stop",
+        "module_type": "atr_hard_stop",
+        "stop_loss_atr": 0.7
+      },
+      {
+        "module_id": "xlsx_s2_0828__feature_exit",
+        "module_type": "feature_exit",
+        "conditions": [
+          {
+            "feature_key": "dif_cross_below_zero",
+            "operator": "true",
+            "side": "long"
+          }
+        ]
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "TYPED_FEATURE_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0828",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "828",
+    "source_strategy_name": "MACD 水上多头跟踪止盈模块（10 周期价格高点）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0844",
+    "module_type": "feature_exit",
+    "conditions": [
+      {
+        "feature_key": "vwap_long_exit",
+        "operator": "true",
+        "side": "long"
+      },
+      {
+        "feature_key": "session_flatten_due",
+        "operator": "true",
+        "side": "both"
+      }
+    ],
+    "module_family": "TRAILING_STOP",
+    "semantic_provenance": "SESSION_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "SESSION_FLATTEN_UTC_V1",
+      "TYPED_FEATURE_EXIT_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0844",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "844",
+    "source_strategy_name": "分时 VWAP 移动止盈日内模块（无开仓逻辑）",
+    "module_version": "2.4.0"
+  },
+  {
+    "module_id": "xlsx_s2_0857",
+    "module_type": "composite_risk",
+    "modules": [
+      {
+        "module_id": "xlsx_s2_0857__atr_stop",
+        "module_type": "atr_hard_stop",
+        "stop_loss_atr": 0.7
+      },
+      {
+        "module_id": "xlsx_s2_0857__donchian",
+        "module_type": "donchian_exit",
+        "window": 10
+      },
+      {
+        "module_id": "xlsx_s2_0857__adx_reduce",
+        "module_type": "feature_exposure",
+        "condition": {
+          "feature_key": "adx",
+          "operator": "lt",
+          "threshold": 20.0,
+          "side": "both"
+        },
+        "target_fraction": 0.5
+      }
+    ],
+    "module_family": "PARTIAL_REDUCTION",
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "COMPLETED_DONCHIAN_EXIT_V1",
+      "FILL_ANCHORED_ATR_STOP_V1",
+      "TYPED_FEATURE_EXPOSURE_V1"
+    ],
+    "defaulted_parameters": {},
+    "source_identity": "xlsx_s2_0857",
+    "source_sheet": "Sheet2",
+    "source_strategy_number": "857",
+    "source_strategy_name": "唐奇安 10 周期出场 + ADX 过滤组合模块",
+    "module_version": "2.4.0"
+  }
+]

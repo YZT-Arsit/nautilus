@@ -3,19 +3,20 @@ from __future__ import annotations
 import numpy as np
 
 from data_engine.events import BarEvent
-from scripts.internal.run_all_strategy_timeframe_lag import (
-    MINUTE_NS,
-    build_direction_variants,
-    build_strategy_clock,
-    execute_planned,
-    execute_target,
-    execution_bar,
-    parse_cases,
-    validate_direction_variants,
-)
+from scripts.internal.run_all_strategy_timeframe_lag import MINUTE_NS
+from scripts.internal.run_all_strategy_timeframe_lag import build_direction_variants
+from scripts.internal.run_all_strategy_timeframe_lag import build_strategy_clock
+from scripts.internal.run_all_strategy_timeframe_lag import execute_planned
+from scripts.internal.run_all_strategy_timeframe_lag import execute_target
+from scripts.internal.run_all_strategy_timeframe_lag import execution_bar
+from scripts.internal.run_all_strategy_timeframe_lag import parse_cases
+from scripts.internal.run_all_strategy_timeframe_lag import run_decision_lifecycle
+from scripts.internal.run_all_strategy_timeframe_lag import validate_direction_variants
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
 from strategy_framework.execution.duration_lag import DurationLagTargetAdapter
-from strategy_framework.execution.intents import PlannedSignal, TradeAction
+from strategy_framework.execution.intents import PlannedSignal
+from strategy_framework.execution.intents import TradeAction
+from strategy_framework.modules import AtrHardStopModule
 
 
 def test_execute_planned_returns_each_fill_once_without_mutating_external_ledger() -> None:
@@ -47,8 +48,13 @@ def test_execute_planned_returns_each_fill_once_without_mutating_external_ledger
 
 def test_execute_target_preserves_fractional_exposure() -> None:
     event = BarEvent(
-        close=100.0, open=100.0, high=101.0, low=99.0, volume=10.0,
-        instrument_id="BTCUSDT-PERP.BINANCE", event_time_ns=1,
+        close=100.0,
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        volume=10.0,
+        instrument_id="BTCUSDT-PERP.BINANCE",
+        event_time_ns=1,
     )
     simulator = IntentFillSimulator(default_price_field="open", allow_short=True)
     fills = []
@@ -125,3 +131,38 @@ def test_required_direction_variants_are_exact_filters_and_sign_inverse() -> Non
     np.testing.assert_array_equal(variants["strict_reverse"], -original)
     assert all(row["direction_validation_passed"] for row in validation)
     assert max(row["max_direction_residual"] for row in validation) == 0.0
+
+
+def test_optional_module_hook_is_baseline_invariant_when_disabled_and_fill_based() -> None:
+    prices = [100.0] * 30 + [100.0 + i for i in range(20)] + [119.0, 118.0, 90.0] + [90.0] * 10
+    bars = [
+        BarEvent(
+            close=price,
+            open=price,
+            high=price + 0.5,
+            low=price - 0.5,
+            volume=1.0,
+            instrument_id="BTCUSDT-PERP.BINANCE",
+            event_time_ns=index * MINUTE_NS,
+        )
+        for index, price in enumerate(prices)
+    ]
+    kwargs = dict(
+        strategy_name="ma_crossover",
+        source_config={"params": {"fast_window": 5, "slow_window": 20}},
+        frequency="1m",
+        lag_minutes=0,
+        bars_1m=bars,
+        strategy_bars=bars,
+        end_exclusive_ns=(len(bars) + 1) * MINUTE_NS,
+    )
+    baseline_a, _, _ = run_decision_lifecycle(**kwargs)
+    baseline_b, _, _ = run_decision_lifecycle(**kwargs)
+    np.testing.assert_array_equal(baseline_a, baseline_b)
+    with_stop, events, meta = run_decision_lifecycle(
+        **kwargs,
+        strategy_module=AtrHardStopModule("test_stop", 0.1),
+    )
+    assert meta["module_decision_count"] > 0
+    assert any(row["module_id"] == "test_stop" for row in events)
+    assert np.any(with_stop != baseline_a)
