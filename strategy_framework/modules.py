@@ -6,6 +6,9 @@ from enum import Enum
 from typing import Protocol, runtime_checkable
 
 
+DAY_NS = 86_400_000_000_000
+
+
 @dataclass(frozen=True)
 class ModuleContext:
     side: int
@@ -304,3 +307,58 @@ class LevelEventState:
             elif close > level + tolerance:
                 self.state = LevelEvent.REJECTED
         return self.state
+
+
+@dataclass(frozen=True)
+class SessionFlattenModule:
+    """Calendar control that proposes flat before UTC midnight.
+
+    The module only decides *when* a flat target is due.  Orders and fills stay
+    in the normal execution contract, and no synthetic 24:00 price is created.
+    """
+
+    module_id: str = "SESSION_FLATTEN_UTC_V1"
+    execution_step_ns: int = 60_000_000_000
+
+    def should_flatten(self, *, decision_time_ns: int, execution_lag_ns: int) -> bool:
+        if execution_lag_ns < 0 or self.execution_step_ns <= 0:
+            raise ValueError("invalid execution lag or step")
+        return (decision_time_ns + execution_lag_ns + self.execution_step_ns) % DAY_NS == 0
+
+
+@dataclass
+class SessionRiskState:
+    """UTC-session execution feedback for explicit daily loss/profit limits."""
+
+    session_start_ns: int | None = None
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
+    entry_count: int = 0
+
+    def update(
+        self, *, event_time_ns: int, realized_pnl_delta: float = 0.0,
+        unrealized_pnl: float = 0.0, executed_entry: bool = False,
+    ) -> None:
+        session = event_time_ns // DAY_NS * DAY_NS
+        if session != self.session_start_ns:
+            self.session_start_ns = session
+            self.realized_pnl = 0.0
+            self.unrealized_pnl = 0.0
+            self.entry_count = 0
+        self.realized_pnl += float(realized_pnl_delta)
+        self.unrealized_pnl = float(unrealized_pnl)
+        self.entry_count += int(executed_entry)
+
+    @property
+    def total_pnl(self) -> float:
+        return self.realized_pnl + self.unrealized_pnl
+
+    def loss_limit_hit(self, limit: float) -> bool:
+        if limit <= 0:
+            raise ValueError("loss limit must be positive")
+        return self.total_pnl <= -limit
+
+    def entry_limit_hit(self, maximum_entries: int) -> bool:
+        if maximum_entries <= 0:
+            raise ValueError("maximum entries must be positive")
+        return self.entry_count >= maximum_entries

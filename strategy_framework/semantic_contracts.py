@@ -15,6 +15,7 @@ class SemanticProvenance(str, Enum):
     SOURCE_EXACT = "SOURCE_EXACT"
     STANDARD_CONTRACT_RESOLVED = "STANDARD_CONTRACT_RESOLVED"
     PARAMETER_DEFAULTED = "PARAMETER_DEFAULTED"
+    SESSION_CONTRACT_RESOLVED = "SESSION_CONTRACT_RESOLVED"
 
 
 @dataclass(frozen=True)
@@ -101,6 +102,18 @@ CONTRACTS: tuple[SemanticContract, ...] = (
                      "source pyramid wording adds only after a favorable ATR move"),
     SemanticContract("TOUCH_AS_THRESHOLD_CROSS", 1,
                      "touch is the first completed-observation crossing of the explicit threshold"),
+    SemanticContract("CRYPTO_UTC_SESSION", 1,
+                     "research session is [00:00 UTC, next 00:00 UTC)"),
+    SemanticContract("PREVIOUS_COMPLETED_UTC_SESSION", 1,
+                     "only the fully completed immediately preceding UTC calendar session"),
+    SemanticContract("SESSION_VWAP_UTC", 1,
+                     "cumulative source quote volume divided by cumulative base volume; reset at UTC midnight"),
+    SemanticContract("SESSION_FLATTEN_UTC", 1,
+                     "target flat at the last executable pre-boundary opportunity under configured lag"),
+    SemanticContract("COMPLETED_TIMEFRAME_ALIGNMENT", 1,
+                     "higher-timeframe state is visible only after its aligned bar is complete"),
+    SemanticContract("PRICE_VS_SINGLE_MA", 1,
+                     "single moving-average bullish/bearish alignment means close above/below that average"),
 )
 
 REGISTRY: Mapping[str, SemanticContract] = {contract.versioned_id: contract for contract in CONTRACTS}

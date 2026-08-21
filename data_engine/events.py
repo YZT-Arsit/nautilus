@@ -21,6 +21,10 @@ class BarEvent:
     volume: float
     instrument_id: str
     event_time_ns: int
+    quote_volume: float | None = None
+    trade_count: int | None = None
+    taker_buy_volume: float | None = None
+    taker_buy_quote_volume: float | None = None
     event_type: str = "bar"
 
 

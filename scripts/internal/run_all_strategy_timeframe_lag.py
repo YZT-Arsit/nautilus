@@ -113,11 +113,15 @@ def parse_cases(values: list[str] | None) -> tuple[tuple[str, int], ...]:
     return tuple(parsed)
 
 
-def _build_config_obj(config_cls: type, params: dict[str, Any], frequency: str) -> Any:
+def _build_config_obj(
+    config_cls: type, params: dict[str, Any], frequency: str, lag_minutes: int = 0,
+) -> Any:
     allowed = {field.name for field in fields(config_cls)}
     values = {key: value for key, value in params.items() if key in allowed}
     if "bar_type" in allowed:
         values["bar_type"] = frequency
+    if "execution_lag_minutes" in allowed:
+        values["execution_lag_minutes"] = lag_minutes
     return config_cls(**values)
 
 
@@ -372,7 +376,9 @@ def run_decision_lifecycle(
     end_exclusive_ns: int,
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     plugin = get_entry(strategy_name)
-    config_obj = _build_config_obj(plugin.config_cls, source_config.get("params", {}), frequency)
+    config_obj = _build_config_obj(
+        plugin.config_cls, source_config.get("params", {}), frequency, lag_minutes,
+    )
     strategy = plugin.strategy_cls(config_obj)
     runner = FeatureStrategyRunner(plugin.build_specs(config_obj), strategy)
     simulator = IntentFillSimulator(

@@ -114,6 +114,10 @@ def resample_bars(bars: Iterable[BarEvent], frequency: str) -> list[BarEvent]:
                 volume=b.volume,
                 instrument_id=b.instrument_id,
                 event_time_ns=start,
+                quote_volume=b.quote_volume,
+                trade_count=b.trade_count,
+                taker_buy_volume=b.taker_buy_volume,
+                taker_buy_quote_volume=b.taker_buy_quote_volume,
             )
             order.append(key)
         else:
@@ -121,5 +125,15 @@ def resample_bars(bars: Iterable[BarEvent], frequency: str) -> list[BarEvent]:
             cur.low = min(cur.low, b.low)
             cur.close = b.close  # rows 已按时间排序，最后一根即收盘
             cur.volume += b.volume
+            if b.quote_volume is not None:
+                cur.quote_volume = (cur.quote_volume or 0.0) + b.quote_volume
+            if b.trade_count is not None:
+                cur.trade_count = (cur.trade_count or 0) + b.trade_count
+            if b.taker_buy_volume is not None:
+                cur.taker_buy_volume = (cur.taker_buy_volume or 0.0) + b.taker_buy_volume
+            if b.taker_buy_quote_volume is not None:
+                cur.taker_buy_quote_volume = (
+                    (cur.taker_buy_quote_volume or 0.0) + b.taker_buy_quote_volume
+                )
     order.sort()
     return [buckets[k] for k in order]

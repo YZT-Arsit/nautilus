@@ -419,3 +419,43 @@ def trade_price_mean_spec(
         window_unit=window_unit,
         params={"type": "trade_price_mean"},
     )
+
+
+def crypto_utc_session_spec(
+    name: str, *, output: str, bar_interval_minutes: int = 1,
+    opening_range_minutes: int = 30, execution_lag_minutes: int = 0,
+) -> FeatureSpec:
+    """One ``CRYPTO_UTC_SESSION_V1`` output on completed bar observations."""
+    return FeatureSpec(
+        name, input_type="bar", params={
+            "type": "crypto_utc_session", "output": output,
+            "bar_interval_ns": bar_interval_minutes * 60_000_000_000,
+            "opening_range_minutes": opening_range_minutes,
+            "execution_lag_minutes": execution_lag_minutes,
+        },
+    )
+
+
+def session_flatten_due_spec(
+    name: str, *, execution_lag_minutes: int, execution_step_minutes: int = 1,
+) -> FeatureSpec:
+    """Decision pulse for the final executable opportunity before UTC midnight."""
+    return FeatureSpec(
+        name, input_type="bar", params={
+            "type": "session_flatten_due",
+            "execution_lag_minutes": execution_lag_minutes,
+            "execution_step_ns": execution_step_minutes * 60_000_000_000,
+        },
+    )
+
+
+def completed_timeframe_spec(
+    name: str, *, timeframe_minutes: int, output: str, window: int = 1,
+) -> FeatureSpec:
+    """Lookahead-safe value from completed aligned higher-timeframe bars."""
+    return FeatureSpec(
+        name, input_type="bar", window=window, params={
+            "type": "completed_timeframe", "timeframe_minutes": timeframe_minutes,
+            "output": output, "window": window,
+        },
+    )

@@ -61,6 +61,11 @@ from feature_engine.compute.feature_lib.volume import (
     VolumeZScoreFeature,
     VWAPDistanceFeature,
 )
+from feature_engine.compute.feature_lib.session import (
+    CompletedTimeframeFeature,
+    CryptoUtcSessionFeature,
+    SessionFlattenDueFeature,
+)
 
 __all__ = [
     # price_action
@@ -100,6 +105,9 @@ __all__ = [
     "VolumeRatioFeature",
     "QuoteVolumeFeature",
     "VWAPDistanceFeature",
+    "CryptoUtcSessionFeature",
+    "SessionFlattenDueFeature",
+    "CompletedTimeframeFeature",
     # trade (tick)
     "TradeCountFeature",
     "TradeVolumeSumFeature",

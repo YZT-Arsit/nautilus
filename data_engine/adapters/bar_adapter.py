@@ -17,6 +17,10 @@ def make_bar_event(
     high: float | None = None,
     low: float | None = None,
     volume: float | None = None,
+    quote_volume: float | None = None,
+    trade_count: int | None = None,
+    taker_buy_volume: float | None = None,
+    taker_buy_quote_volume: float | None = None,
     instrument_id: str,
     event_time_ns: int,
 ) -> BarEvent:
@@ -29,6 +33,10 @@ def make_bar_event(
         volume=0.0 if volume is None else volume,
         instrument_id=instrument_id,
         event_time_ns=event_time_ns,
+        quote_volume=quote_volume,
+        trade_count=trade_count,
+        taker_buy_volume=taker_buy_volume,
+        taker_buy_quote_volume=taker_buy_quote_volume,
     )
 
 

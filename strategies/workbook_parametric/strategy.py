@@ -41,6 +41,8 @@ class WorkbookParametricStrategy:
         if abs(target) > 1.0 + 1e-12:
             raise ValueError("workbook target exposure cannot exceed 1x")
         previous = float(self.decision_position)
+        if target == 0 or previous * target <= 0 or abs(target) > abs(previous):
+            self._previous.pop("session_reduced", None)
         changed = target != previous
         self.decision_position = target
         self._holding_bars = 0 if changed else self._holding_bars
@@ -76,11 +78,116 @@ class WorkbookParametricStrategy:
         label = actions[-1].side if actions and not actions[-1].close_all else EXIT
         return PlannedSignal(label, actions)
 
+    def _on_session_snapshot(self, snapshot: FeatureSnapshot, close: float) -> PlannedSignal | str:
+        vwap = self._value(snapshot, "workbook_session_vwap")
+        session_start = self._value(snapshot, "workbook_session_start")
+        flatten = bool(self._value(snapshot, "workbook_session_flatten") or False)
+        entry_allowed = bool(self._value(snapshot, "workbook_session_entry_allowed") or False)
+        if session_start is not None and session_start != self._previous.get("session_start"):
+            self._previous.update(
+                session_start=session_start, session_above_count=0.0,
+                session_below_count=0.0, session_reduced=0.0,
+            )
+        if flatten:
+            return self._set(0) if self.decision_position else HOLD
+        if vwap is None:
+            return HOLD
+        above = int(self._previous.get("session_above_count", 0))
+        below = int(self._previous.get("session_below_count", 0))
+        above = above + 1 if close > vwap else 0
+        below = below + 1 if close < vwap else 0
+        self._previous["session_above_count"] = float(above)
+        self._previous["session_below_count"] = float(below)
+
+        if self.config.family == "session_vwap_roc_turn":
+            roc = self._value(snapshot, "workbook_roc")
+            previous = self._previous.get("session_roc")
+            self._previous["session_roc"] = roc if roc is not None else 0.0
+            if roc is None or previous is None:
+                return HOLD
+            if self.decision_position > 0 and close < vwap:
+                return self._set(0)
+            if self.decision_position < 0 and close > vwap:
+                return self._set(0)
+            if entry_allowed and close > vwap and previous <= 0 < roc:
+                return self._set(1)
+            if entry_allowed and close < vwap and previous >= 0 > roc:
+                return self._set(-1)
+            return HOLD
+
+        if self.config.family == "session_vwap_ma_trend":
+            moving_average = self._value(snapshot, "workbook_completed_ma")
+            atr = self._value(snapshot, "workbook_atr")
+            if moving_average is None or atr is None:
+                return HOLD
+            if self.decision_position > 0 and close < vwap:
+                return self._set(0)
+            if self.decision_position < 0 and close > vwap:
+                return self._set(0)
+            reduced = bool(self._previous.get("session_reduced", 0.0))
+            if self.decision_position and not reduced and abs(close - vwap) > self.config.multiplier * atr:
+                self._previous["session_reduced"] = 1.0
+                return self._set(self.decision_position * (1.0 - self.config.reduction_fraction))
+            if entry_allowed and self.decision_position == 0 and above >= self.config.consecutive_bars and close > moving_average:
+                return self._set(1)
+            if entry_allowed and self.decision_position == 0 and below >= self.config.consecutive_bars and close < moving_average:
+                return self._set(-1)
+            return HOLD
+
+        if self.config.family == "session_vwap_volume_mean":
+            volume = self._value(snapshot, "workbook_volume")
+            volume_mean = self._value(snapshot, "workbook_volume_mean")
+            previous_volume = self._previous.get("session_volume")
+            previous_mean = self._previous.get("session_volume_mean")
+            if volume is not None:
+                self._previous["session_volume"] = volume
+            if volume_mean is not None:
+                self._previous["session_volume_mean"] = volume_mean
+            if None in (volume, volume_mean, previous_volume, previous_mean):
+                return HOLD
+            reduced = bool(self._previous.get("session_reduced", 0.0))
+            if self.decision_position and volume < volume_mean and not reduced:
+                self._previous["session_reduced"] = 1.0
+                return self._set(self.decision_position * (1.0 - self.config.reduction_fraction))
+            if entry_allowed and self.decision_position == 0 and above >= self.config.consecutive_bars and previous_volume <= previous_mean < volume:
+                return self._set(1)
+            if entry_allowed and self.decision_position == 0 and below >= self.config.consecutive_bars and volume < volume_mean:
+                return self._set(-1)
+            return HOLD
+
+        if self.config.family in {"session_vwap_fractal", "session_vwap_mtf_fractal"}:
+            frames = (15,) if self.config.family == "session_vwap_fractal" else (5, 15, 30)
+            upper = [self._value(snapshot, f"workbook_upper_fractal_{frame}m") for frame in frames]
+            lower = [self._value(snapshot, f"workbook_lower_fractal_{frame}m") for frame in frames]
+            upper_trigger = all(value is not None and value > 0 for value in upper)
+            lower_trigger = all(value is not None and value > 0 for value in lower)
+            if self.decision_position > 0 and upper_trigger:
+                return self._set(0)
+            if self.decision_position < 0 and lower_trigger:
+                return self._set(0)
+            if self.config.family == "session_vwap_fractal":
+                atr = self._value(snapshot, "workbook_atr")
+                reduced = bool(self._previous.get("session_reduced", 0.0))
+                if (
+                    self.decision_position and atr is not None and not reduced
+                    and abs(close - vwap) > self.config.multiplier * atr
+                ):
+                    self._previous["session_reduced"] = 1.0
+                    return self._set(self.decision_position * (1.0 - self.config.reduction_fraction))
+            if entry_allowed and close > vwap and lower_trigger:
+                return self._set(1)
+            if entry_allowed and close < vwap and upper_trigger:
+                return self._set(-1)
+            return HOLD
+        raise ValueError(f"unsupported session family: {self.config.family}")
+
     def on_snapshot(self, snapshot: FeatureSnapshot) -> str:
         family = self.config.family
         close = self._value(snapshot, "workbook_close")
         if close is None:
             return HOLD
+        if family.startswith("session_"):
+            return self._on_session_snapshot(snapshot, close)
         if self.decision_position:
             self._holding_bars += 1
         if family == "sma_crossover":

@@ -69,6 +69,10 @@ class ParquetBarSource:
         high_column: str | None = "high",
         low_column: str | None = "low",
         volume_column: str | None = "volume",
+        quote_volume_column: str | None = "quote_volume",
+        trade_count_column: str | None = "trade_count",
+        taker_buy_volume_column: str | None = "taker_buy_volume",
+        taker_buy_quote_volume_column: str | None = "taker_buy_quote_volume",
         start: object | None = None,
         end: object | None = None,
     ) -> None:
@@ -89,6 +93,10 @@ class ParquetBarSource:
         self._high_column = high_column
         self._low_column = low_column
         self._volume_column = volume_column
+        self._quote_volume_column = quote_volume_column
+        self._trade_count_column = trade_count_column
+        self._taker_buy_volume_column = taker_buy_volume_column
+        self._taker_buy_quote_volume_column = taker_buy_quote_volume_column
         self._bars: list[BarEvent] | None = None  # cache: read the dataset once
 
     def _row_to_bar(self, row: dict[str, Any], index: int, ts_col: str | None = None) -> BarEvent:
@@ -115,12 +123,31 @@ class ParquetBarSource:
             high=_opt(self._high_column, close),
             low=_opt(self._low_column, close),
             volume=_opt(self._volume_column, 0.0),
+            quote_volume=(
+                _opt(self._quote_volume_column, 0.0)
+                if self._quote_volume_column and row.get(self._quote_volume_column) is not None
+                else None
+            ),
+            trade_count=(
+                int(row[self._trade_count_column])
+                if self._trade_count_column and row.get(self._trade_count_column) is not None
+                else None
+            ),
+            taker_buy_volume=(
+                _opt(self._taker_buy_volume_column, 0.0)
+                if self._taker_buy_volume_column and row.get(self._taker_buy_volume_column) is not None
+                else None
+            ),
+            taker_buy_quote_volume=(
+                _opt(self._taker_buy_quote_volume_column, 0.0)
+                if self._taker_buy_quote_volume_column and row.get(self._taker_buy_quote_volume_column) is not None
+                else None
+            ),
             instrument_id=self._instrument_id,
             event_time_ns=event_time_ns,
         )
 
     def _load_sorted(self) -> list[BarEvent]:
-        import pyarrow as pa
         import pyarrow.dataset as ds
 
         dataset = ds.dataset(self._root, format="parquet", partitioning="hive")
@@ -147,16 +174,12 @@ class ParquetBarSource:
                     f"{self._filters!r} within date range [{self._start}, {self._end}]"
                 )
 
-        # Schema guard based on the matching bar fragments, not the mixed root.
-        schema_names = set(fragments[0].physical_schema.names)
-        if self._close_column not in schema_names:
-            raise ValueError(f"required close column {self._close_column!r} is missing")
-
+        # Column pushdown is resolved per fragment.  Historical partitions can
+        # legitimately pre-date additive optional fields (for example Binance
+        # taker-buy volumes), while the required OHLCV contract remains stable.
+        # Projecting the first fragment's optional schema across every fragment
+        # makes Arrow reject such mixed-schema datasets.
         ts_col = self._timestamp_column
-        if ts_col not in schema_names:
-            raise ValueError(f"required timestamp column {ts_col!r} is missing")
-
-        # Column pushdown: project only the bar columns that actually exist.
         wanted = [
             ts_col,
             self._close_column,
@@ -164,16 +187,37 @@ class ParquetBarSource:
             self._high_column,
             self._low_column,
             self._volume_column,
+            self._quote_volume_column,
+            self._trade_count_column,
+            self._taker_buy_volume_column,
+            self._taker_buy_quote_volume_column,
         ]
-        columns = [c for c in wanted if c and c in schema_names]
-
-        tables = [fragment.to_table(columns=columns) for fragment in fragments]
-        table = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
-        data = table.to_pydict()  # column-oriented; no pandas
-        bars = [
-            self._row_to_bar({col: data[col][i] for col in columns}, i, ts_col=ts_col)
-            for i in range(table.num_rows)
-        ]
+        bars: list[BarEvent] = []
+        row_index = 0
+        for fragment in fragments:
+            schema_names = set(fragment.physical_schema.names)
+            if self._close_column not in schema_names:
+                raise ValueError(
+                    f"required close column {self._close_column!r} is missing from "
+                    f"fragment {fragment.path!r}"
+                )
+            if ts_col not in schema_names:
+                raise ValueError(
+                    f"required timestamp column {ts_col!r} is missing from "
+                    f"fragment {fragment.path!r}"
+                )
+            columns = [c for c in wanted if c and c in schema_names]
+            table = fragment.to_table(columns=columns)
+            data = table.to_pydict()  # column-oriented; no pandas
+            for i in range(table.num_rows):
+                bars.append(
+                    self._row_to_bar(
+                        {col: data[col][i] for col in columns},
+                        row_index,
+                        ts_col=ts_col,
+                    )
+                )
+                row_index += 1
         bars.sort(key=lambda b: b.event_time_ns)
         return bars
 
@@ -216,6 +260,12 @@ def load_parquet_bars(data_config: dict[str, Any]) -> tuple[list[BarEvent], list
         high_column=data_config.get("high_column", "high"),
         low_column=data_config.get("low_column", "low"),
         volume_column=data_config.get("volume_column", "volume"),
+        quote_volume_column=data_config.get("quote_volume_column", "quote_volume"),
+        trade_count_column=data_config.get("trade_count_column", "trade_count"),
+        taker_buy_volume_column=data_config.get("taker_buy_volume_column", "taker_buy_volume"),
+        taker_buy_quote_volume_column=data_config.get(
+            "taker_buy_quote_volume_column", "taker_buy_quote_volume"
+        ),
         start=data_config.get("start"),
         end=data_config.get("end"),
     )

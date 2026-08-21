@@ -78,6 +78,10 @@ def resample_standard_bars(
             volume=totals["volume"],
             instrument_id=instrument,
             event_time_ns=bucket_ns,
+            quote_volume=totals["quote_volume"],
+            trade_count=int(round(totals["trade_count"])),
+            taker_buy_volume=totals["taker_buy_volume"],
+            taker_buy_quote_volume=totals["taker_buy_quote_volume"],
         )
         bars.append(event)
         rows.append(

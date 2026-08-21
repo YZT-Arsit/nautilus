@@ -269,6 +269,10 @@ def aggregate_ticks_to_bars(
                 volume=b.total("volume"),
                 instrument_id=inst,
                 event_time_ns=bucket_start,
+                quote_volume=b.total("quote_volume"),
+                trade_count=b.n,
+                taker_buy_volume=b.total("taker_buy_volume"),
+                taker_buy_quote_volume=b.total("taker_buy_quote_volume"),
             )
         )
         td = trading_date or derive_trading_date(bucket_start)

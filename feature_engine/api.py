@@ -71,6 +71,9 @@ from feature_engine.builders import (
     volume_zscore_spec,
     vwap_distance_spec,
     zscore_spec,
+    crypto_utc_session_spec,
+    session_flatten_due_spec,
+    completed_timeframe_spec,
 )
 from feature_engine.compute import (
     FeatureSnapshot,
@@ -131,4 +134,7 @@ __all__ = [
     "large_trade_ratio_spec",
     "trade_intensity_spec",
     "trade_price_mean_spec",
+    "crypto_utc_session_spec",
+    "session_flatten_due_spec",
+    "completed_timeframe_spec",
 ]

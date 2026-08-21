@@ -22,6 +22,10 @@ from feature_engine.api import (
     plus_di_spec,
     psar_spec,
     supertrend_spec,
+    crypto_utc_session_spec,
+    session_flatten_due_spec,
+    completed_timeframe_spec,
+    return_n_spec,
 )
 from strategy_framework.plugin import StrategyPlugin
 
@@ -31,6 +35,61 @@ from strategies.workbook_parametric.strategy import WorkbookParametricStrategy
 
 def build_specs(config: WorkbookParametricConfig) -> list[FeatureSpec]:
     common = [rolling_mean_spec("workbook_close", input_field="close", window=1)]
+    if config.family.startswith("session_"):
+        session = common + [
+            crypto_utc_session_spec("workbook_session_vwap", output="session_vwap"),
+            crypto_utc_session_spec("workbook_session_start", output="session_start_ns"),
+            crypto_utc_session_spec(
+                "workbook_session_entry_allowed", output="session_entry_allowed",
+                execution_lag_minutes=config.execution_lag_minutes,
+            ),
+            session_flatten_due_spec(
+                "workbook_session_flatten", execution_lag_minutes=config.execution_lag_minutes,
+            ),
+        ]
+        if config.family == "session_vwap_ma_trend":
+            return session + [
+                completed_timeframe_spec(
+                    "workbook_completed_ma", timeframe_minutes=5, output="sma",
+                    window=config.window,
+                ),
+                atr_spec("workbook_atr", window=config.atr_window),
+            ]
+        if config.family == "session_vwap_roc_turn":
+            return session + [return_n_spec("workbook_roc", window=1)]
+        if config.family == "session_vwap_volume_mean":
+            return session + [
+                rolling_mean_spec("workbook_volume", input_field="volume", window=1),
+                rolling_mean_spec(
+                    "workbook_volume_mean", input_field="volume", window=config.volume_window,
+                ),
+            ]
+        if config.family == "session_vwap_fractal":
+            return session + [
+                completed_timeframe_spec(
+                    "workbook_upper_fractal_15m", timeframe_minutes=15,
+                    output="upper_fractal_pulse",
+                ),
+                completed_timeframe_spec(
+                    "workbook_lower_fractal_15m", timeframe_minutes=15,
+                    output="lower_fractal_pulse",
+                ),
+                atr_spec("workbook_atr", window=config.atr_window),
+            ]
+        if config.family == "session_vwap_mtf_fractal":
+            specs = list(session)
+            for minutes in (5, 15, 30):
+                specs.extend([
+                    completed_timeframe_spec(
+                        f"workbook_upper_fractal_{minutes}m", timeframe_minutes=minutes,
+                        output="upper_fractal_pulse",
+                    ),
+                    completed_timeframe_spec(
+                        f"workbook_lower_fractal_{minutes}m", timeframe_minutes=minutes,
+                        output="lower_fractal_pulse",
+                    ),
+                ])
+            return specs
     if config.family == "sma_crossover":
         return common + [
             rolling_mean_spec("workbook_fast", window=config.fast_window),

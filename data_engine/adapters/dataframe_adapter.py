@@ -179,6 +179,20 @@ def polars_to_bars(
                 volume=_opt("volume", 0.0),
                 instrument_id=str(row[id_col]),
                 event_time_ns=int(row[_EVENT_TIME_NS]),
+                quote_volume=(
+                    None if row.get("quote_volume") is None else float(row["quote_volume"])
+                ),
+                trade_count=(
+                    None if row.get("trade_count") is None else int(row["trade_count"])
+                ),
+                taker_buy_volume=(
+                    None if row.get("taker_buy_volume") is None
+                    else float(row["taker_buy_volume"])
+                ),
+                taker_buy_quote_volume=(
+                    None if row.get("taker_buy_quote_volume") is None
+                    else float(row["taker_buy_quote_volume"])
+                ),
             )
         )
     return out

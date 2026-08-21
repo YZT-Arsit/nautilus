@@ -10,6 +10,11 @@ class WorkbookParametricConfig:
     semantic_provenance: str = "SOURCE_EXACT"
     contracts_applied: str = ""
     defaulted_parameters: str = ""
+    session_contract: str = ""
+    session_contract_version: int = 0
+    session_semantic_provenance: str = ""
+    session_defaulted_parameters: str = ""
+    execution_lag_minutes: int = 0
     average_type: str = "sma"
     fast_window: int = 20
     middle_window: int = 10
@@ -30,6 +35,7 @@ class WorkbookParametricConfig:
     breakout_window: int = 20
     aroon_window: int = 25
     rsi_window: int = 14
+    volume_window: int = 15
     lower_threshold: float = 20.0
     upper_threshold: float = 80.0
     neutral_threshold: float = 50.0
@@ -98,6 +104,11 @@ class WorkbookParametricConfig:
             "fractal_adx_stable",
             "cci_touch_reduce",
             "donchian_pyramid",
+            "session_vwap_ma_trend",
+            "session_vwap_roc_turn",
+            "session_vwap_volume_mean",
+            "session_vwap_fractal",
+            "session_vwap_mtf_fractal",
         }:
             raise ValueError(f"unsupported exact workbook family: {self.family}")
         if min(self.fast_window, self.middle_window, self.slow_window, self.window, self.entry_window, self.trend_window, self.exit_window, self.filter_window, self.atr_window, self.adx_window, self.ao_fast_window, self.ao_slow_window, self.breakout_window, self.aroon_window, self.rsi_window, self.macd_fast_window, self.macd_slow_window, self.macd_signal_window) <= 0:
@@ -134,8 +145,13 @@ class WorkbookParametricConfig:
             raise ValueError("ADX thresholds must satisfy entry >= exit >= 0")
         if self.semantic_provenance not in {
             "SOURCE_EXACT", "STANDARD_CONTRACT_RESOLVED", "PARAMETER_DEFAULTED",
+            "SESSION_CONTRACT_RESOLVED",
         }:
             raise ValueError("unsupported semantic provenance")
+        if self.execution_lag_minutes < 0 or self.volume_window <= 0:
+            raise ValueError("execution lag must be non-negative and volume window positive")
+        if self.session_contract and self.session_contract != "CRYPTO_UTC_SESSION_V1":
+            raise ValueError("unsupported session contract")
         if not self.lower_threshold < self.neutral_threshold < self.upper_threshold:
             raise ValueError("indicator thresholds must satisfy lower < neutral < upper")
         if not self.exit_lower_threshold < self.exit_upper_threshold:

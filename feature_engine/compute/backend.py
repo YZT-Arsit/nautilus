@@ -98,6 +98,9 @@ from feature_engine.compute.feature_lib import (
     VolumeRatioFeature,
     VolumeZScoreFeature,
     VWAPDistanceFeature,
+    CryptoUtcSessionFeature,
+    SessionFlattenDueFeature,
+    CompletedTimeframeFeature,
     ZScoreFeature,
 )
 from feature_engine.compute.spec import FeatureSpec
@@ -178,6 +181,9 @@ _FEATURE_CLASSES: dict[str, type] = {
     "volume_ratio": VolumeRatioFeature,
     "quote_volume": QuoteVolumeFeature,
     "vwap_distance": VWAPDistanceFeature,
+    "crypto_utc_session": CryptoUtcSessionFeature,
+    "session_flatten_due": SessionFlattenDueFeature,
+    "completed_timeframe": CompletedTimeframeFeature,
     # Trade (tick) features — input_type="trade"
     "trade_count": TradeCountFeature,
     "trade_volume_sum": TradeVolumeSumFeature,

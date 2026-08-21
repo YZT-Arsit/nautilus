@@ -1,0 +1,21 @@
+strategy: xlsx_s2_0488
+params:
+  source_registry_id: xlsx_s2_0488
+  family: session_vwap_roc_turn
+  semantic_provenance: SESSION_CONTRACT_RESOLVED
+  contracts_applied: CRYPTO_UTC_SESSION_V1;SESSION_VWAP_UTC_V1;SESSION_FLATTEN_UTC_V1
+  defaulted_parameters: 
+  session_contract: CRYPTO_UTC_SESSION_V1
+  session_contract_version: 1
+  session_semantic_provenance: SESSION_CONTRACT_RESOLVED
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 2
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0488
