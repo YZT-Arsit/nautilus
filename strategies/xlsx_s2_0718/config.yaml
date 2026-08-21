@@ -1,0 +1,25 @@
+strategy: xlsx_s2_0718
+params:
+  source_registry_id: xlsx_s2_0718
+  family: ma_rsi_turn_filter
+  semantic_provenance: STANDARD_CONTRACT_RESOLVED
+  contracts_applied: TURN_SLOPE_SIGN_CHANGE_V1;STABILIZE_MINIMAL_TRANSITION_V1
+  defaulted_parameters: 
+  window: 60
+  rsi_window: 14
+  lower_threshold: 40.0
+  upper_threshold: 60.0
+  exit_lower_threshold: 30.0
+  exit_upper_threshold: 70.0
+  consecutive_bars: 1
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 60
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0718

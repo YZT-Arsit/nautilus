@@ -1,0 +1,24 @@
+strategy: xlsx_s2_0338
+params:
+  source_registry_id: xlsx_s2_0338
+  family: four_ma_stable_layered
+  semantic_provenance: PARAMETER_DEFAULTED
+  contracts_applied: STABLE_CLOSE_2BAR_V1;TURN_SLOPE_SIGN_CHANGE_V1;LAYERED_REDUCTION_EQUAL_V1
+  defaulted_parameters: persistence_bars=2;reduction_stages=2
+  fast_window: 5
+  middle_window: 10
+  slow_window: 30
+  filter_window: 90
+  consecutive_bars: 2
+  reduction_fraction: 0.5
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 90
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0338

@@ -1,0 +1,21 @@
+strategy: xlsx_s2_0708
+params:
+  source_registry_id: xlsx_s2_0708
+  family: sma_donchian_trend
+  semantic_provenance: SOURCE_EXACT
+  contracts_applied: 
+  defaulted_parameters: 
+  trend_window: 60
+  entry_window: 20
+  exit_window: 10
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 60
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0708

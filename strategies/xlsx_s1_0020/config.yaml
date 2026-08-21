@@ -1,0 +1,20 @@
+strategy: xlsx_s1_0020
+params:
+  source_registry_id: xlsx_s1_0020
+  family: psar_reversal
+  semantic_provenance: SOURCE_EXACT
+  contracts_applied: 
+  defaulted_parameters: 
+  psar_step: 0.02
+  psar_maximum: 0.2
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 2
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s1_0020

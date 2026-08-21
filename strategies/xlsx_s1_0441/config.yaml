@@ -1,0 +1,22 @@
+strategy: xlsx_s1_0441
+params:
+  source_registry_id: xlsx_s1_0441
+  family: adx_ma_di_confluence
+  semantic_provenance: STANDARD_CONTRACT_RESOLVED
+  contracts_applied: CONFLUENCE_AND_V1
+  defaulted_parameters: 
+  window: 60
+  adx_window: 14
+  adx_entry_threshold: 25.0
+  adx_exit_threshold: 20.0
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 60
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s1_0441

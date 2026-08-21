@@ -33,6 +33,104 @@ def rolling_mean_spec(
     )
 
 
+def hma_spec(
+    name: str, *, window: int, input_field: str = "close", input_type: str = "bar",
+) -> FeatureSpec:
+    """Hull moving average over ``window`` completed bars."""
+    return FeatureSpec(
+        name, input_type=input_type, input_field=input_field, window=window,
+        params={"type": "hma"},
+    )
+
+
+def cci_spec(name: str, *, window: int, input_type: str = "bar") -> FeatureSpec:
+    """Commodity Channel Index of HLC3 typical price."""
+    return FeatureSpec(name, input_type=input_type, window=window, params={"type": "cci"})
+
+
+def hlc_mean_spec(name: str, *, window: int, input_type: str = "bar") -> FeatureSpec:
+    """Simple moving average of HLC3 typical price."""
+    return FeatureSpec(name, input_type=input_type, window=window, params={"type": "hlc_mean"})
+
+
+def adx_spec(name: str, *, window: int = 14, input_type: str = "bar") -> FeatureSpec:
+    """Wilder Average Directional Index."""
+    return FeatureSpec(name, input_type=input_type, window=window, params={"type": "directional_movement", "output": "adx"})
+
+
+def plus_di_spec(name: str, *, window: int = 14, input_type: str = "bar") -> FeatureSpec:
+    """Wilder positive directional indicator."""
+    return FeatureSpec(name, input_type=input_type, window=window, params={"type": "directional_movement", "output": "plus_di"})
+
+
+def minus_di_spec(name: str, *, window: int = 14, input_type: str = "bar") -> FeatureSpec:
+    """Wilder negative directional indicator."""
+    return FeatureSpec(name, input_type=input_type, window=window, params={"type": "directional_movement", "output": "minus_di"})
+
+
+def ema_spec(
+    name: str, *, window: int, input_field: str = "close", input_type: str = "bar",
+) -> FeatureSpec:
+    """Standard EMA seeded by a ``window``-bar simple mean."""
+    return FeatureSpec(name, input_type=input_type, input_field=input_field,
+                       window=window, params={"type": "ema"})
+
+
+def rsi_spec(
+    name: str, *, window: int = 14, input_field: str = "close", input_type: str = "bar",
+) -> FeatureSpec:
+    """Wilder RSI over completed bars."""
+    return FeatureSpec(name, input_type=input_type, input_field=input_field,
+                       window=window, params={"type": "rsi"})
+
+
+def awesome_oscillator_spec(
+    name: str, *, fast_window: int = 5, slow_window: int = 34, input_type: str = "bar",
+) -> FeatureSpec:
+    """Awesome Oscillator: SMA(fast, HL2) - SMA(slow, HL2)."""
+    return FeatureSpec(name, input_type=input_type, window=slow_window,
+                       params={"type": "awesome_oscillator", "fast_window": fast_window,
+                               "slow_window": slow_window})
+
+
+def aroon_spec(
+    name: str, *, window: int = 25, output: str = "up", input_type: str = "bar",
+) -> FeatureSpec:
+    """Aroon ``up``, ``down`` or ``oscillator`` over completed bars."""
+    return FeatureSpec(name, input_type=input_type, window=window,
+                       params={"type": "aroon", "output": output})
+
+
+def macd_spec(
+    name: str, *, fast_window: int = 12, slow_window: int = 26,
+    signal_window: int = 9, output: str = "dif", input_type: str = "bar",
+) -> FeatureSpec:
+    """MACD DIF, signal/DEA or doubled histogram."""
+    return FeatureSpec(
+        name, input_type=input_type, input_field="close", window=slow_window,
+        params={"type": "macd", "fast_window": fast_window, "slow_window": slow_window,
+                "signal_window": signal_window, "output": output},
+    )
+
+
+def confirmed_fractal_spec(
+    name: str, *, output: str = "upper", input_type: str = "bar",
+) -> FeatureSpec:
+    """Latest confirmed five-bar fractal level or confirmation pulse."""
+    return FeatureSpec(name, input_type=input_type, window=5,
+                       params={"type": "confirmed_fractal", "output": output})
+
+
+def psar_spec(
+    name: str, *, step: float = 0.02, maximum: float = 0.2,
+    output: str = "sar", input_type: str = "bar",
+) -> FeatureSpec:
+    """Parabolic SAR value or direction."""
+    return FeatureSpec(name, input_type=input_type, window=2,
+                       params={"type": "psar", "step": step, "maximum": maximum,
+                               "output": output})
+
+
 # ===========================================================================
 # OHLCV feature-library builders (pure Python; PythonBackend)
 # ===========================================================================
@@ -76,6 +174,17 @@ def return_n_spec(
     return FeatureSpec(
         name, input_type=input_type, input_field=input_field,
         window=window, params={"type": "return_n"},
+    )
+
+
+def supertrend_spec(
+    name: str, *, window: int = 10, multiplier: float = 3.0,
+    output: str = "line", input_type: str = "bar",
+) -> FeatureSpec:
+    """Source-defined SMA/ATR SuperTrend line or signed direction."""
+    return FeatureSpec(
+        name, input_type=input_type, window=window,
+        params={"type": "supertrend", "multiplier": multiplier, "output": output},
     )
 
 

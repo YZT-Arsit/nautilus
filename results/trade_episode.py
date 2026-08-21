@@ -17,8 +17,11 @@ from typing import Any, Iterable
 
 EPISODE_COLUMNS = (
     "episode_id",
+    "strategy_id",
     "strategy",
+    "variant",
     "symbol",
+    "timeframe",
     "granularity",
     "lag",
     "premium_mode",
@@ -54,6 +57,7 @@ def build_de_risk_episodes(
     granularity: str,
     lag: str,
     premium_mode: str,
+    variant: str = "original",
     tolerance: float = 1e-12,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Segment an executed stream at reductions, closes, and reversals.
@@ -110,8 +114,11 @@ def build_de_risk_episodes(
         episodes.append(
             {
                 "episode_id": len(episodes) + 1,
+                "strategy_id": strategy,
                 "strategy": strategy,
+                "variant": variant,
                 "symbol": symbol,
+                "timeframe": granularity,
                 "granularity": granularity,
                 "lag": lag,
                 "premium_mode": premium_mode,

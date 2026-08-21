@@ -1,0 +1,25 @@
+strategy: xlsx_s2_0404
+params:
+  source_registry_id: xlsx_s2_0404
+  family: ma_cross_slope_atr_exit
+  semantic_provenance: PARAMETER_DEFAULTED
+  contracts_applied: TURN_SLOPE_SIGN_CHANGE_V1;REDUCE_HALF_CURRENT_V1;ATR14_DEFAULT_V1
+  defaulted_parameters: atr_window=14;reduction_fraction=0.5
+  average_type: ema
+  fast_window: 8
+  slow_window: 21
+  atr_window: 14
+  stop_multiple: 0.9
+  take_profit_multiple: 0.0
+  reduction_fraction: 0.5
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 21
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0404

@@ -1,0 +1,839 @@
+{
+  "xlsx_s1_0011": {
+    "family": "bollinger_width_cross",
+    "params": {
+      "fast_window": 5,
+      "slow_window": 50
+    },
+    "semantic_provenance": "SOURCE_EXACT",
+    "contracts_applied": [
+      "STANDARD_RULESET_ALREADY_RESOLVABLE_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s1_0437": {
+    "family": "ma_rsi_turn_filter",
+    "params": {
+      "window": 20,
+      "rsi_window": 14,
+      "lower_threshold": 30.0,
+      "upper_threshold": 70.0,
+      "exit_lower_threshold": 30.0,
+      "exit_upper_threshold": 70.0,
+      "consecutive_bars": 1
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "STABILIZE_MINIMAL_TRANSITION_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s1_0440": {
+    "family": "psar_atr_distance_exit",
+    "params": {
+      "atr_window": 14,
+      "entry_distance_multiple": 0.8,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 2.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "ATR14_DEFAULT_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_stages": 2
+    }
+  },
+  "xlsx_s1_0441": {
+    "family": "adx_ma_di_confluence",
+    "params": {
+      "window": 60,
+      "adx_window": 14,
+      "adx_entry_threshold": 25.0,
+      "adx_exit_threshold": 20.0
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s1_0453": {
+    "family": "adx_sma_take_profit",
+    "params": {
+      "fast_window": 20,
+      "slow_window": 60,
+      "adx_window": 14,
+      "atr_window": 14,
+      "adx_entry_threshold": 26.0,
+      "adx_exit_threshold": 22.0,
+      "take_profit_multiple": 3.0
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s1_0467": {
+    "family": "ema_adx_take_profit",
+    "params": {
+      "fast_window": 10,
+      "slow_window": 50,
+      "adx_window": 14,
+      "atr_window": 14,
+      "adx_entry_threshold": 23.0,
+      "adx_exit_threshold": 20.0,
+      "take_profit_multiple": 2.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0021": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "sma",
+      "fast_window": 10,
+      "slow_window": 60,
+      "atr_window": 14,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 3.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0065": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 10,
+      "slow_window": 30,
+      "atr_window": 14,
+      "stop_multiple": 0.0,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0126": {
+    "family": "ma_rsi_turn_filter",
+    "params": {
+      "window": 20,
+      "rsi_window": 14,
+      "lower_threshold": 30.0,
+      "upper_threshold": 70.0,
+      "exit_lower_threshold": 30.0,
+      "exit_upper_threshold": 70.0,
+      "consecutive_bars": 2
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "STABILIZE_MINIMAL_TRANSITION_V1",
+      "STABLE_CLOSE_2BAR_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2
+    }
+  },
+  "xlsx_s2_0129": {
+    "family": "psar_atr_distance_exit",
+    "params": {
+      "atr_window": 14,
+      "entry_distance_multiple": 0.8,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 2.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "ATR14_DEFAULT_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_stages": 2
+    }
+  },
+  "xlsx_s2_0130": {
+    "family": "adx_ma_di_confluence",
+    "params": {
+      "window": 60,
+      "adx_window": 14,
+      "adx_entry_threshold": 25.0,
+      "adx_exit_threshold": 20.0
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0142": {
+    "family": "adx_sma_take_profit",
+    "params": {
+      "fast_window": 20,
+      "slow_window": 60,
+      "adx_window": 14,
+      "atr_window": 14,
+      "adx_entry_threshold": 26.0,
+      "adx_exit_threshold": 22.0,
+      "take_profit_multiple": 3.0
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0156": {
+    "family": "ema_adx_take_profit",
+    "params": {
+      "fast_window": 10,
+      "slow_window": 50,
+      "adx_window": 14,
+      "atr_window": 14,
+      "adx_entry_threshold": 23.0,
+      "adx_exit_threshold": 20.0,
+      "take_profit_multiple": 2.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0251": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "sma",
+      "fast_window": 5,
+      "slow_window": 20,
+      "atr_window": 14,
+      "stop_multiple": 0.9,
+      "take_profit_multiple": 2.5,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0253": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 12,
+      "slow_window": 48,
+      "atr_window": 14,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0258": {
+    "family": "ma_rsi_turn_filter",
+    "params": {
+      "window": 60,
+      "rsi_window": 14,
+      "lower_threshold": 40.0,
+      "upper_threshold": 60.0,
+      "exit_lower_threshold": 30.0,
+      "exit_upper_threshold": 70.0,
+      "consecutive_bars": 1
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "STABILIZE_MINIMAL_TRANSITION_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0266": {
+    "family": "rsi_turn_candle",
+    "params": {
+      "rsi_window": 14,
+      "lower_threshold": 20.0,
+      "upper_threshold": 80.0,
+      "neutral_threshold": 50.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0337": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "sma",
+      "fast_window": 5,
+      "slow_window": 20,
+      "atr_window": 14,
+      "stop_multiple": 0.9,
+      "take_profit_multiple": 2.5,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0338": {
+    "family": "four_ma_stable_layered",
+    "params": {
+      "fast_window": 5,
+      "middle_window": 10,
+      "slow_window": 30,
+      "filter_window": 90,
+      "consecutive_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "reduction_stages": 2
+    }
+  },
+  "xlsx_s2_0339": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 12,
+      "slow_window": 48,
+      "atr_window": 14,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0344": {
+    "family": "ma_rsi_turn_filter",
+    "params": {
+      "window": 60,
+      "rsi_window": 14,
+      "lower_threshold": 40.0,
+      "upper_threshold": 60.0,
+      "exit_lower_threshold": 30.0,
+      "exit_upper_threshold": 70.0,
+      "consecutive_bars": 1
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "STABILIZE_MINIMAL_TRANSITION_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0352": {
+    "family": "rsi_turn_candle",
+    "params": {
+      "rsi_window": 14,
+      "lower_threshold": 20.0,
+      "upper_threshold": 80.0,
+      "neutral_threshold": 50.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0369": {
+    "family": "psar_ma_stable_reduce",
+    "params": {
+      "window": 20,
+      "atr_window": 14,
+      "multiplier": 1.0,
+      "consecutive_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "ATR14_DEFAULT_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0404": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 8,
+      "slow_window": 21,
+      "atr_window": 14,
+      "stop_multiple": 0.9,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0437": {
+    "family": "ma_rsi_turn_filter",
+    "params": {
+      "window": 20,
+      "rsi_window": 14,
+      "lower_threshold": 30.0,
+      "upper_threshold": 70.0,
+      "exit_lower_threshold": 30.0,
+      "exit_upper_threshold": 70.0,
+      "consecutive_bars": 2
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "STABILIZE_MINIMAL_TRANSITION_V1",
+      "STABLE_CLOSE_2BAR_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2
+    }
+  },
+  "xlsx_s2_0440": {
+    "family": "psar_atr_distance_exit",
+    "params": {
+      "atr_window": 14,
+      "entry_distance_multiple": 0.8,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 2.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "ATR14_DEFAULT_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_stages": 2
+    }
+  },
+  "xlsx_s2_0453": {
+    "family": "adx_sma_take_profit",
+    "params": {
+      "fast_window": 20,
+      "slow_window": 60,
+      "adx_window": 14,
+      "atr_window": 14,
+      "adx_entry_threshold": 26.0,
+      "adx_exit_threshold": 22.0,
+      "take_profit_multiple": 3.0
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0534": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "sma",
+      "fast_window": 5,
+      "slow_window": 20,
+      "atr_window": 14,
+      "stop_multiple": 0.9,
+      "take_profit_multiple": 2.5,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0535": {
+    "family": "four_ma_stable_layered",
+    "params": {
+      "fast_window": 5,
+      "middle_window": 10,
+      "slow_window": 30,
+      "filter_window": 90,
+      "consecutive_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "reduction_stages": 2
+    }
+  },
+  "xlsx_s2_0536": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 12,
+      "slow_window": 48,
+      "atr_window": 14,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0541": {
+    "family": "ma_rsi_turn_filter",
+    "params": {
+      "window": 60,
+      "rsi_window": 14,
+      "lower_threshold": 40.0,
+      "upper_threshold": 60.0,
+      "exit_lower_threshold": 30.0,
+      "exit_upper_threshold": 70.0,
+      "consecutive_bars": 1
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "STABILIZE_MINIMAL_TRANSITION_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0549": {
+    "family": "rsi_turn_candle",
+    "params": {
+      "rsi_window": 14,
+      "lower_threshold": 20.0,
+      "upper_threshold": 80.0,
+      "neutral_threshold": 50.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0566": {
+    "family": "psar_ma_stable_reduce",
+    "params": {
+      "window": 20,
+      "atr_window": 14,
+      "multiplier": 1.0,
+      "consecutive_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "ATR14_DEFAULT_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0601": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 8,
+      "slow_window": 21,
+      "atr_window": 14,
+      "stop_multiple": 0.9,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0647": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 15,
+      "slow_window": 50,
+      "atr_window": 14,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0712": {
+    "family": "four_ma_stable_layered",
+    "params": {
+      "fast_window": 5,
+      "middle_window": 10,
+      "slow_window": 30,
+      "filter_window": 90,
+      "consecutive_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "reduction_stages": 2
+    }
+  },
+  "xlsx_s2_0713": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 12,
+      "slow_window": 48,
+      "atr_window": 14,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0718": {
+    "family": "ma_rsi_turn_filter",
+    "params": {
+      "window": 60,
+      "rsi_window": 14,
+      "lower_threshold": 40.0,
+      "upper_threshold": 60.0,
+      "exit_lower_threshold": 30.0,
+      "exit_upper_threshold": 70.0,
+      "consecutive_bars": 1
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "STABILIZE_MINIMAL_TRANSITION_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0726": {
+    "family": "rsi_turn_candle",
+    "params": {
+      "rsi_window": 14,
+      "lower_threshold": 20.0,
+      "upper_threshold": 80.0,
+      "neutral_threshold": 50.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {}
+  },
+  "xlsx_s2_0743": {
+    "family": "psar_ma_stable_reduce",
+    "params": {
+      "window": 20,
+      "atr_window": 14,
+      "multiplier": 1.0,
+      "consecutive_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "ATR14_DEFAULT_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "atr_window": 14
+    }
+  },
+  "xlsx_s2_0778": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 8,
+      "slow_window": 21,
+      "atr_window": 14,
+      "stop_multiple": 0.9,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0824": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 15,
+      "slow_window": 50,
+      "atr_window": 14,
+      "stop_multiple": 1.0,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  },
+  "xlsx_s2_0884": {
+    "family": "ma_cross_slope_atr_exit",
+    "params": {
+      "average_type": "ema",
+      "fast_window": 25,
+      "slow_window": 60,
+      "atr_window": 14,
+      "stop_multiple": 1.2,
+      "take_profit_multiple": 0.0,
+      "reduction_fraction": 0.5
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1",
+      "ATR14_DEFAULT_V1"
+    ],
+    "defaulted_parameters": {
+      "atr_window": 14,
+      "reduction_fraction": 0.5
+    }
+  }
+}

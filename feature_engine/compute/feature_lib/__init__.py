@@ -10,6 +10,18 @@ indicator.  Features are registered for the PythonBackend in
 ``feature_engine/compute/backend.py``.
 """
 from feature_engine.compute.feature_lib.normalization import ZScoreFeature
+from feature_engine.compute.feature_lib.cci import CommodityChannelIndexFeature
+from feature_engine.compute.feature_lib.hlc_mean import HlcMeanFeature
+from feature_engine.compute.feature_lib.hma import HullMovingAverageFeature
+from feature_engine.compute.feature_lib.directional_movement import DirectionalMovementFeature
+from feature_engine.compute.feature_lib.exponential_moving_average import ExponentialMovingAverageFeature
+from feature_engine.compute.feature_lib.rsi import RelativeStrengthIndexFeature
+from feature_engine.compute.feature_lib.supertrend import SuperTrendFeature
+from feature_engine.compute.feature_lib.awesome_oscillator import AwesomeOscillatorFeature
+from feature_engine.compute.feature_lib.aroon import AroonFeature
+from feature_engine.compute.feature_lib.macd import MovingAverageConvergenceDivergenceFeature
+from feature_engine.compute.feature_lib.fractal import ConfirmedFractalFeature
+from feature_engine.compute.feature_lib.psar import ParabolicSarFeature
 from feature_engine.compute.feature_lib.price_action import (
     BreakoutDownFeature,
     BreakoutUpFeature,
@@ -71,6 +83,18 @@ __all__ = [
     "BollingerPercentBFeature",
     # normalization
     "ZScoreFeature",
+    "CommodityChannelIndexFeature",
+    "HlcMeanFeature",
+    "HullMovingAverageFeature",
+    "DirectionalMovementFeature",
+    "ExponentialMovingAverageFeature",
+    "RelativeStrengthIndexFeature",
+    "SuperTrendFeature",
+    "AwesomeOscillatorFeature",
+    "AroonFeature",
+    "MovingAverageConvergenceDivergenceFeature",
+    "ConfirmedFractalFeature",
+    "ParabolicSarFeature",
     # volume
     "VolumeZScoreFeature",
     "VolumeRatioFeature",

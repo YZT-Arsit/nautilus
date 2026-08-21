@@ -1,0 +1,20 @@
+strategy: xlsx_s1_0011
+params:
+  source_registry_id: xlsx_s1_0011
+  family: bollinger_width_cross
+  semantic_provenance: SOURCE_EXACT
+  contracts_applied: STANDARD_RULESET_ALREADY_RESOLVABLE_V1
+  defaulted_parameters: 
+  fast_window: 5
+  slow_window: 50
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 50
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s1_0011

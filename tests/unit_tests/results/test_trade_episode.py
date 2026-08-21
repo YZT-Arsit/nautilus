@@ -19,6 +19,9 @@ def test_episode_segmentation_splits_reversal_turnover() -> None:
     )
 
     assert [row["completion_reason"] for row in rows] == ["reversal", "close"]
+    assert all(row["strategy_id"] == "example" for row in rows)
+    assert all(row["variant"] == "original" for row in rows)
+    assert all(row["timeframe"] == "1m bar" for row in rows)
     # +1 -> -0.5 splits the 1.5 turnover as 1.0 close and 0.5 new entry.
     assert math.isclose(rows[0]["delta_turnover"], 2.1)
     assert math.isclose(rows[1]["delta_turnover"], 1.0)

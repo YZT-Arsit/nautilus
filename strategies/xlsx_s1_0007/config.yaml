@@ -1,0 +1,22 @@
+strategy: xlsx_s1_0007
+params:
+  source_registry_id: xlsx_s1_0007
+  family: donchian_stop
+  semantic_provenance: SOURCE_EXACT
+  contracts_applied: 
+  defaulted_parameters: 
+  entry_window: 20
+  exit_window: 10
+  atr_window: 20
+  stop_multiple: 2.0
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 20
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s1_0007

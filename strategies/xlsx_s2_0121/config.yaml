@@ -1,0 +1,23 @@
+strategy: xlsx_s2_0121
+params:
+  source_registry_id: xlsx_s2_0121
+  family: adx_di_recent_extreme
+  semantic_provenance: PARAMETER_DEFAULTED
+  contracts_applied: RECENT_EXTREME_PRIOR_20_V1
+  defaulted_parameters: recent_extreme_lookback=20
+  window: 20
+  exit_window: 20
+  adx_window: 14
+  adx_entry_threshold: 25.0
+  adx_exit_threshold: 20.0
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 20
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0121

@@ -1,0 +1,19 @@
+strategy: xlsx_s1_0034
+params:
+  source_registry_id: xlsx_s1_0034
+  family: aroon_oscillator
+  semantic_provenance: SOURCE_EXACT
+  contracts_applied: 
+  defaulted_parameters: 
+  aroon_window: 25
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 25
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s1_0034

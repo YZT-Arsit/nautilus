@@ -81,7 +81,7 @@ class StrategyStateAdapter:
         self,
         actions: Iterable[TradeAction],
         *,
-        decision_position: int,
+        decision_position: float,
     ) -> None:
         """Record requested add/reduce quantities without changing position."""
         for action in actions:

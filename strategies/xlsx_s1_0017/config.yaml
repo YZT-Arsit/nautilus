@@ -1,0 +1,21 @@
+strategy: xlsx_s1_0017
+params:
+  source_registry_id: xlsx_s1_0017
+  family: ao_breakout
+  semantic_provenance: SOURCE_EXACT
+  contracts_applied: 
+  defaulted_parameters: 
+  ao_fast_window: 5
+  ao_slow_window: 34
+  breakout_window: 20
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 34
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s1_0017

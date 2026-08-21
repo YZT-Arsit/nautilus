@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import math
 import re
@@ -33,7 +34,14 @@ from results.trade_episode import (
 
 
 CASES = ("1m_lag0", "1m_lag1", "10m_lag0", "10m_lag1")
-VARIANTS = ("normal", "strict_reverse")
+SOURCE_VARIANTS = ("normal", "long_only", "short_only", "strict_reverse")
+REPORT_VARIANTS = {
+    "normal": "original",
+    "long_only": "long_only",
+    "short_only": "short_only",
+    "strict_reverse": "strict_reverse",
+}
+VARIANTS = SOURCE_VARIANTS
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         help="Case directory to render, e.g. 1m_lag0 (repeatable; defaults to legacy four).",
     )
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Independent strategy render workers (default: 1).",
+    )
     return parser.parse_args()
 
 
@@ -102,8 +116,18 @@ def render_return_turnover(
     for axis, case in zip(axes.flat, CASES, strict=True):
         frame, summary = cases[case]
         daily = daily_cumulative(frame)
-        colors = {"normal": "#1f77b4", "strict_reverse": "#d62728"}
-        labels = {"normal": "Normal", "strict_reverse": "Strict reverse"}
+        colors = {
+            "normal": "#1f77b4",
+            "long_only": "#2ca02c",
+            "short_only": "#ff7f0e",
+            "strict_reverse": "#d62728",
+        }
+        labels = {
+            "normal": "Original",
+            "long_only": "Long only",
+            "short_only": "Short only",
+            "strict_reverse": "Strict reverse",
+        }
         for variant in VARIANTS:
             axis.plot(
                 daily["event_time"],
@@ -171,6 +195,12 @@ def render_fee_comparison(
         ("normal", "fee0"): "#1f77b4",
         ("normal", "vip9"): "#2ca02c",
         ("normal", "vip0"): "#17becf",
+        ("long_only", "fee0"): "#2ca02c",
+        ("long_only", "vip9"): "#98df8a",
+        ("long_only", "vip0"): "#17becf",
+        ("short_only", "fee0"): "#ff7f0e",
+        ("short_only", "vip9"): "#ffbb78",
+        ("short_only", "vip0"): "#bcbd22",
         ("strict_reverse", "fee0"): "#d62728",
         ("strict_reverse", "vip9"): "#ff7f0e",
         ("strict_reverse", "vip0"): "#9467bd",
@@ -179,7 +209,12 @@ def render_fee_comparison(
         frame, summary = cases[case]
         daily = daily_cumulative(frame)
         for variant in VARIANTS:
-            label_prefix = "Normal" if variant == "normal" else "Reverse"
+            label_prefix = {
+                "normal": "Original",
+                "long_only": "Long only",
+                "short_only": "Short only",
+                "strict_reverse": "Reverse",
+            }[variant]
             for fee_name, column in (
                 ("fee0", f"{variant}_total_return"),
                 ("vip9", f"{variant}_vip9_total_return"),
@@ -284,165 +319,353 @@ def build_canonical_case(
     strategy: str,
     symbol: str,
     case: str,
-) -> list[dict]:
+) -> tuple[list[dict], list[dict]]:
     frequency, lag_text = case.split("_", 1)
     lag_minutes = int(lag_text.removeprefix("lag"))
-    source = batch_root / strategy / case / "timeseries.parquet"
-    frame = pd.read_parquet(
-        source,
-        columns=[
-            "event_time_ns",
-            "normal_direction",
-            "normal_trading_return",
-            "normal_funding_return",
-            "normal_turnover",
-        ],
+    source_root = batch_root / strategy / case
+    source = source_root / "timeseries.parquet"
+    columns = ["event_time_ns"]
+    for variant in SOURCE_VARIANTS:
+        columns.extend(
+            [
+                f"{variant}_direction",
+                f"{variant}_trading_return",
+                f"{variant}_funding_return",
+                f"{variant}_turnover",
+            ]
+        )
+    frame = pd.read_parquet(source, columns=columns)
+    source_summaries = json.loads(
+        (source_root / "summary.json").read_text(encoding="utf-8")
     )
-    series, metrics = build_additive_strategy_evaluation_from_columns(
-        event_time_ns=frame["event_time_ns"].to_numpy(copy=False),
-        trading_return=frame["normal_trading_return"].to_numpy(copy=False),
-        funding_return=frame["normal_funding_return"].to_numpy(copy=False),
-        turnover=frame["normal_turnover"].to_numpy(copy=False),
-        executed_direction=frame["normal_direction"].to_numpy(copy=False),
+    direction_rows = json.loads(
+        (source_root / "direction_validation.json").read_text(encoding="utf-8")
     )
-    validation = validate_strategy_evaluation(series, metrics, tolerance=1e-9)
-    case_dir = output_dir / strategy / symbol / frequency / f"lag{lag_minutes}m"
-    figure_name = f"{symbol}_{frequency}_lag{lag_minutes}m_performance.png"
-    figure = render_additive_strategy_evaluation(
-        series,
-        metrics,
-        destination=case_dir / figure_name,
-        run_name=f"{strategy}/{symbol}/{frequency} bar",
-        lag_label=f"{lag_minutes} minute additional execution lag",
-    )
-    source_summary = json.loads(
-        (batch_root / strategy / case / "summary.json").read_text(encoding="utf-8")
-    )["normal"]
-    metadata = {
-        "strategy": strategy,
-        "symbol": symbol,
-        "granularity": f"{frequency} bar",
-        "lag": f"{lag_minutes}m additional execution lag",
-        "lag_minutes": lag_minutes,
-        "premium_definition": "funding_return",
-        "turnover_definition": "sum(abs(delta_quantity) * fill_price) / 100000",
-        "cost_equation": "net_return = return - turnover * cost_bps / 10000",
-        "leverage": 1.0,
-        "position_definition": "executed direction expressed as signed leverage percent",
-        "source_timeseries": str(source.resolve()),
-        "source_summary": str((batch_root / strategy / case / "summary.json").resolve()),
-        "source_row_count": int(len(frame)),
-        "start_time": source_summary["first_event_time_utc"],
-        "end_time": source_summary["last_event_time_utc"],
-        "cases": metrics,
-        "validation": validation,
-        "figure": str(Path(figure).resolve()),
-    }
-    case_dir.mkdir(parents=True, exist_ok=True)
-    episode_rows: list[dict] = []
-    episode_summaries: dict[str, dict] = {}
-    for premium, gross_return in (
-        (
-            "included",
-            frame["normal_trading_return"].to_numpy(copy=False)
-            + frame["normal_funding_return"].to_numpy(copy=False),
-        ),
-        ("excluded", frame["normal_trading_return"].to_numpy(copy=False)),
-    ):
-        premium_rows, premium_summary = build_de_risk_episodes(
-            event_time_ns=frame["event_time_ns"].to_numpy(copy=False),
-            executed_position=frame["normal_direction"].to_numpy(copy=False),
-            turnover_increment=frame["normal_turnover"].to_numpy(copy=False),
-            gross_return_increment=gross_return,
+    direction_by_variant = {row["variant"]: row for row in direction_rows}
+    output_rows: list[dict] = []
+
+    for source_variant in SOURCE_VARIANTS:
+        variant = REPORT_VARIANTS[source_variant]
+        direction_validation = direction_by_variant[variant]
+        if not direction_validation["direction_validation_passed"]:
+            raise AssertionError(f"direction validation failed: {strategy} {case} {variant}")
+        prefix = f"{source_variant}_"
+        times = frame["event_time_ns"].to_numpy(copy=False)
+        trading = frame[f"{prefix}trading_return"].to_numpy(copy=False)
+        funding = frame[f"{prefix}funding_return"].to_numpy(copy=False)
+        turnover = frame[f"{prefix}turnover"].to_numpy(copy=False)
+        executed_direction = frame[f"{prefix}direction"].to_numpy(copy=False)
+        series, metrics = build_additive_strategy_evaluation_from_columns(
+            event_time_ns=times,
+            trading_return=trading,
+            funding_return=funding,
+            turnover=turnover,
+            executed_direction=executed_direction,
+        )
+        validation = validate_strategy_evaluation(series, metrics, tolerance=1e-9)
+        case_dir = (
+            output_dir
+            / strategy
+            / symbol
+            / frequency
+            / f"lag{lag_minutes}m"
+            / variant
+        )
+        figure_name = (
+            f"{symbol}_{frequency}_lag{lag_minutes}m_{variant}_performance.png"
+        )
+        figure = render_additive_strategy_evaluation(
+            series,
+            metrics,
+            destination=case_dir / figure_name,
+            run_name=(
+                f"{strategy}/{variant}/{symbol}/{frequency} bar"
+                f" [{source_summaries[source_variant].get('semantic_provenance', 'SOURCE_EXACT')}]"
+            ),
+            lag_label=f"{lag_minutes} minute additional execution lag",
+        )
+        case_dir.mkdir(parents=True, exist_ok=True)
+        evaluation_path = case_dir / "strategy_evaluation.parquet"
+        temporary_evaluation = evaluation_path.with_suffix(".parquet.tmp")
+        pd.DataFrame(series).to_parquet(
+            temporary_evaluation, index=False, compression="zstd"
+        )
+        temporary_evaluation.replace(evaluation_path)
+
+        episode_rows: list[dict] = []
+        episode_summaries: dict[str, dict] = {}
+        for premium, gross_return in (
+            ("included", trading + funding),
+            ("excluded", trading),
+        ):
+            premium_rows, premium_summary = build_de_risk_episodes(
+                event_time_ns=times,
+                executed_position=executed_direction,
+                turnover_increment=turnover,
+                gross_return_increment=gross_return,
+                strategy=strategy,
+                symbol=symbol,
+                granularity=f"{frequency} bar",
+                lag=f"{lag_minutes}m physical-time",
+                premium_mode=premium,
+                variant=variant,
+            )
+            episode_rows.extend(premium_rows)
+            episode_summaries[premium] = premium_summary
+        episode_table = write_episode_csv(
+            case_dir / "per_trade_break_even.csv", episode_rows
+        )
+        episode_figure = render_episode_break_even(
+            episode_rows,
+            destination=(
+                case_dir
+                / f"{symbol}_{frequency}_lag{lag_minutes}m_{variant}_per_trade_be.png"
+            ),
+            title=(
+                f"{strategy}/{variant}/{symbol}/{frequency} bar — "
+                f"Per-Episode Break-even Cost (lag={lag_minutes}m physical-time)"
+            ),
+        )
+        _atomic_json(
+            case_dir / "per_trade_break_even_summary.json", episode_summaries
+        )
+        source_summary = source_summaries[source_variant]
+        metadata = {
+            "strategy": strategy,
+            "variant": variant,
+            "source_variant": source_variant,
+            "symbol": symbol,
+            "granularity": f"{frequency} bar",
+            "lag": f"{lag_minutes}m additional execution lag",
+            "lag_minutes": lag_minutes,
+            "premium_definition": "funding_return",
+            "turnover_definition": "sum(abs(delta_quantity) * fill_price) / 100000",
+            "cost_equation": "net_return = return - turnover * cost_bps / 10000",
+            "episode_reversal_decomposition": (
+                "aggregate position reversal turnover is split in proportion to "
+                "closing and opening absolute exposure; opening turnover is not "
+                "charged to the completed episode"
+            ),
+            "leverage": 1.0,
+            "position_definition": "executed direction expressed as signed leverage percent",
+            "semantic_provenance": source_summary.get("semantic_provenance", "SOURCE_EXACT"),
+            "contracts_applied": source_summary.get("contracts_applied", ""),
+            "defaulted_parameters": source_summary.get("defaulted_parameters", ""),
+            "source_timeseries": str(source.resolve()),
+            "source_summary": str((source_root / "summary.json").resolve()),
+            "source_direction_validation": str(
+                (source_root / "direction_validation.json").resolve()
+            ),
+            "source_row_count": int(len(frame)),
+            "start_time": source_summary["first_event_time_utc"],
+            "end_time": source_summary["last_event_time_utc"],
+            "cases": metrics,
+            "validation": validation,
+            "direction_validation": direction_validation,
+            "figure": str(Path(figure).resolve()),
+            "strategy_evaluation": str(evaluation_path.resolve()),
+            "per_trade_break_even_table": str(Path(episode_table).resolve()),
+            "per_trade_break_even_figure": str(Path(episode_figure).resolve()),
+            "per_trade_break_even_summary": episode_summaries,
+        }
+        if source_config_root is not None:
+            legacy_config = source_config_root / strategy / "fee_5bps" / "config.yaml"
+            canonical_config = source_config_root / strategy / "config.yaml"
+            config = legacy_config if legacy_config.is_file() else canonical_config
+            if config.is_file():
+                shutil.copy2(config, case_dir / "config.yaml")
+                metadata["source_config"] = str(config.resolve())
+        _atomic_json(case_dir / "metrics.json", metadata)
+
+        for premium in ("included", "excluded"):
+            values = metrics[premium]
+            episode_summary = episode_summaries[premium]
+            global_residual = (
+                abs(
+                    float(values["final_return_1x"])
+                    - float(values["turnover"])
+                    * float(values["break_even_bps"])
+                    / 10_000.0
+                )
+                if float(values["turnover"]) > 0.0
+                else abs(float(values["final_return_1x"]))
+            )
+            output_rows.append(
+                {
+                    "strategy": strategy,
+                    "semantic_provenance": source_summary.get("semantic_provenance", "SOURCE_EXACT"),
+                    "contracts_applied": source_summary.get("contracts_applied", ""),
+                    "defaulted_parameters": source_summary.get("defaulted_parameters", ""),
+                    "defaulted_parameter_count": (
+                        0 if not source_summary.get("defaulted_parameters")
+                        else len(str(source_summary["defaulted_parameters"]).split(";"))
+                    ),
+                    "symbol": symbol,
+                    "timeframe": frequency,
+                    "granularity": f"{frequency} bar",
+                    "lag": f"{lag_minutes}m additional execution lag",
+                    "lag_minutes": lag_minutes,
+                    "variant": variant,
+                    "premium": premium,
+                    "final_return_1x": values["final_return_1x"],
+                    "turnover": values["turnover"],
+                    "global_BE_bps": values["break_even_bps"],
+                    "break_even_bps": values["break_even_bps"],
+                    "max_drawdown": values["max_drawdown"],
+                    "trade_count": episode_summary["completed_episode_count"],
+                    "median_trade_BE_bps": episode_summary["break_even_bps_median"],
+                    "mean_trade_BE_bps": episode_summary["break_even_bps_mean"],
+                    "global_BE_validation_residual": global_residual,
+                    "per_trade_BE_validation_residual": episode_summary[
+                        "maximum_break_even_residual"
+                    ],
+                    "direction_validation_passed": direction_validation[
+                        "direction_validation_passed"
+                    ],
+                    "max_direction_residual": direction_validation[
+                        "max_direction_residual"
+                    ],
+                    "start_time": source_summary["first_event_time_utc"],
+                    "end_time": source_summary["last_event_time_utc"],
+                    "source_timeseries": str(source.resolve()),
+                    "figure": str(Path(figure).resolve()),
+                    "figure_relative": Path(figure).relative_to(output_dir).as_posix(),
+                    "per_trade_BE_figure": str(Path(episode_figure).resolve()),
+                    "per_trade_BE_figure_relative": Path(episode_figure).relative_to(
+                        output_dir
+                    ).as_posix(),
+                    "per_trade_BE_table": str(Path(episode_table).resolve()),
+                }
+            )
+    return output_rows, direction_rows
+
+
+def build_canonical_strategy(
+    *,
+    batch_root: Path,
+    output_dir: Path,
+    source_config_root: Path | None,
+    strategy: str,
+    symbol: str,
+    cases: tuple[str, ...],
+) -> tuple[str, list[dict], list[dict]]:
+    """Render one strategy independently so reporting can scale by strategy."""
+    rows: list[dict] = []
+    direction_rows: list[dict] = []
+    for case in cases:
+        case_rows, case_direction_rows = build_canonical_case(
+            batch_root=batch_root,
+            output_dir=output_dir,
+            source_config_root=source_config_root,
             strategy=strategy,
             symbol=symbol,
-            granularity=f"{frequency} bar",
-            lag=f"{lag_minutes}m physical-time",
-            premium_mode=premium,
+            case=case,
         )
-        episode_rows.extend(premium_rows)
-        episode_summaries[premium] = premium_summary
-    episode_table = write_episode_csv(case_dir / "per_trade_break_even.csv", episode_rows)
-    episode_figure = render_episode_break_even(
-        episode_rows,
-        destination=case_dir / f"{symbol}_{frequency}_lag{lag_minutes}m_per_trade_be.png",
-        title=(
-            f"{strategy}/{symbol}/{frequency} bar — Per-Episode Break-even Cost "
-            f"(lag={lag_minutes}m physical-time)"
-        ),
-    )
-    _atomic_json(case_dir / "per_trade_break_even_summary.json", episode_summaries)
-    metadata["per_trade_break_even_table"] = str(Path(episode_table).resolve())
-    metadata["per_trade_break_even_figure"] = str(Path(episode_figure).resolve())
-    metadata["per_trade_break_even_summary"] = episode_summaries
-    _atomic_json(case_dir / "metrics.json", metadata)
-    if source_config_root is not None:
-        config = source_config_root / strategy / "fee_5bps" / "config.yaml"
-        if config.is_file():
-            shutil.copy2(config, case_dir / "config.yaml")
-            metadata["source_config"] = str(config.resolve())
-            _atomic_json(case_dir / "metrics.json", metadata)
-    rows: list[dict] = []
-    for premium in ("included", "excluded"):
-        values = metrics[premium]
-        rows.append(
-            {
-                "strategy": strategy,
-                "symbol": symbol,
-                "granularity": f"{frequency} bar",
-                "lag": f"{lag_minutes}m additional execution lag",
-                "premium": premium,
-                "final_return_1x": values["final_return_1x"],
-                "turnover": values["turnover"],
-                "break_even_bps": values["break_even_bps"],
-                "max_drawdown": values["max_drawdown"],
-                "start_time": source_summary["first_event_time_utc"],
-                "end_time": source_summary["last_event_time_utc"],
-                "source_timeseries": str(source.resolve()),
-                "figure": str(Path(figure).resolve()),
-            }
-        )
-    return rows
+        rows.extend(case_rows)
+        direction_rows.extend(case_direction_rows)
+    return strategy, rows, direction_rows
 
 
 def build_canonical(args: argparse.Namespace, strategies: list[str], cases: tuple[str, ...]) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
-    for strategy in strategies:
-        for case in cases:
-            rows.extend(
-                build_canonical_case(
-                    batch_root=args.batch_root,
-                    output_dir=args.output_dir,
-                    source_config_root=args.source_config_root,
-                    strategy=strategy,
-                    symbol=args.symbol,
-                    case=case,
-                )
-            )
-        print(f"CANONICAL_COMPLETE {strategy}", flush=True)
+    direction_rows: list[dict] = []
+    worker_count = max(1, min(int(args.workers), len(strategies)))
+    work = {
+        "batch_root": args.batch_root,
+        "output_dir": args.output_dir,
+        "source_config_root": args.source_config_root,
+        "symbol": args.symbol,
+        "cases": cases,
+    }
+    if worker_count == 1:
+        results = (
+            build_canonical_strategy(strategy=strategy, **work)
+            for strategy in strategies
+        )
+        for strategy, strategy_rows, strategy_direction_rows in results:
+            rows.extend(strategy_rows)
+            direction_rows.extend(strategy_direction_rows)
+            print(f"CANONICAL_COMPLETE {strategy}", flush=True)
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=worker_count) as pool:
+            futures = {
+                pool.submit(build_canonical_strategy, strategy=strategy, **work): strategy
+                for strategy in strategies
+            }
+            for future in concurrent.futures.as_completed(futures):
+                strategy, strategy_rows, strategy_direction_rows = future.result()
+                rows.extend(strategy_rows)
+                direction_rows.extend(strategy_direction_rows)
+                print(f"CANONICAL_COMPLETE {strategy}", flush=True)
     summary = pd.DataFrame(rows).sort_values(
-        ["strategy", "granularity", "lag", "premium"]
+        ["strategy", "granularity", "lag", "variant", "premium"]
     )
     summary.to_csv(args.output_dir / "canonical_summary.csv", index=False)
+    html_summary = summary.copy()
+    html_summary["figure"] = html_summary["figure_relative"].map(
+        lambda value: f'<a href="{value}">performance</a>'
+    )
+    html_summary["per_trade_BE_figure"] = html_summary[
+        "per_trade_BE_figure_relative"
+    ].map(lambda value: f'<a href="{value}">per-trade BE</a>')
+    html_summary = html_summary.drop(
+        columns=["figure_relative", "per_trade_BE_figure_relative"]
+    )
     (args.output_dir / "canonical_summary.html").write_text(
-        summary.to_html(index=False, float_format=lambda value: f"{value:.8f}"),
+        html_summary.to_html(
+            index=False,
+            escape=False,
+            float_format=lambda value: f"{value:.8f}",
+        ),
         encoding="utf-8",
     )
+    direction_summary = pd.DataFrame(direction_rows).drop_duplicates(
+        ["strategy", "case", "variant"]
+    ).sort_values(["strategy", "case", "variant"])
+    direction_summary.to_csv(
+        args.output_dir / "direction_validation_summary.csv", index=False
+    )
+    maximum_global_residual = float(summary["global_BE_validation_residual"].max())
+    maximum_episode_residual = float(summary["per_trade_BE_validation_residual"].max())
+    validation_summary = {
+        "status": "passed",
+        "existing_registered_strategies": len(strategies),
+        "cases_per_strategy": len(cases),
+        "variants": list(REPORT_VARIANTS.values()),
+        "variant_strategy_counts": {
+            variant: int(
+                summary.loc[summary["variant"] == variant, "strategy"].nunique()
+            )
+            for variant in REPORT_VARIANTS.values()
+        },
+        "missing_strategy_variants": 0,
+        "direction_validation_failures": int(
+            (~direction_summary["direction_validation_passed"]).sum()
+        ),
+        "maximum_direction_residual": float(
+            direction_summary["max_direction_residual"].max()
+        ),
+        "global_break_even_maximum_residual": maximum_global_residual,
+        "per_trade_break_even_maximum_residual": maximum_episode_residual,
+    }
+    _atomic_json(args.output_dir / "validation_summary.json", validation_summary)
     _atomic_json(
         args.output_dir / "artifact_manifest.json",
         {
             "strategy_count": len(strategies),
             "case_count": len(cases),
+            "variant_count": len(REPORT_VARIANTS),
             "premium_case_count": 2,
             "summary_rows": len(summary),
-            "performance_figure_count": len(strategies) * len(cases),
-            "per_trade_figure_count": len(strategies) * len(cases),
-            "figure_count": len(strategies) * len(cases) * 2,
-            "primary_variant": "normal",
-            "reverse_variant_regenerated": False,
-            "reverse_reason": "strict_reverse is an exact sign inversion of executed direction",
+            "performance_figure_count": len(strategies) * len(cases) * len(REPORT_VARIANTS),
+            "per_trade_figure_count": len(strategies) * len(cases) * len(REPORT_VARIANTS),
+            "figure_count": len(strategies) * len(cases) * len(REPORT_VARIANTS) * 2,
+            "variants": list(REPORT_VARIANTS.values()),
+            "primary_variant": "original",
+            "strict_reverse_regenerated": True,
             "batch_root": str(args.batch_root.resolve()),
+            "validation": validation_summary,
         },
     )
 
@@ -451,8 +674,8 @@ def main() -> int:
     args = parse_args()
     cases = tuple(dict.fromkeys(args.cases or CASES))
     for case in cases:
-        if not re.fullmatch(r"\d+m_lag\d+", case):
-            raise ValueError(f"invalid case {case!r}; expected e.g. 5m_lag1")
+        if not re.fullmatch(r"\d+[smhd]_lag\d+", case):
+            raise ValueError(f"invalid case {case!r}; expected e.g. 5m_lag1 or 1d_lag1440")
     strategies = discover(args.batch_root, cases)
     if not strategies:
         raise ValueError("no complete strategies found")
@@ -467,7 +690,8 @@ def main() -> int:
         build_canonical(args, strategies, cases)
         print(
             f"COMPLETE canonical strategies={len(strategies)} "
-            f"figures={len(strategies) * len(cases) * 2} output={args.output_dir}"
+            f"figures={len(strategies) * len(cases) * len(REPORT_VARIANTS) * 2} "
+            f"output={args.output_dir}"
         )
         return 0
     if args.output_dir.exists():

@@ -1,0 +1,23 @@
+strategy: xlsx_s2_0726
+params:
+  source_registry_id: xlsx_s2_0726
+  family: rsi_turn_candle
+  semantic_provenance: STANDARD_CONTRACT_RESOLVED
+  contracts_applied: TURN_SLOPE_SIGN_CHANGE_V1
+  defaulted_parameters: 
+  rsi_window: 14
+  lower_threshold: 20.0
+  upper_threshold: 80.0
+  neutral_threshold: 50.0
+  reduction_fraction: 0.5
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 14
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0726

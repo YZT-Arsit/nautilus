@@ -1,0 +1,22 @@
+strategy: xlsx_s2_0022
+params:
+  source_registry_id: xlsx_s2_0022
+  family: triple_sma_ordered
+  semantic_provenance: PARAMETER_DEFAULTED
+  contracts_applied: CONFLUENCE_AND_V1;TURN_SLOPE_SIGN_CHANGE_V1;REDUCE_HALF_CURRENT_V1
+  defaulted_parameters: reduction_fraction=0.5
+  fast_window: 5
+  middle_window: 20
+  slow_window: 60
+  reduction_fraction: 0.5
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 60
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0022

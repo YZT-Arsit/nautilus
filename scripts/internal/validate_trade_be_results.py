@@ -15,7 +15,7 @@ def main() -> int:
     parser.add_argument("--update-manifest", action="store_true")
     args = parser.parse_args()
     root = args.root
-    case_dirs = sorted(root.glob("*/BTCUSDT/1m/lag*m"))
+    case_dirs = sorted(root.glob("*/BTCUSDT/*/lag*m/*"))
     problems: list[str] = []
     maximum_residual = 0.0
     episode_rows = 0
@@ -36,8 +36,17 @@ def main() -> int:
             *(abs(float(summary[mode]["maximum_break_even_residual"])) for mode in ("included", "excluded")),
         )
         with (case / "per_trade_break_even.csv").open(newline="", encoding="utf-8") as stream:
+            seen: set[tuple[str, str]] = set()
             for row in csv.DictReader(stream):
                 episode_rows += 1
+                key = (row["premium_mode"], row["episode_id"])
+                if key in seen:
+                    problems.append(f"duplicate episode: {case} {key}")
+                seen.add(key)
+                if row["variant"] != case.name:
+                    problems.append(
+                        f"variant mismatch: {case} row={row['variant']}"
+                    )
                 turnover = float(row["delta_turnover"])
                 gross_return = float(row["delta_gross_return"])
                 bps = float(row["break_even_bps"])

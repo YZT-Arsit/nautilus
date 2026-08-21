@@ -5,10 +5,13 @@ import numpy as np
 from data_engine.events import BarEvent
 from scripts.internal.run_all_strategy_timeframe_lag import (
     MINUTE_NS,
+    build_direction_variants,
     build_strategy_clock,
     execute_planned,
+    execute_target,
     execution_bar,
     parse_cases,
+    validate_direction_variants,
 )
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
 from strategy_framework.execution.duration_lag import DurationLagTargetAdapter
@@ -40,6 +43,18 @@ def test_execute_planned_returns_each_fill_once_without_mutating_external_ledger
     assert len(cumulative_fills) == 2
     assert simulator.report().total_fills == 2
     assert simulator.report().positions[0].quantity == 3.0
+
+
+def test_execute_target_preserves_fractional_exposure() -> None:
+    event = BarEvent(
+        close=100.0, open=100.0, high=101.0, low=99.0, volume=10.0,
+        instrument_id="BTCUSDT-PERP.BINANCE", event_time_ns=1,
+    )
+    simulator = IntentFillSimulator(default_price_field="open", allow_short=True)
+    fills = []
+    quantity, new_fills = execute_target(0.5, 0.0, event, simulator, fills)
+    assert quantity == 0.5
+    assert len(new_fills) == len(fills) == 1
 
 
 def test_bar_frequency_and_physical_lag_are_independent() -> None:
@@ -96,3 +111,17 @@ def test_tick_five_second_lag_uses_first_real_event_after_threshold() -> None:
     assert attempts[0].target.due_time_ns == 5_127_000_000
     assert attempts[0].fill_time_ns == 5_381_000_000
     assert attempts[0].observed_lag_ns == 5_254_000_000
+
+
+def test_required_direction_variants_are_exact_filters_and_sign_inverse() -> None:
+    original = np.array([0, 1, 1, 0, -1, -1, 1, 0], dtype=np.int8)
+
+    variants = build_direction_variants(original)
+    validation = validate_direction_variants(original, variants)
+
+    np.testing.assert_array_equal(variants["normal"], original)
+    np.testing.assert_array_equal(variants["long_only"], [0, 1, 1, 0, 0, 0, 1, 0])
+    np.testing.assert_array_equal(variants["short_only"], [0, 0, 0, 0, -1, -1, 0, 0])
+    np.testing.assert_array_equal(variants["strict_reverse"], -original)
+    assert all(row["direction_validation_passed"] for row in validation)
+    assert max(row["max_direction_residual"] for row in validation) == 0.0

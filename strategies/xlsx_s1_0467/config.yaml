@@ -1,0 +1,25 @@
+strategy: xlsx_s1_0467
+params:
+  source_registry_id: xlsx_s1_0467
+  family: ema_adx_take_profit
+  semantic_provenance: PARAMETER_DEFAULTED
+  contracts_applied: CONFLUENCE_AND_V1;ATR14_DEFAULT_V1
+  defaulted_parameters: atr_window=14
+  fast_window: 10
+  slow_window: 50
+  adx_window: 14
+  atr_window: 14
+  adx_entry_threshold: 23.0
+  adx_exit_threshold: 20.0
+  take_profit_multiple: 2.5
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 50
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s1_0467

@@ -1,0 +1,25 @@
+strategy: xlsx_s2_0632
+params:
+  source_registry_id: xlsx_s2_0632
+  family: adx_donchian_stop
+  semantic_provenance: PARAMETER_DEFAULTED
+  contracts_applied: ATR14_DEFAULT_V1
+  defaulted_parameters: atr_window=14
+  entry_window: 20
+  exit_window: 10
+  adx_window: 14
+  adx_entry_threshold: 22.0
+  adx_exit_threshold: 20.0
+  atr_window: 14
+  stop_multiple: 1.9
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 20
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0632

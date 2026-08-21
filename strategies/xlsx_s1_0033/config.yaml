@@ -1,0 +1,21 @@
+strategy: xlsx_s1_0033
+params:
+  source_registry_id: xlsx_s1_0033
+  family: bollinger
+  semantic_provenance: SOURCE_EXACT
+  contracts_applied: 
+  defaulted_parameters: 
+  window: 30
+  multiplier: 1.5
+  consecutive_bars: 2
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 30
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s1_0033

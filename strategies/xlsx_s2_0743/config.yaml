@@ -1,0 +1,23 @@
+strategy: xlsx_s2_0743
+params:
+  source_registry_id: xlsx_s2_0743
+  family: psar_ma_stable_reduce
+  semantic_provenance: PARAMETER_DEFAULTED
+  contracts_applied: STABLE_CLOSE_2BAR_V1;ATR14_DEFAULT_V1;CONFLUENCE_AND_V1
+  defaulted_parameters: persistence_bars=2;atr_window=14
+  window: 20
+  atr_window: 14
+  multiplier: 1.0
+  consecutive_bars: 2
+  reduction_fraction: 0.5
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 20
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0743

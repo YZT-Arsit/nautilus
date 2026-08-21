@@ -1,0 +1,654 @@
+[
+  {
+    "module_id": "xlsx_s1_0150",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.7,
+      1.4,
+      2.1,
+      2.8,
+      3.5,
+      4.2,
+      4.9
+    ],
+    "reduction_fractions": [
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.08
+    ],
+    "final_profit_atr": 5.6,
+    "stop_loss_atr": 0.8,
+    "source_name": "ATR 八梯度全局通用出场风控模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0179",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.7,
+      1.4,
+      2.1,
+      2.8,
+      3.5,
+      4.2,
+      4.9
+    ],
+    "reduction_fractions": [
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.08
+    ],
+    "final_profit_atr": 5.6,
+    "stop_loss_atr": 0.8,
+    "source_name": "九重 ATR 八梯度全局通用出场风控模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0186",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      3.5,
+      4.0,
+      4.5
+    ],
+    "reduction_fractions": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ],
+    "final_profit_atr": 5.0,
+    "stop_loss_atr": 0.6,
+    "source_name": "十档 ATR 全维度出场风控模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0244",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.6,
+      1.2,
+      1.8,
+      2.4,
+      3.0,
+      3.6,
+      4.2,
+      4.8
+    ],
+    "reduction_fractions": [
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.08,
+      0.08
+    ],
+    "final_profit_atr": 5.4,
+    "stop_loss_atr": 0.7,
+    "source_name": "九重梯度 ATR 全局通用出场风控模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0314",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.6,
+      1.2,
+      1.8,
+      2.4,
+      3.0,
+      3.6,
+      4.2,
+      4.8
+    ],
+    "reduction_fractions": [
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.08,
+      0.08
+    ],
+    "final_profit_atr": 5.4,
+    "stop_loss_atr": 0.7,
+    "source_name": "九重梯度 ATR 全局通用进阶出场风控模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0384",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.6,
+      1.2,
+      1.8,
+      2.4,
+      3.0,
+      3.6,
+      4.2,
+      4.8
+    ],
+    "reduction_fractions": [
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.08,
+      0.08
+    ],
+    "final_profit_atr": 5.4,
+    "stop_loss_atr": 0.7,
+    "source_name": "九重梯度 ATR 全局通用全域进阶出场风控模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0532",
+    "module_type": "adx_exposure",
+    "full_threshold": 25.0,
+    "medium_threshold": 20.0,
+    "medium_exposure": 0.5,
+    "low_exposure": 0.3,
+    "source_name": "震荡市仓位收缩模块（ADX<20 仓位减半）",
+    "compatibility": "requires canonical ADX feature"
+  },
+  {
+    "module_id": "xlsx_s1_0545",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.7,
+      1.4,
+      2.1,
+      2.8,
+      3.5,
+      4.2
+    ],
+    "reduction_fractions": [
+      0.15,
+      0.15,
+      0.15,
+      0.15,
+      0.15,
+      0.1
+    ],
+    "final_profit_atr": 4.9,
+    "stop_loss_atr": 0.8,
+    "source_name": "七档梯度ATR一体化出场通用系统",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0613",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.6,
+      1.2,
+      1.8,
+      2.4,
+      3.0,
+      3.6,
+      4.2
+    ],
+    "reduction_fractions": [
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.1
+    ],
+    "final_profit_atr": 4.8,
+    "stop_loss_atr": 0.7,
+    "source_name": "八档ATR全梯度出场通用系统",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0670",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.7,
+      1.4,
+      2.1,
+      2.8,
+      3.5,
+      4.2,
+      4.9
+    ],
+    "reduction_fractions": [
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.08
+    ],
+    "final_profit_atr": 5.6,
+    "stop_loss_atr": 0.8,
+    "source_name": "ATR八梯度移动止盈出场系统（通用配套）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0674",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.6,
+      1.2,
+      1.8,
+      2.4,
+      3.0,
+      3.6,
+      4.2,
+      4.8
+    ],
+    "reduction_fractions": [
+      0.11,
+      0.11,
+      0.11,
+      0.11,
+      0.11,
+      0.11,
+      0.11,
+      0.11
+    ],
+    "final_profit_atr": 5.4,
+    "stop_loss_atr": 0.7,
+    "source_name": "九档ATR全梯度加仓出场风控体系",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0755",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      3.5,
+      4.0,
+      4.5
+    ],
+    "reduction_fractions": [
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1,
+      0.1
+    ],
+    "final_profit_atr": 5.0,
+    "stop_loss_atr": 0.6,
+    "source_name": "十档ATR全维度出场风控",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s1_0814",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.7,
+      1.4,
+      2.1,
+      2.8,
+      3.5,
+      4.2,
+      4.9
+    ],
+    "reduction_fractions": [
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.12,
+      0.08
+    ],
+    "final_profit_atr": 5.6,
+    "stop_loss_atr": 0.8,
+    "source_name": "九重ATR八梯度移动止盈出场系统（全局通用配套）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0005",
+    "module_type": "atr_hard_stop",
+    "stop_loss_atr": 2.0,
+    "source_name": "原版海龟 2ATR 固定止损模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0006",
+    "module_type": "donchian_exit",
+    "window": 10,
+    "source_name": "海龟 10 周期唐奇安出场系统",
+    "compatibility": "requires canonical completed 10-bar upper/lower channel features"
+  },
+  {
+    "module_id": "xlsx_s2_0023",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      1.0,
+      2.0
+    ],
+    "reduction_fractions": [
+      0.3,
+      0.4
+    ],
+    "final_profit_atr": 3.0,
+    "stop_loss_atr": 0.7,
+    "source_name": "单周期 ATR 动态止盈模块（1/2/3ATR 三档）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0045",
+    "module_type": "adx_exposure",
+    "full_threshold": 25.0,
+    "medium_threshold": 20.0,
+    "medium_exposure": 0.5,
+    "low_exposure": 0.3,
+    "source_name": "震荡市仓位收缩风控模块（ADX<20 减半仓）",
+    "compatibility": "requires canonical ADX feature"
+  },
+  {
+    "module_id": "xlsx_s2_0061",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.8,
+      1.6,
+      2.4
+    ],
+    "reduction_fractions": [
+      0.2,
+      0.3,
+      0.3
+    ],
+    "final_profit_atr": 3.2,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 四档阶梯止盈模块（0.8/1.6/2.4/3.2ATR）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0221",
+    "module_type": "adx_exposure",
+    "full_threshold": 25.0,
+    "medium_threshold": 20.0,
+    "medium_exposure": 0.5,
+    "low_exposure": 0.3,
+    "source_name": "震荡市仓位收缩模块（ADX<20 仓位减半）",
+    "compatibility": "requires canonical ADX feature"
+  },
+  {
+    "module_id": "xlsx_s2_0276",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.9,
+      1.8
+    ],
+    "reduction_fractions": [
+      0.3,
+      0.4
+    ],
+    "final_profit_atr": 2.7,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 多档阶梯保本止盈完整模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0362",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.9,
+      1.8
+    ],
+    "reduction_fractions": [
+      0.3,
+      0.4
+    ],
+    "final_profit_atr": 2.7,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 三档阶梯保本止盈完整模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0410",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.7,
+      1.4,
+      2.1
+    ],
+    "reduction_fractions": [
+      0.2,
+      0.3,
+      0.3
+    ],
+    "final_profit_atr": 2.8,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 四档阶梯止盈出场模块（0.7/1.4/2.1/2.8ATR）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0420",
+    "module_type": "adx_exposure",
+    "full_threshold": 25.0,
+    "medium_threshold": 20.0,
+    "medium_exposure": 0.5,
+    "low_exposure": 0.3,
+    "source_name": "震荡市 ADX 仓位收缩模块（ADX20~25 半仓，＜20 三成仓）",
+    "compatibility": "requires canonical ADX feature"
+  },
+  {
+    "module_id": "xlsx_s2_0559",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.9,
+      1.8
+    ],
+    "reduction_fractions": [
+      0.3,
+      0.4
+    ],
+    "final_profit_atr": 2.7,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 三档阶梯保本止盈完整模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0607",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.7,
+      1.4,
+      2.1
+    ],
+    "reduction_fractions": [
+      0.2,
+      0.3,
+      0.3
+    ],
+    "final_profit_atr": 2.8,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 四档阶梯止盈出场模块（0.7/1.4/2.1/2.8ATR）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0617",
+    "module_type": "adx_exposure",
+    "full_threshold": 25.0,
+    "medium_threshold": 20.0,
+    "medium_exposure": 0.5,
+    "low_exposure": 0.3,
+    "source_name": "震荡市 ADX 仓位收缩模块（ADX20~25 半仓，＜20 三成仓）",
+    "compatibility": "requires canonical ADX feature"
+  },
+  {
+    "module_id": "xlsx_s2_0654",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      1.0,
+      2.0
+    ],
+    "reduction_fractions": [
+      0.3,
+      0.4
+    ],
+    "final_profit_atr": 3.0,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 三层保本阶梯止盈（1/2/3ATR 三档保本）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0677",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.8
+    ],
+    "reduction_fractions": [
+      0.3
+    ],
+    "final_profit_atr": 2.4,
+    "stop_loss_atr": 0.5,
+    "source_name": "ATR 保本止盈双层保护模块（0.8ATR 保本、2.4ATR 全止盈）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0694",
+    "module_type": "adx_exposure",
+    "full_threshold": 30.0,
+    "medium_threshold": 20.0,
+    "medium_exposure": 0.5,
+    "low_exposure": 0.0,
+    "source_name": "ADX 分层减仓规则模块（ADX 回落一档减对应仓位）",
+    "compatibility": "requires canonical ADX feature"
+  },
+  {
+    "module_id": "xlsx_s2_0736",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.9,
+      1.8
+    ],
+    "reduction_fractions": [
+      0.3,
+      0.4
+    ],
+    "final_profit_atr": 2.7,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 三档阶梯保本止盈完整模块",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0784",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.7,
+      1.4,
+      2.1
+    ],
+    "reduction_fractions": [
+      0.2,
+      0.3,
+      0.3
+    ],
+    "final_profit_atr": 2.8,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 四档阶梯止盈出场模块（0.7/1.4/2.1/2.8ATR）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0794",
+    "module_type": "adx_exposure",
+    "full_threshold": 25.0,
+    "medium_threshold": 20.0,
+    "medium_exposure": 0.5,
+    "low_exposure": 0.3,
+    "source_name": "震荡市 ADX 仓位收缩模块（ADX20~25 半仓，＜20 三成仓）",
+    "compatibility": "requires canonical ADX feature"
+  },
+  {
+    "module_id": "xlsx_s2_0831",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      1.0,
+      2.0
+    ],
+    "reduction_fractions": [
+      0.3,
+      0.4
+    ],
+    "final_profit_atr": 3.0,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 三层保本阶梯止盈（1/2/3ATR 三档分级保本）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0854",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.8
+    ],
+    "reduction_fractions": [
+      0.3
+    ],
+    "final_profit_atr": 2.4,
+    "stop_loss_atr": 0.5,
+    "source_name": "ATR 保本止盈双层保护模块（0.8ATR 保本、2.4ATR 全止盈）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  },
+  {
+    "module_id": "xlsx_s2_0871",
+    "module_type": "adx_exposure",
+    "full_threshold": 30.0,
+    "medium_threshold": 20.0,
+    "medium_exposure": 0.5,
+    "low_exposure": 0.0,
+    "source_name": "ADX 分层自动减仓规则模块（ADX 回落一档自动减仓）",
+    "compatibility": "requires canonical ADX feature"
+  },
+  {
+    "module_id": "xlsx_s2_0888",
+    "module_type": "atr_ladder_exit",
+    "profit_levels_atr": [
+      0.6,
+      1.2,
+      1.8,
+      2.4
+    ],
+    "reduction_fractions": [
+      0.15,
+      0.25,
+      0.25,
+      0.25
+    ],
+    "final_profit_atr": 3.0,
+    "stop_loss_atr": 0.6,
+    "source_name": "ATR 五档阶梯止盈出场模块（0.6/1.2/1.8/2.4/3.0ATR）",
+    "compatibility": "requires fill entry price, current price, and canonical ATR"
+  }
+]

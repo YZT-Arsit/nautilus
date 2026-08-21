@@ -28,6 +28,7 @@ import yaml
 from data_engine.events import BarEvent
 from data_engine.loader import load_events
 from data_engine.transforms import resample_bars
+from data_engine.transforms.bars import parse_frequency
 from feature_engine.runner import FeatureStrategyRunner
 from scripts.internal.run_constant_notional_overlay import calculate_overlay
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
@@ -50,6 +51,12 @@ RESULT_COLUMNS = (
     "turnover",
     "vip9_total_return",
     "vip0_total_return",
+)
+VARIANT_TRANSFORMS = (
+    "normal",
+    "long_only",
+    "short_only",
+    "strict_reverse",
 )
 
 
@@ -78,6 +85,10 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--continue-on-error", action="store_true",
+        help="record a strategy failure and continue the resumable batch",
+    )
     return parser.parse_args()
 
 
@@ -89,11 +100,14 @@ def parse_cases(values: list[str] | None) -> tuple[tuple[str, int], ...]:
         frequency_text, separator, lag_text = value.partition(":")
         if not separator:
             raise ValueError(f"invalid --case {value!r}; expected N:M")
-        bar_minutes = int(frequency_text.removesuffix("m"))
+        frequency = frequency_text.strip().lower()
+        if frequency.isdigit():
+            frequency = f"{frequency}m"
+        interval_ns = parse_frequency(frequency)
         lag_minutes = int(lag_text.removesuffix("m"))
-        if bar_minutes <= 0 or lag_minutes < 0:
-            raise ValueError("bar minutes must be positive and lag minutes non-negative")
-        case = (f"{bar_minutes}m", lag_minutes)
+        if interval_ns <= 0 or lag_minutes < 0:
+            raise ValueError("bar frequency must be positive and lag minutes non-negative")
+        case = (frequency, lag_minutes)
         if case not in parsed:
             parsed.append(case)
     return tuple(parsed)
@@ -112,9 +126,25 @@ def discover_strategies(source_root: Path) -> list[str]:
         path.name
         for path in source_root.iterdir()
         if path.is_dir()
-        and (path / "fee_5bps" / "config.yaml").is_file()
-        and (path / "fee_5bps" / "equity_curve.parquet").is_file()
+        and (
+            (
+                (path / "fee_5bps" / "config.yaml").is_file()
+                and (path / "fee_5bps" / "equity_curve.parquet").is_file()
+            )
+            or (path / "config.yaml").is_file()
+        )
     )
+
+
+def source_config_path(source_root: Path, strategy_name: str) -> Path:
+    """Resolve either a retained Phase-1 run config or a normal strategy config."""
+    legacy = source_root / strategy_name / "fee_5bps" / "config.yaml"
+    canonical = source_root / strategy_name / "config.yaml"
+    if legacy.is_file():
+        return legacy
+    if canonical.is_file():
+        return canonical
+    raise FileNotFoundError(f"no source config for {strategy_name!r} below {source_root}")
 
 
 def market_config(root: Path, start: str, end: str) -> dict[str, Any]:
@@ -181,10 +211,10 @@ def load_market_and_funding(
 
 def build_strategy_clock(bars_1m: list[BarEvent], frequency: str) -> list[BarEvent]:
     """Build completed N-minute observations independently of execution lag."""
-    minutes = int(frequency.removesuffix("m"))
-    source = bars_1m if minutes == 1 else resample_bars(bars_1m, frequency)
+    interval_ns = parse_frequency(frequency)
+    source = bars_1m if interval_ns == MINUTE_NS else resample_bars(bars_1m, frequency)
     return [
-        replace(bar, event_time_ns=bar.event_time_ns + minutes * MINUTE_NS)
+        replace(bar, event_time_ns=bar.event_time_ns + interval_ns)
         for bar in source
     ]
 
@@ -198,6 +228,58 @@ def execution_bar(
 
 def signed_direction(quantity: float) -> int:
     return 1 if quantity > 0 else -1 if quantity < 0 else 0
+
+
+def build_direction_variants(direction: np.ndarray) -> dict[str, np.ndarray]:
+    """Apply reporting-only transforms to the executed exposure lifecycle."""
+    original = np.asarray(direction, dtype=np.float64)
+    return {
+        "normal": original.copy(),
+        "long_only": np.maximum(original, 0.0),
+        "short_only": np.minimum(original, 0.0),
+        "strict_reverse": -original,
+    }
+
+
+def validate_direction_variants(
+    original: np.ndarray,
+    variants: dict[str, np.ndarray],
+) -> list[dict[str, Any]]:
+    """Verify the four required transforms without manufacturing exposure."""
+    source = np.asarray(original, dtype=np.float64)
+    checks = {
+        "normal": np.abs(variants["normal"] - source),
+        "long_only": np.abs(variants["long_only"] - np.maximum(source, 0)),
+        "short_only": np.abs(variants["short_only"] - np.minimum(source, 0)),
+        "strict_reverse": np.abs(variants["strict_reverse"] + source),
+    }
+    rows: list[dict[str, Any]] = []
+    for variant in VARIANT_TRANSFORMS:
+        residual = float(np.max(checks[variant])) if len(source) else 0.0
+        rows.append(
+            {
+                "variant": "original" if variant == "normal" else variant,
+                "direction_validation_passed": residual <= 1e-12,
+                "max_direction_residual": residual,
+            }
+        )
+    reverse_magnitude_residual = (
+        float(
+            np.max(
+                np.abs(
+                    np.abs(variants["strict_reverse"])
+                    - np.abs(source)
+                )
+            )
+        )
+        if len(source)
+        else 0.0
+    )
+    rows[-1]["max_absolute_exposure_residual"] = reverse_magnitude_residual
+    if not all(row["direction_validation_passed"] for row in rows):
+        failed = [row["variant"] for row in rows if not row["direction_validation_passed"]]
+        raise AssertionError(f"direction variant validation failed: {failed}")
+    return rows
 
 
 def report_for(fills: list[FillRecord]) -> ExecutionReport:
@@ -254,7 +336,7 @@ def execute_planned(
 
 
 def execute_target(
-    target: int,
+    target: float,
     current_quantity: float,
     event: BarEvent,
     simulator: IntentFillSimulator,
@@ -302,7 +384,7 @@ def run_decision_lifecycle(
     current_direction = 0
     fallback_target = 0
     change_times: list[int] = []
-    change_directions: list[int] = []
+    change_quantities: list[float] = []
     audit_rows: list[dict[str, Any]] = []
     signal_count = 0
     dropped_tail = 0
@@ -325,7 +407,7 @@ def run_decision_lifecycle(
 
         needs_execution = bool(actions)
         if not actions and decision_target is not None:
-            needs_execution = int(decision_target) != current_direction
+            needs_execution = abs(float(decision_target) - current_quantity) > 1e-15
         if not needs_execution:
             continue
 
@@ -335,6 +417,7 @@ def run_decision_lifecycle(
             dropped_tail += 1
             continue
         before = current_direction
+        quantity_before = current_quantity
         if actions:
             new_fills = execute_planned(signal, fill_event, simulator)
             fills.extend(new_fills)
@@ -344,15 +427,15 @@ def run_decision_lifecycle(
                     current_quantity += signed
         else:
             current_quantity, new_fills = execute_target(
-                int(decision_target), current_quantity, fill_event, simulator, fills
+                float(decision_target), current_quantity, fill_event, simulator, fills
             )
         current_direction = signed_direction(current_quantity)
         hook = getattr(strategy, "on_execution_report", None)
         if hook is not None and new_fills:
             hook(report_for(fills))
-        if current_direction != before:
+        if abs(current_quantity - quantity_before) > 1e-15:
             change_times.append(fill_event.event_time_ns)
-            change_directions.append(current_direction)
+            change_quantities.append(current_quantity)
         audit_rows.append(
             {
                 "strategy": strategy_name,
@@ -368,15 +451,17 @@ def run_decision_lifecycle(
                 "fill_count": len(new_fills),
                 "direction_before": before,
                 "direction_after": current_direction,
+                "exposure_before": quantity_before,
+                "exposure_after": current_quantity,
                 "decision_target": decision_target,
                 "fill_price": fill_event.open if new_fills else None,
             }
         )
 
-    direction = np.zeros(len(market_times), dtype=np.int8)
+    direction = np.zeros(len(market_times), dtype=np.float64)
     if change_times:
         change_ts = np.asarray(change_times, dtype=np.int64)
-        change_values = np.asarray(change_directions, dtype=np.int8)
+        change_values = np.asarray(change_quantities, dtype=np.float64)
         indices = np.searchsorted(change_ts, market_times, side="right") - 1
         valid = indices >= 0
         direction[valid] = change_values[indices[valid]]
@@ -386,6 +471,7 @@ def run_decision_lifecycle(
         "direction_change_count": len(change_times),
         "dropped_tail": dropped_tail,
         "final_direction": int(current_direction),
+        "final_exposure": float(current_quantity),
     }
     return direction, audit_rows, meta
 
@@ -404,15 +490,18 @@ def write_case(
     slippage_bps: float,
     vip9_fee_bps: float,
     vip0_fee_bps: float,
+    semantic_metadata: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     event_time = np.fromiter((bar.event_time_ns for bar in bars), dtype=np.int64)
     market_open = np.fromiter((bar.open for bar in bars), dtype=np.float64)
     close = np.fromiter((bar.close for bar in bars), dtype=np.float64)
     combined = pd.DataFrame({"event_time_ns": event_time, "close": close})
     summaries: dict[str, dict[str, Any]] = {}
-    for variant, multiplier in (("normal", 1), ("strict_reverse", -1)):
+    direction_variants = build_direction_variants(direction)
+    direction_validation = validate_direction_variants(direction, direction_variants)
+    for variant, variant_direction in direction_variants.items():
         equity = pd.DataFrame(
-            {"event_time_ns": event_time, "close": close, "position": direction * multiplier}
+            {"event_time_ns": event_time, "close": close, "position": variant_direction}
         )
         result, summary = calculate_overlay(
             equity,
@@ -438,6 +527,7 @@ def write_case(
             strategy_clock=case.split("_", 1)[0],
             execution_lag_minutes=int(case.rsplit("lag", 1)[1]),
             slippage_bps=slippage_bps,
+            **(semantic_metadata or {}),
         )
         summaries[variant] = summary
 
@@ -447,6 +537,12 @@ def write_case(
     os.replace(temporary, output_dir / "timeseries.parquet")
     (output_dir / "summary.json").write_text(
         json.dumps(summaries, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    for row in direction_validation:
+        row.update({"strategy": strategy_name, "case": case})
+    (output_dir / "direction_validation.json").write_text(
+        json.dumps(direction_validation, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     with open(output_dir / "execution_events.csv", "w", newline="", encoding="utf-8") as fh:
@@ -472,7 +568,7 @@ def run_strategy(
     cases: tuple[tuple[str, int], ...],
     args: argparse.Namespace,
 ) -> list[dict[str, Any]]:
-    config_path = source_root / strategy_name / "fee_5bps" / "config.yaml"
+    config_path = source_config_path(source_root, strategy_name)
     source_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     end_exclusive_ns = int(pd.Timestamp(args.end, tz="UTC").value) + 86_400_000_000_000
     rows: list[dict[str, Any]] = []
@@ -506,6 +602,17 @@ def run_strategy(
                 slippage_bps=args.slippage_bps,
                 vip9_fee_bps=args.vip9_fee_bps,
                 vip0_fee_bps=args.vip0_fee_bps,
+                semantic_metadata={
+                    "semantic_provenance": source_config.get("params", {}).get(
+                        "semantic_provenance", "SOURCE_EXACT"
+                    ),
+                    "contracts_applied": source_config.get("params", {}).get(
+                        "contracts_applied", ""
+                    ),
+                    "defaulted_parameters": source_config.get("params", {}).get(
+                        "defaulted_parameters", ""
+                    ),
+                },
             )
         rows.extend(summaries.values())
         print(
@@ -556,6 +663,7 @@ def main() -> int:
         for frequency in sorted({frequency for frequency, _ in cases})
     }
     rows: list[dict[str, Any]] = []
+    failures: list[dict[str, str]] = []
     started = datetime.now(UTC)
     for index, strategy_name in enumerate(selected, start=1):
         atomic_json(
@@ -570,29 +678,40 @@ def main() -> int:
                 "started_at_utc": started.isoformat(),
             },
         )
-        rows.extend(
-            run_strategy(
-                strategy_name,
-                source_root=args.source_root,
-                output_root=args.output_root,
-                bars_1m=bars_1m,
-                strategy_clocks=strategy_clocks,
-                funding=funding,
-                cases=cases,
-                args=args,
+        try:
+            rows.extend(
+                run_strategy(
+                    strategy_name,
+                    source_root=args.source_root,
+                    output_root=args.output_root,
+                    bars_1m=bars_1m,
+                    strategy_clocks=strategy_clocks,
+                    funding=funding,
+                    cases=cases,
+                    args=args,
+                )
             )
-        )
+        except Exception as exc:
+            if not args.continue_on_error:
+                raise
+            failures.append({"strategy": strategy_name, "error": repr(exc)})
+            print(f"FAILED {strategy_name}: {exc!r}", flush=True)
     pd.DataFrame(rows).to_csv(
         args.output_root / f"evaluation_shard_{args.shard_index}.csv", index=False
     )
     atomic_json(
+        args.output_root / f"failures_shard_{args.shard_index}.json",
+        {"failures": failures, "failure_count": len(failures)},
+    )
+    atomic_json(
         progress_path,
         {
-            "status": "complete",
+            "status": "complete_with_failures" if failures else "complete",
             "shard_index": args.shard_index,
             "shard_count": args.shard_count,
             "strategy_count": len(selected),
             "completed": len(selected),
+            "failure_count": len(failures),
             "finished_at_utc": datetime.now(UTC).isoformat(),
         },
     )

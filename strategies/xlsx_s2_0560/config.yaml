@@ -1,0 +1,23 @@
+strategy: xlsx_s2_0560
+params:
+  source_registry_id: xlsx_s2_0560
+  family: adx_di_donchian
+  semantic_provenance: SOURCE_EXACT
+  contracts_applied: 
+  defaulted_parameters: 
+  window: 20
+  exit_window: 20
+  adx_window: 14
+  adx_entry_threshold: 25.0
+  adx_exit_threshold: 20.0
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 20
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0560

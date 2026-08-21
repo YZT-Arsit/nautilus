@@ -1,0 +1,23 @@
+strategy: xlsx_s2_0479
+params:
+  source_registry_id: xlsx_s2_0479
+  family: fractal_adx_stable
+  semantic_provenance: PARAMETER_DEFAULTED
+  contracts_applied: CONFIRMED_FRACTAL_2X2_V1;STABLE_CLOSE_2BAR_V1
+  defaulted_parameters: fractal_side_bars=2;persistence_bars=2
+  window: 20
+  adx_window: 14
+  adx_entry_threshold: 24.0
+  adx_exit_threshold: 20.0
+  consecutive_bars: 2
+data:
+  mode: synthetic
+  instrument_id: BTCUSDT-PERP.BINANCE
+  warmup_bars: 20
+  live_bars: 120
+output:
+  print_table: false
+  record_signals: true
+provenance:
+  workbook: 时序策略.xlsx
+  registry_id: xlsx_s2_0479

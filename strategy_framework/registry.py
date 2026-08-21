@@ -6,6 +6,10 @@ import its ``PLUGIN`` and add one entry below. There is no auto-discovery.
 """
 from __future__ import annotations
 
+import importlib
+import json
+from pathlib import Path
+
 from strategies.adx_ma_channel_long import PLUGIN as ADX_MA_CHANNEL_LONG_PLUGIN
 from strategies.adx_ma_channel_short import PLUGIN as ADX_MA_CHANNEL_SHORT_PLUGIN
 from strategies.avg_channel_range_leader_long import PLUGIN as AVG_CHANNEL_RANGE_LEADER_LONG_PLUGIN
@@ -73,11 +77,77 @@ from strategies.trendscore_short import PLUGIN as TRENDSCORE_SHORT_PLUGIN
 from strategies.turtle_trader import PLUGIN as TURTLE_TRADER_PLUGIN
 from strategies.vwm_long import PLUGIN as VWM_LONG_PLUGIN
 from strategies.vwm_short import PLUGIN as VWM_SHORT_PLUGIN
-from strategies.workbook_parametric import PLUGINS as WORKBOOK_PARAMETRIC_PLUGINS
+from strategies.xlsx_s1_0002 import PLUGIN as XLSX_S1_0002_PLUGIN
+from strategies.xlsx_s1_0003 import PLUGIN as XLSX_S1_0003_PLUGIN
+from strategies.xlsx_s1_0004 import PLUGIN as XLSX_S1_0004_PLUGIN
+from strategies.xlsx_s1_0005 import PLUGIN as XLSX_S1_0005_PLUGIN
+from strategies.xlsx_s1_0006 import PLUGIN as XLSX_S1_0006_PLUGIN
+from strategies.xlsx_s1_0007 import PLUGIN as XLSX_S1_0007_PLUGIN
+from strategies.xlsx_s1_0010 import PLUGIN as XLSX_S1_0010_PLUGIN
+from strategies.xlsx_s1_0012 import PLUGIN as XLSX_S1_0012_PLUGIN
+from strategies.xlsx_s1_0016 import PLUGIN as XLSX_S1_0016_PLUGIN
+from strategies.xlsx_s1_0017 import PLUGIN as XLSX_S1_0017_PLUGIN
+from strategies.xlsx_s1_0019 import PLUGIN as XLSX_S1_0019_PLUGIN
+from strategies.xlsx_s1_0020 import PLUGIN as XLSX_S1_0020_PLUGIN
+from strategies.xlsx_s1_0024 import PLUGIN as XLSX_S1_0024_PLUGIN
+from strategies.xlsx_s1_0029 import PLUGIN as XLSX_S1_0029_PLUGIN
+from strategies.xlsx_s1_0027 import PLUGIN as XLSX_S1_0027_PLUGIN
+from strategies.xlsx_s1_0025 import PLUGIN as XLSX_S1_0025_PLUGIN
+from strategies.xlsx_s1_0026 import PLUGIN as XLSX_S1_0026_PLUGIN
+from strategies.xlsx_s1_0033 import PLUGIN as XLSX_S1_0033_PLUGIN
+from strategies.xlsx_s1_0034 import PLUGIN as XLSX_S1_0034_PLUGIN
+from strategies.xlsx_s1_0038 import PLUGIN as XLSX_S1_0038_PLUGIN
+from strategies.xlsx_s2_0230 import PLUGIN as XLSX_S2_0230_PLUGIN
+from strategies.xlsx_s2_0042 import PLUGIN as XLSX_S2_0042_PLUGIN
+from strategies.xlsx_s2_0277 import PLUGIN as XLSX_S2_0277_PLUGIN
+from strategies.xlsx_s2_0363 import PLUGIN as XLSX_S2_0363_PLUGIN
+from strategies.xlsx_s2_0560 import PLUGIN as XLSX_S2_0560_PLUGIN
+from strategies.xlsx_s2_0708 import PLUGIN as XLSX_S2_0708_PLUGIN
+from strategies.xlsx_s2_0737 import PLUGIN as XLSX_S2_0737_PLUGIN
+from strategies.xlsx_s2_0879 import PLUGIN as XLSX_S2_0879_PLUGIN
+from strategies.xlsx_s2_0017 import PLUGIN as XLSX_S2_0017_PLUGIN
+from strategies.xlsx_s2_0316 import PLUGIN as XLSX_S2_0316_PLUGIN
+from strategies.xlsx_s2_0432 import PLUGIN as XLSX_S2_0432_PLUGIN
+from strategies.xlsx_s2_0513 import PLUGIN as XLSX_S2_0513_PLUGIN
+from strategies.xlsx_s2_0665 import PLUGIN as XLSX_S2_0665_PLUGIN
+from strategies.xlsx_s2_0842 import PLUGIN as XLSX_S2_0842_PLUGIN
 from strategy_framework.plugin import StrategyPlugin
 
 STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
-    **{plugin.name: plugin for plugin in WORKBOOK_PARAMETRIC_PLUGINS},
+    XLSX_S1_0002_PLUGIN.name: XLSX_S1_0002_PLUGIN,
+    XLSX_S1_0003_PLUGIN.name: XLSX_S1_0003_PLUGIN,
+    XLSX_S1_0004_PLUGIN.name: XLSX_S1_0004_PLUGIN,
+    XLSX_S1_0005_PLUGIN.name: XLSX_S1_0005_PLUGIN,
+    XLSX_S1_0006_PLUGIN.name: XLSX_S1_0006_PLUGIN,
+    XLSX_S1_0007_PLUGIN.name: XLSX_S1_0007_PLUGIN,
+    XLSX_S1_0010_PLUGIN.name: XLSX_S1_0010_PLUGIN,
+    XLSX_S1_0012_PLUGIN.name: XLSX_S1_0012_PLUGIN,
+    XLSX_S1_0016_PLUGIN.name: XLSX_S1_0016_PLUGIN,
+    XLSX_S1_0017_PLUGIN.name: XLSX_S1_0017_PLUGIN,
+    XLSX_S1_0019_PLUGIN.name: XLSX_S1_0019_PLUGIN,
+    XLSX_S1_0020_PLUGIN.name: XLSX_S1_0020_PLUGIN,
+    XLSX_S1_0024_PLUGIN.name: XLSX_S1_0024_PLUGIN,
+    XLSX_S1_0029_PLUGIN.name: XLSX_S1_0029_PLUGIN,
+    XLSX_S1_0027_PLUGIN.name: XLSX_S1_0027_PLUGIN,
+    XLSX_S1_0025_PLUGIN.name: XLSX_S1_0025_PLUGIN,
+    XLSX_S1_0026_PLUGIN.name: XLSX_S1_0026_PLUGIN,
+    XLSX_S1_0033_PLUGIN.name: XLSX_S1_0033_PLUGIN,
+    XLSX_S1_0034_PLUGIN.name: XLSX_S1_0034_PLUGIN,
+    XLSX_S1_0038_PLUGIN.name: XLSX_S1_0038_PLUGIN,
+    XLSX_S2_0230_PLUGIN.name: XLSX_S2_0230_PLUGIN,
+    XLSX_S2_0042_PLUGIN.name: XLSX_S2_0042_PLUGIN,
+    XLSX_S2_0277_PLUGIN.name: XLSX_S2_0277_PLUGIN,
+    XLSX_S2_0363_PLUGIN.name: XLSX_S2_0363_PLUGIN,
+    XLSX_S2_0560_PLUGIN.name: XLSX_S2_0560_PLUGIN,
+    XLSX_S2_0708_PLUGIN.name: XLSX_S2_0708_PLUGIN,
+    XLSX_S2_0737_PLUGIN.name: XLSX_S2_0737_PLUGIN,
+    XLSX_S2_0879_PLUGIN.name: XLSX_S2_0879_PLUGIN,
+    XLSX_S2_0017_PLUGIN.name: XLSX_S2_0017_PLUGIN,
+    XLSX_S2_0316_PLUGIN.name: XLSX_S2_0316_PLUGIN,
+    XLSX_S2_0432_PLUGIN.name: XLSX_S2_0432_PLUGIN,
+    XLSX_S2_0513_PLUGIN.name: XLSX_S2_0513_PLUGIN,
+    XLSX_S2_0665_PLUGIN.name: XLSX_S2_0665_PLUGIN,
+    XLSX_S2_0842_PLUGIN.name: XLSX_S2_0842_PLUGIN,
     CONTINUOUS_TICK_MA_PLUGIN.name: CONTINUOUS_TICK_MA_PLUGIN,
     MA_CROSSOVER_PLUGIN.name: MA_CROSSOVER_PLUGIN,
     VWM_SHORT_PLUGIN.name: VWM_SHORT_PLUGIN,
@@ -146,6 +216,22 @@ STRATEGY_REGISTRY: dict[str, StrategyPlugin] = {
     ADX_MA_CHANNEL_SHORT_PLUGIN.name: ADX_MA_CHANNEL_SHORT_PLUGIN,
     ADX_MA_CHANNEL_LONG_PLUGIN.name: ADX_MA_CHANNEL_LONG_PLUGIN,
 }
+
+# Phase 2.2B packages are explicitly enumerated by the compiled semantic plan.
+# This is normal registry registration (not filesystem auto-discovery), and it
+# keeps hundreds of generated import statements out of this source file.
+_SEMANTIC_PLANS = (
+    Path(__file__).resolve().parents[1] / "configs/semantic_contracts/workbook_phase2_2b_strategies.json",
+    Path(__file__).resolve().parents[1] / "configs/semantic_contracts/workbook_phase2_2c_strategies.json",
+)
+for _semantic_plan in _SEMANTIC_PLANS:
+    if not _semantic_plan.is_file():
+        continue
+    for _strategy_id in sorted(json.loads(_semantic_plan.read_text(encoding="utf-8"))):
+        _plugin = importlib.import_module(f"strategies.{_strategy_id}.plugin").PLUGIN
+        if _plugin.name in STRATEGY_REGISTRY:
+            raise ValueError(f"duplicate semantic strategy registration: {_plugin.name}")
+        STRATEGY_REGISTRY[_plugin.name] = _plugin
 
 
 def get_entry(name: str) -> StrategyPlugin:
