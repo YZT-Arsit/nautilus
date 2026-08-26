@@ -142,6 +142,18 @@ if _PHASE5A_STRATEGY_CONFIG.is_file():
     IMPLEMENTED.update(_PHASE5A_IMPLEMENTED)
 else:
     _PHASE5A_IMPLEMENTED = {}
+_PHASE5B_STRATEGY_CONFIG = (
+    Path(__file__).resolve().parents[2]
+    / "configs/semantic_contracts/workbook_phase5b_strategies.json"
+)
+if _PHASE5B_STRATEGY_CONFIG.is_file():
+    _PHASE5B_IMPLEMENTED = json.loads(_PHASE5B_STRATEGY_CONFIG.read_text(encoding="utf-8"))
+    overlap = set(IMPLEMENTED).intersection(_PHASE5B_IMPLEMENTED)
+    if overlap:
+        raise ValueError(f"duplicate Phase 5B strategy IDs: {sorted(overlap)}")
+    IMPLEMENTED.update(_PHASE5B_IMPLEMENTED)
+else:
+    _PHASE5B_IMPLEMENTED = {}
 REGISTERED = {key: str(value["family"]) for key, value in IMPLEMENTED.items()}
 PHASE2_IMPLEMENTED_IDS = {
     "xlsx_s1_0002", "xlsx_s1_0005", "xlsx_s1_0006", "xlsx_s1_0010",

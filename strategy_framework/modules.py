@@ -618,6 +618,7 @@ class GridPyramidState:
     step_atr: float = 1.0
     max_abs_exposure: float = 1.0
     layer_fraction: float = 0.25
+    layer_fractions: tuple[float, ...] | None = None
     episode_side: int = 0
     initial_entry_price: float | None = None
     latest_add_price: float | None = None
@@ -634,6 +635,18 @@ class GridPyramidState:
             raise ValueError("max_abs_exposure must be in (0, 1]")
         if not 0 < self.layer_fraction <= self.max_abs_exposure:
             raise ValueError("layer_fraction must be in (0, max_abs_exposure]")
+        if self.layer_fractions is not None:
+            if len(self.layer_fractions) != self.layers or any(value <= 0 for value in self.layer_fractions):
+                raise ValueError("layer_fractions must contain one positive fraction per layer")
+            if abs(sum(self.layer_fractions) - self.max_abs_exposure) > 1e-12:
+                raise ValueError("layer_fractions must sum to max_abs_exposure")
+
+    def _fraction_for_layer(self, zero_based_index: int) -> float:
+        return (
+            self.layer_fractions[zero_based_index]
+            if self.layer_fractions is not None
+            else self.layer_fraction
+        )
 
     def _reset(self) -> None:
         self.episode_side = 0
@@ -671,7 +684,7 @@ class GridPyramidState:
     def initial_target(self, side: int) -> float:
         if side not in (-1, 1):
             raise ValueError("side must be -1 or 1")
-        target = side * min(self.layer_fraction, self.max_abs_exposure)
+        target = side * min(self._fraction_for_layer(0), self.max_abs_exposure)
         self.pending_target = target
         return target
 
@@ -704,7 +717,10 @@ class GridPyramidState:
         )
         if not qualifies:
             return None
-        target_abs = min(abs(self.current_exposure) + self.layer_fraction, self.max_abs_exposure)
+        target_abs = min(
+            abs(self.current_exposure) + self._fraction_for_layer(self.grid_layer_index),
+            self.max_abs_exposure,
+        )
         self.pending_target = self.episode_side * target_abs
         return self.pending_target
 

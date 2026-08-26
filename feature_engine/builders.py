@@ -48,6 +48,18 @@ def cci_spec(name: str, *, window: int, input_type: str = "bar") -> FeatureSpec:
     return FeatureSpec(name, input_type=input_type, window=window, params={"type": "cci"})
 
 
+def bias_spec(name: str, *, window: int = 20, input_type: str = "bar") -> FeatureSpec:
+    """Percentage close deviation from its ``window``-bar SMA."""
+    return FeatureSpec(name, input_type=input_type, input_field="close", window=window,
+                       params={"type": "bias"})
+
+
+def obv_spec(name: str, *, window: int = 20, output: str = "obv", input_type: str = "bar") -> FeatureSpec:
+    """On-Balance Volume or its completed-bar rolling mean."""
+    return FeatureSpec(name, input_type=input_type, window=window,
+                       params={"type": "obv", "output": output})
+
+
 def hlc_mean_spec(name: str, *, window: int, input_type: str = "bar") -> FeatureSpec:
     """Simple moving average of HLC3 typical price."""
     return FeatureSpec(name, input_type=input_type, window=window, params={"type": "hlc_mean"})
@@ -451,11 +463,18 @@ def session_flatten_due_spec(
 
 def completed_timeframe_spec(
     name: str, *, timeframe_minutes: int, output: str, window: int = 1,
+    indicator: str | None = None, indicator_params: dict | None = None,
 ) -> FeatureSpec:
     """Lookahead-safe value from completed aligned higher-timeframe bars."""
+    params = {
+        "type": "completed_timeframe", "timeframe_minutes": timeframe_minutes,
+        "output": output, "window": window,
+    }
+    if indicator is not None:
+        params["indicator"] = indicator
+        params["indicator_params"] = dict(indicator_params or {})
     return FeatureSpec(
         name, input_type="bar", window=window, params={
-            "type": "completed_timeframe", "timeframe_minutes": timeframe_minutes,
-            "output": output, "window": window,
+            **params,
         },
     )

@@ -1,0 +1,78 @@
+{
+  "registry_version": "PHASE5C_V1",
+  "frozen_before_backtest": true,
+  "contracts": [
+    {
+      "contract_id": "MODELLED_EQUAL_ENTRY_STAGE_FRACTION",
+      "version": 1,
+      "source_phrase_family": "explicit finite entry/add stages with omitted fractions",
+      "machine_definition": "each of K source-explicit stages targets 1/K of canonical 1x exposure",
+      "allowed_context": "K and every trigger are explicit",
+      "disallowed_context": "unknown K; martingale; unbounded adds",
+      "default_parameters": {
+        "max_abs_exposure": 1.0
+      },
+      "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "completed observations and executed fills only"
+    },
+    {
+      "contract_id": "FIRST_ENTRY_PRICE",
+      "version": 1,
+      "source_phrase_family": "首次开仓价;首次入场价",
+      "machine_definition": "first executed fill of the current position episode",
+      "allowed_context": "explicit first-entry wording",
+      "disallowed_context": "generic cost wording",
+      "default_parameters": {},
+      "provenance": "STANDARD_CONTRACT_RESOLVED",
+      "lookahead_rule": "updates after fill"
+    },
+    {
+      "contract_id": "CURRENT_POSITION_AVG_ENTRY_PRICE",
+      "version": 1,
+      "source_phrase_family": "持仓成本;平均开仓价;浮亏",
+      "machine_definition": "executed quantity-weighted average basis of current open exposure",
+      "allowed_context": "cost or total unrealized loss",
+      "disallowed_context": "signal price",
+      "default_parameters": {},
+      "provenance": "STANDARD_CONTRACT_RESOLVED",
+      "lookahead_rule": "updates after fill"
+    },
+    {
+      "contract_id": "LATEST_ADD_FILL_PRICE",
+      "version": 1,
+      "source_phrase_family": "加仓价;最近一次加仓价;逐档移动",
+      "machine_definition": "latest executed exposure-increasing fill",
+      "allowed_context": "explicit staged additions",
+      "disallowed_context": "signal price",
+      "default_parameters": {},
+      "provenance": "STANDARD_CONTRACT_RESOLVED",
+      "lookahead_rule": "updates after fill"
+    },
+    {
+      "contract_id": "VOLATILITY_EXPANSION_RELATIVE_SMA20",
+      "version": 1,
+      "source_phrase_family": "explicit X expansion",
+      "machine_definition": "X[t] > SMA20(X)[t]",
+      "allowed_context": "source identifies X",
+      "disallowed_context": "unnamed volatility",
+      "default_parameters": {
+        "reference_window": 20
+      },
+      "provenance": "PARAMETER_DEFAULTED",
+      "lookahead_rule": "completed observations only"
+    },
+    {
+      "contract_id": "VOLATILITY_CONTRACTION_RELATIVE_SMA20",
+      "version": 1,
+      "source_phrase_family": "explicit X contraction",
+      "machine_definition": "X[t] < SMA20(X)[t]",
+      "allowed_context": "source identifies X",
+      "disallowed_context": "unnamed volatility",
+      "default_parameters": {
+        "reference_window": 20
+      },
+      "provenance": "PARAMETER_DEFAULTED",
+      "lookahead_rule": "completed observations only"
+    }
+  ]
+}

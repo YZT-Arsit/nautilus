@@ -5,6 +5,7 @@ from strategy_framework.execution.intents import PlannedSignal, TradeAction
 from strategy_framework.conditions import cross_above, cross_below
 from strategy_framework.modules import GridPyramidState, PyramidDirection
 from strategy_framework.semantic_contracts import turn_down, turn_up
+from strategy_framework.workbook_dsl import ActionType, RuleEvaluator
 
 from strategies.workbook_parametric.config import WorkbookParametricConfig
 import base64
@@ -33,10 +34,17 @@ class WorkbookParametricStrategy:
             json.loads(base64.urlsafe_b64decode(config.rule_spec_b64.encode()).decode())
             if config.family == "phase5a_declarative" else None
         )
+        self._phase5b_rule = (
+            json.loads(base64.urlsafe_b64decode(config.rule_spec_b64.encode()).decode())
+            if config.family == "phase5b_declarative" else None
+        )
+        self._phase5b_evaluator = RuleEvaluator(self._phase5b_rule) if self._phase5b_rule else None
         self._phase5a_history: dict[str, list[float]] = {}
         self._phase5a_condition_history: dict[str, list[bool]] = {}
 
     def synchronize_execution(self, *, position: float, fill_price: float) -> None:
+        if self._phase5b_evaluator is not None:
+            self._phase5b_evaluator.synchronize_fill(position=position, fill_price=fill_price)
         if self._grid is not None:
             self._grid.synchronize_fill(position=position, fill_price=fill_price)
 
@@ -139,6 +147,40 @@ class WorkbookParametricStrategy:
             if len(history) > 128:
                 del history[:-128]
         return signal
+
+    def _on_phase5b_snapshot(self, snapshot: FeatureSnapshot) -> PlannedSignal | str:
+        assert self._phase5b_rule is not None and self._phase5b_evaluator is not None
+        values: dict[str, float] = {}
+        for feature in self._phase5b_rule["features"]:
+            name = str(feature["name"])
+            value = self._value(snapshot, name)
+            if value is None:
+                return HOLD
+            values[name] = value
+        selected = self._phase5b_evaluator.select_action(values)
+        if selected is None:
+            return HOLD
+        action = selected.action
+        executed = self._phase5b_evaluator.state.executed_position
+        if action in {ActionType.FLATTEN, ActionType.EXIT_ALL}:
+            return self._set(0)
+        if action == ActionType.EXIT_LONG:
+            return self._set(0) if executed > 0 else HOLD
+        if action == ActionType.EXIT_SHORT:
+            return self._set(0) if executed < 0 else HOLD
+        if action == ActionType.REDUCE_CURRENT:
+            return self._set(executed * (1.0 - selected.fraction)) if executed else HOLD
+        if action == ActionType.REDUCE_LONG:
+            return self._set(max(0.0, executed * (1.0 - selected.fraction))) if executed > 0 else HOLD
+        if action == ActionType.REDUCE_SHORT:
+            return self._set(min(0.0, executed * (1.0 - selected.fraction))) if executed < 0 else HOLD
+        if action in {ActionType.ENTER_LONG, ActionType.ADD_LONG}:
+            target = selected.fraction if action == ActionType.ENTER_LONG else min(1.0, max(0.0, executed) + selected.fraction)
+            return self._set(target)
+        if action in {ActionType.ENTER_SHORT, ActionType.ADD_SHORT}:
+            target = -selected.fraction if action == ActionType.ENTER_SHORT else max(-1.0, min(0.0, executed) - selected.fraction)
+            return self._set(target)
+        raise ValueError(f"unsupported Phase 5B action: {action}")
 
     def _set(self, target: float) -> PlannedSignal:
         target = float(target)
@@ -287,6 +329,8 @@ class WorkbookParametricStrategy:
 
     def on_snapshot(self, snapshot: FeatureSnapshot) -> str:
         family = self.config.family
+        if family == "phase5b_declarative":
+            return self._on_phase5b_snapshot(snapshot)
         if family == "phase5a_declarative":
             return self._on_phase5a_snapshot(snapshot)
         close = self._value(snapshot, "workbook_close")

@@ -232,13 +232,19 @@ class SessionFlattenDueFeature(_AbstractFeature):
 
 
 class CompletedTimeframeFeature(_AbstractFeature):
-    """SMA or confirmed-fractal pulse from completed aligned child bars."""
+    """Lookahead-safe value from fully completed aligned child bars.
+
+    The original SMA/fractal outputs remain byte-for-byte compatible.  The
+    optional ``indicator`` delegates each completed child bar to the canonical
+    feature backend, avoiding a second indicator implementation for MTF rules.
+    """
 
     def __init__(self, spec: FeatureSpec) -> None:
         super().__init__(spec)
         self._output = str(spec.params["output"])
         self._frame_ns = int(spec.params["timeframe_minutes"]) * 60_000_000_000
         self._window = int(spec.params.get("window", spec.window or 1))
+        self._indicator = spec.params.get("indicator")
         if self._frame_ns <= 0 or self._window <= 0:
             raise ValueError("completed timeframe and window must be positive")
         self._bucket: int | None = None
@@ -247,8 +253,21 @@ class CompletedTimeframeFeature(_AbstractFeature):
         self._highs: deque[float] = deque(maxlen=5)
         self._lows: deque[float] = deque(maxlen=5)
         self._latest: float | None = None
+        self._instrument_id = ""
+        self._child = None
+        if self._indicator:
+            from feature_engine.compute.backend import PythonBackend
+            child_params = {"type": str(self._indicator), **dict(spec.params.get("indicator_params", {}))}
+            child_params.setdefault("output", self._output)
+            child_window = int(child_params.get("window", self._window))
+            self._child = PythonBackend().create_feature(FeatureSpec(
+                f"{spec.name}__completed_child", input_type="bar", window=child_window,
+                params=child_params,
+            ))
 
     def warmup_required(self) -> WarmupRequirement:
+        if self._child is not None:
+            return self._child.warmup_required()
         bars = self._window if self._output == "sma" else 5
         return WarmupRequirement(bars, unit="completed_timeframe_bars")
 
@@ -261,13 +280,27 @@ class CompletedTimeframeFeature(_AbstractFeature):
         self._ohlc = None
         self._closes.clear(); self._highs.clear(); self._lows.clear()
         self._latest = None
+        if self._child is not None:
+            self._child.reset()
         self._reset_base()
 
     def _finish(self) -> None:
         if self._ohlc is None:
             return
-        _open, high, low, close = self._ohlc
-        if self._output == "sma":
+        _open, high, low, close, volume, quote_volume = self._ohlc
+        if self._child is not None:
+            from data_engine.events import BarEvent
+            update = self._child.update(BarEvent(
+                open=_open, high=high, low=low, close=close, volume=volume,
+                quote_volume=quote_volume, instrument_id=self._instrument_id,
+                event_time_ns=int(self._bucket or 0) + self._frame_ns,
+            ))
+            child_value = update.value
+            self._latest = (
+                float(child_value.value)
+                if child_value.is_ready and child_value.value is not None else None
+            )
+        elif self._output == "sma":
             self._closes.append(close)
             self._latest = sum(self._closes) / self._window if len(self._closes) == self._window else None
         else:
@@ -287,18 +320,23 @@ class CompletedTimeframeFeature(_AbstractFeature):
         observation_ts = ts_ns - 1
         bucket = observation_ts // self._frame_ns * self._frame_ns
         open_, high, low, close = (_field(event, name) for name in ("open", "high", "low", "close"))
+        volume = _field(event, "volume") or 0.0
+        quote_volume = _field(event, "quote_volume") or close * volume if close is not None else 0.0
         if None in (open_, high, low, close):
             return self._missing_field("OHLC")
         if self._bucket is not None and bucket != self._bucket:
             self._finish()
             self._ohlc = None
         self._bucket = bucket
+        self._instrument_id = str(getattr(event, "instrument_id", ""))
         if self._ohlc is None:
-            self._ohlc = [open_, high, low, close]
+            self._ohlc = [open_, high, low, close, volume, quote_volume]
         else:
             self._ohlc[1] = max(self._ohlc[1], high)
             self._ohlc[2] = min(self._ohlc[2], low)
             self._ohlc[3] = close
+            self._ohlc[4] += volume
+            self._ohlc[5] += quote_volume
         completed = ts_ns >= bucket + self._frame_ns
         if completed:
             self._finish()
@@ -313,6 +351,8 @@ class CompletedTimeframeFeature(_AbstractFeature):
             **self._base_state(), "bucket": self._bucket, "ohlc": self._ohlc,
             "closes": list(self._closes), "highs": list(self._highs),
             "lows": list(self._lows), "latest": self._latest,
+            "instrument_id": self._instrument_id,
+            "child": self._child.state_dict() if self._child is not None else None,
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -322,3 +362,6 @@ class CompletedTimeframeFeature(_AbstractFeature):
         self._highs = deque(state.get("highs", []), maxlen=5)
         self._lows = deque(state.get("lows", []), maxlen=5)
         self._latest = state.get("latest")
+        self._instrument_id = state.get("instrument_id", "")
+        if self._child is not None and state.get("child") is not None:
+            self._child.load_state_dict(state["child"])

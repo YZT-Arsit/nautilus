@@ -10,6 +10,8 @@ indicator.  Features are registered for the PythonBackend in
 ``feature_engine/compute/backend.py``.
 """
 from feature_engine.compute.feature_lib.normalization import ZScoreFeature
+from feature_engine.compute.feature_lib.bias import BiasFeature
+from feature_engine.compute.feature_lib.obv import OnBalanceVolumeFeature
 from feature_engine.compute.feature_lib.cci import CommodityChannelIndexFeature
 from feature_engine.compute.feature_lib.hlc_mean import HlcMeanFeature
 from feature_engine.compute.feature_lib.hma import HullMovingAverageFeature
@@ -88,6 +90,8 @@ __all__ = [
     "BollingerPercentBFeature",
     # normalization
     "ZScoreFeature",
+    "BiasFeature",
+    "OnBalanceVolumeFeature",
     "CommodityChannelIndexFeature",
     "HlcMeanFeature",
     "HullMovingAverageFeature",

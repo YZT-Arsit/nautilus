@@ -63,8 +63,9 @@ def render(registry_id: str, definition: dict[str, object]) -> dict[str, str]:
         warmup_bars = 2
     fields = "\n".join(f"    {name}: {type(value).__name__} = {value!r}" for name, value in defaults.items())
     yaml_params = "\n".join(f"  {name}: {yaml_value(value)}" for name, value in defaults.items())
-    base_strategy = "WorkbookExecutionAdapter" if family in FILL_AWARE_FAMILIES else "WorkbookParametricStrategy"
-    base_module = "strategies.workbook_parametric.execution_adapter" if family in FILL_AWARE_FAMILIES else "strategies.workbook_parametric.strategy"
+    fill_aware = family in FILL_AWARE_FAMILIES or bool(definition.get("requires_fill_state", False))
+    base_strategy = "WorkbookExecutionAdapter" if fill_aware else "WorkbookParametricStrategy"
+    base_module = "strategies.workbook_parametric.execution_adapter" if fill_aware else "strategies.workbook_parametric.strategy"
     return {
         "__init__.py": f'''"""Workbook strategy {registry_id}; source provenance is in config.yaml."""\n\nfrom strategies.{registry_id}.config import {cls}Config\nfrom strategies.{registry_id}.plugin import PLUGIN\nfrom strategies.{registry_id}.strategy import {cls}Strategy\n\n__all__ = ["PLUGIN", "{cls}Config", "{cls}Strategy"]\n''',
         "config.py": f'''"""Typed configuration compiled from workbook row {registry_id}."""\n\nfrom dataclasses import dataclass\n\nfrom strategies.workbook_parametric.config import WorkbookParametricConfig\n\n\n@dataclass(frozen=True)\nclass {cls}Config(WorkbookParametricConfig):\n{fields}\n''',

@@ -113,6 +113,7 @@ class WorkbookParametricConfig:
             "session_vwap_fractal",
             "session_vwap_mtf_fractal",
             "phase5a_declarative",
+            "phase5b_declarative",
         }:
             raise ValueError(f"unsupported exact workbook family: {self.family}")
         if min(self.fast_window, self.middle_window, self.slow_window, self.window, self.entry_window, self.trend_window, self.exit_window, self.filter_window, self.atr_window, self.adx_window, self.ao_fast_window, self.ao_slow_window, self.breakout_window, self.aroon_window, self.rsi_window, self.macd_fast_window, self.macd_slow_window, self.macd_signal_window) <= 0:
@@ -155,6 +156,8 @@ class WorkbookParametricConfig:
             raise ValueError("unsupported semantic provenance")
         if self.family == "phase5a_declarative" and not self.rule_spec_b64:
             raise ValueError("phase5a_declarative requires a frozen typed rule spec")
+        if self.family == "phase5b_declarative" and not self.rule_spec_b64:
+            raise ValueError("phase5b_declarative requires a frozen typed rule spec")
         if self.execution_lag_minutes < 0 or self.volume_window <= 0:
             raise ValueError("execution lag must be non-negative and volume window positive")
         if self.session_contract and self.session_contract != "CRYPTO_UTC_SESSION_V1":

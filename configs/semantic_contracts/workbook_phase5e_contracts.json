@@ -1,0 +1,80 @@
+{
+  "EXISTING_VOLATILITY_FEATURE_PROPAGATION": {
+    "policy_id": "EXISTING_VOLATILITY_FEATURE_PROPAGATION",
+    "source_phase5d_policy_id": "EXISTING_VOLATILITY_FEATURE_PROPAGATION",
+    "status": "ACTIVE_PHASE5E",
+    "intrusiveness": "LOW",
+    "definition": "For source-identified X, reuse frozen X versus SMA(X,20) expansion/contraction contracts.",
+    "implementation": "existing_contract_propagation",
+    "affected_rows": "139",
+    "existing_contract_reused": "true",
+    "new_feature_contract": "false",
+    "contract_hash": "668c71b3f6684132dc0ed8abb90957d072566607a4a173026e52492a516e4fe2",
+    "freeze_timestamp": "2026-08-26T12:28:42.254179+00:00"
+  },
+  "EXISTING_TWO_CLOSE_STABILITY_PROPAGATION": {
+    "policy_id": "EXISTING_TWO_CLOSE_STABILITY_PROPAGATION",
+    "source_phase5d_policy_id": "EXISTING_TWO_CLOSE_STABILITY_PROPAGATION",
+    "status": "ACTIVE_PHASE5E",
+    "intrusiveness": "LOW",
+    "definition": "Two consecutive completed closes on the specified side of an identified level.",
+    "implementation": "existing_contract_propagation",
+    "affected_rows": "127",
+    "existing_contract_reused": "true",
+    "new_feature_contract": "false",
+    "contract_hash": "960558d6a80e9a715c606efbd8a67385ac6cd8ac43b0a94c94c2139361daf8ce",
+    "freeze_timestamp": "2026-08-26T12:28:42.254179+00:00"
+  },
+  "EXISTING_LEVEL_TOLERANCE_PROPAGATION": {
+    "policy_id": "EXISTING_LEVEL_TOLERANCE_PROPAGATION",
+    "source_phase5d_policy_id": "EXISTING_LEVEL_TOLERANCE_PROPAGATION",
+    "status": "ACTIVE_PHASE5E",
+    "intrusiveness": "LOW",
+    "definition": "Identified level interaction zone is +/-0.25 Wilder ATR(14).",
+    "implementation": "existing_contract_propagation",
+    "affected_rows": "68",
+    "existing_contract_reused": "true",
+    "new_feature_contract": "false",
+    "contract_hash": "111d6535e6eafc0cfd53c928a3ee1c39ab5574227c81a1eea697cc5ef4154aa6",
+    "freeze_timestamp": "2026-08-26T12:28:42.254179+00:00"
+  },
+  "EXISTING_DEFAULT_PROPAGATION": {
+    "policy_id": "EXISTING_DEFAULT_PROPAGATION",
+    "source_phase5d_policy_id": "EXISTING_DEFAULT_PROPAGATION",
+    "status": "ACTIVE_PHASE5E",
+    "intrusiveness": "LOW",
+    "definition": "Only repository-authoritative defaults already used before Phase 5E.",
+    "implementation": "existing_contract_propagation",
+    "affected_rows": "35",
+    "existing_contract_reused": "true",
+    "new_feature_contract": "false",
+    "contract_hash": "90b806e4d9e4242d7aa717e8f4e3a9386ae6f1dd6eff79f0c8c532aba3f9a6b6",
+    "freeze_timestamp": "2026-08-26T12:28:42.254179+00:00"
+  },
+  "EXISTING_FILL_ANCHOR_PROPAGATION": {
+    "policy_id": "EXISTING_FILL_ANCHOR_PROPAGATION",
+    "source_phase5d_policy_id": "EXISTING_FILL_ANCHOR_PROPAGATION",
+    "status": "ACTIVE_PHASE5E",
+    "intrusiveness": "LOW",
+    "definition": "Reuse Phase 5C executed-fill anchors without a second state system.",
+    "implementation": "existing_contract_propagation",
+    "affected_rows": "3",
+    "existing_contract_reused": "true",
+    "new_feature_contract": "false",
+    "contract_hash": "4d99f91abd5f3c87dc4d3fa3acb532f29f98396c571d6121a18cdf4af084f21a",
+    "freeze_timestamp": "2026-08-26T12:28:42.254179+00:00"
+  },
+  "STANDARD_OHLCV_FEATURE_CONTRACT": {
+    "policy_id": "STANDARD_OHLCV_FEATURE_CONTRACT",
+    "source_phase5d_policy_id": "STANDARD_OHLCV_FEATURE_CONTRACT",
+    "status": "ACTIVE_PHASE5E",
+    "intrusiveness": "LOW",
+    "definition": "Only uniquely named and uniquely parameterized standard OHLCV features.",
+    "implementation": "canonical_feature_gate",
+    "affected_rows": "66",
+    "existing_contract_reused": "false",
+    "new_feature_contract": "false",
+    "contract_hash": "45954c7bec5a93577df36cb1a39e8669feb372c7535026340c3cc2b8214955b2",
+    "freeze_timestamp": "2026-08-26T12:28:42.254179+00:00"
+  }
+}

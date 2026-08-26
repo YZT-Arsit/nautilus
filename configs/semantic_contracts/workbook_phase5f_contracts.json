@@ -1,0 +1,30 @@
+{
+  "MODELLED_BOUNDED_EQUAL_LADDER_V1": {
+    "contract_id": "MODELLED_BOUNDED_EQUAL_LADDER_V1",
+    "version": 1,
+    "risk_level": "MEDIUM",
+    "definition": "Explicit finite grid/ladder/pyramid: source triggers; omitted K=4; equal 1/K fractions; abs exposure <=1x; fill-synchronized progression.",
+    "applicability_rule": "Explicit grid, ladder, pyramid, staged-entry, or unambiguous equivalent wording.",
+    "non_applicability_rule": "Generic add-only, martingale/geometric sizing, unknown trigger spacing, missing exit, or source exposure above 1x.",
+    "default_parameters": "layers=4;fractions=0.25,0.25,0.25,0.25;max_abs_exposure=1.0",
+    "source_phrase_family": "grid;ladder;pyramid;分层建仓;分批建仓;分层加仓;网格;金字塔;逐级加仓;分档进场",
+    "implementation_path": "strategy_framework.modules.GridPyramidState",
+    "contract_hash": "04bdf2f155f0d8adbd18c7225c6d36d61e259896dbf32ceb1ae3bcd639643e6a",
+    "freeze_timestamp": "2026-08-26T13:19:41.202282+00:00",
+    "performance_inspected_before_freeze": "false"
+  },
+  "MODELLED_STANDARD_REGULAR_DIVERGENCE_V1": {
+    "contract_id": "MODELLED_STANDARD_REGULAR_DIVERGENCE_V1",
+    "version": 1,
+    "risk_level": "MEDIUM",
+    "definition": "Regular bullish/bearish divergence at confirmed 2-left/2-right price pivots, named indicator sampled at the same pivot timestamp, within 60 completed bars.",
+    "applicability_rule": "Indicator, orientation, and timeframe are source-identifiable; wording is regular/generic and not hidden divergence.",
+    "non_applicability_rule": "Unknown indicator, hidden divergence, incomplete timeframe, unavailable feature, missing entry/exit, or independent best-pivot matching.",
+    "default_parameters": "side_bars=2;lookback=60;pairing=same_timestamp",
+    "source_phrase_family": "顶背离;底背离;regular divergence",
+    "implementation_path": "strategy_framework.workbook_dsl.RuleEvaluator._regular_divergence",
+    "contract_hash": "2c4b7f614db9019d9d44a927d51f8879af6a92bbef43c9e471fe2bc7b1114d6e",
+    "freeze_timestamp": "2026-08-26T13:19:41.202282+00:00",
+    "performance_inspected_before_freeze": "false"
+  }
+}

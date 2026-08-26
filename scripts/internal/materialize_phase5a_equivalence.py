@@ -25,15 +25,17 @@ def main() -> int:
     parser.add_argument("--batch-root", type=Path, default=ROOT / "outputs/batches/workbook_strategies_phase5a")
     parser.add_argument("--plan", type=Path, default=ROOT / "configs/semantic_contracts/workbook_phase5a_strategies.json")
     parser.add_argument("--audit-root", type=Path, default=ROOT / "outputs/internal_audit/strategy_workbook")
+    parser.add_argument("--output-name", default="phase5a_equivalence_reuse.csv")
     args = parser.parse_args()
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
-    groups: dict[str, list[str]] = defaultdict(list)
-    for identity, definition in sorted(plan.items()): groups[definition["rule_hash"]].append(identity)
+    groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for identity, definition in sorted(plan.items()):
+        groups[(str(definition["rule_hash"]), str(definition.get("source_timeframe", "1m")))].append(identity)
     rows: list[dict[str, object]] = []
-    for rule_hash, identities in sorted(groups.items()):
+    for (rule_hash, timeframe), identities in sorted(groups.items()):
         representative = identities[0]
         for identity in identities:
-            for case in ("1m_lag0", "1m_lag1"):
+            for case in (f"{timeframe}_lag0", f"{timeframe}_lag1"):
                 source = args.batch_root / representative / case
                 destination = args.batch_root / identity / case
                 if not (source / "timeseries.parquet").is_file() or not (source / "summary.json").is_file():
@@ -71,7 +73,7 @@ def main() -> int:
                     "physical_execution": identity == representative,
                     "logical_result_path": str(destination.relative_to(ROOT)),
                 })
-    output = args.audit_root / "phase5a_equivalence_reuse.csv"
+    output = args.audit_root / args.output_name
     with output.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
     print(json.dumps({"logical_cases": len(rows), "physical_cases": len(groups) * 2,

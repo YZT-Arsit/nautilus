@@ -10,6 +10,8 @@ from feature_engine.api import (
     bollinger_percent_b_spec,
     bollinger_width_spec,
     cci_spec,
+    bias_spec,
+    obv_spec,
     confirmed_fractal_spec,
     hlc_mean_spec,
     hma_spec,
@@ -45,7 +47,7 @@ from strategies.workbook_parametric.strategy import WorkbookParametricStrategy
 
 def build_specs(config: WorkbookParametricConfig) -> list[FeatureSpec]:
     common = [rolling_mean_spec("workbook_close", input_field="close", window=1)]
-    if config.family == "phase5a_declarative":
+    if config.family in {"phase5a_declarative", "phase5b_declarative"}:
         rule = json.loads(base64.urlsafe_b64decode(config.rule_spec_b64.encode()).decode())
         specs: list[FeatureSpec] = []
         builders = {
@@ -60,6 +62,8 @@ def build_specs(config: WorkbookParametricConfig) -> list[FeatureSpec]:
             ),
             "rsi": lambda name, item: rsi_spec(name, window=int(item.get("window", 14))),
             "cci": lambda name, item: cci_spec(name, window=int(item.get("window", 20))),
+            "bias": lambda name, item: bias_spec(name, window=int(item.get("window", 20))),
+            "obv": lambda name, item: obv_spec(name, window=int(item.get("window", 20)), output=str(item.get("output", "obv"))),
             "adx": lambda name, item: adx_spec(name, window=int(item.get("window", 14))),
             "plus_di": lambda name, item: plus_di_spec(name, window=int(item.get("window", 14))),
             "minus_di": lambda name, item: minus_di_spec(name, window=int(item.get("window", 14))),
@@ -73,6 +77,11 @@ def build_specs(config: WorkbookParametricConfig) -> list[FeatureSpec]:
                 slow_window=int(item.get("slow_window", 26)),
                 signal_window=int(item.get("signal_window", 9)),
                 output=str(item.get("output", "dif")),
+            ),
+            "psar": lambda name, item: psar_spec(
+                name, step=float(item.get("step", 0.02)),
+                maximum=float(item.get("maximum", 0.2)),
+                output=str(item.get("output", "value")),
             ),
             "breakout_up": lambda name, item: breakout_up_spec(name, window=int(item["window"])),
             "breakout_down": lambda name, item: breakout_down_spec(name, window=int(item["window"])),
@@ -92,11 +101,19 @@ def build_specs(config: WorkbookParametricConfig) -> list[FeatureSpec]:
             "upper_shadow_ratio": lambda name, item: upper_shadow_ratio_spec(name),
             "lower_shadow_ratio": lambda name, item: lower_shadow_ratio_spec(name),
             "rolling_range": lambda name, item: rolling_range_spec(name),
+            "completed_timeframe": lambda name, item: completed_timeframe_spec(
+                name,
+                timeframe_minutes=int(item["timeframe_minutes"]),
+                output=str(item["output"]),
+                window=int(item.get("window", 1)),
+                indicator=item.get("indicator"),
+                indicator_params=dict(item.get("indicator_params", {})),
+            ),
         }
         for item in rule["features"]:
             kind = str(item["kind"])
             if kind not in builders:
-                raise ValueError(f"unsupported Phase 5A feature kind: {kind}")
+                raise ValueError(f"unsupported workbook declarative feature kind: {kind}")
             specs.append(builders[kind](str(item["name"]), item))
         return specs
     if config.family.startswith("session_"):

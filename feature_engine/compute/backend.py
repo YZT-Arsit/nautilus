@@ -58,6 +58,8 @@ from feature_engine.compute.features import (
 # Modular feature library (pure Python; kept out of the legacy features.py).
 from feature_engine.compute.feature_lib import (
     ATRFeature,
+    BiasFeature,
+    OnBalanceVolumeFeature,
     AvgTradeSizeFeature,
     BollingerPercentBFeature,
     BollingerWidthFeature,
@@ -177,6 +179,8 @@ _FEATURE_CLASSES: dict[str, type] = {
     "bollinger_percent_b": BollingerPercentBFeature,
     # D. normalization / volume
     "zscore": ZScoreFeature,
+    "bias": BiasFeature,
+    "obv": OnBalanceVolumeFeature,
     "volume_zscore": VolumeZScoreFeature,
     "volume_ratio": VolumeRatioFeature,
     "quote_volume": QuoteVolumeFeature,
