@@ -99,6 +99,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
+        "--original-only", action="store_true",
+        help="Persist only the source ORIGINAL/NORMAL path (Phase 5A coverage mode).",
+    )
+    parser.add_argument(
         "--module-config",
         type=Path,
         action="append",
@@ -391,6 +395,7 @@ def run_decision_lifecycle(
     strategy_bars: list[BarEvent],
     end_exclusive_ns: int,
     strategy_module: StrategyModule | None = None,
+    warmup_bars: list[BarEvent] | None = None,
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     plugin = get_entry(strategy_name)
     config_obj = _build_config_obj(
@@ -404,6 +409,10 @@ def run_decision_lifecycle(
     if strategy_module is not None:
         specs.append(atr_spec("__phase2_4_module_atr", window=20))
     runner = FeatureStrategyRunner(specs, strategy)
+    # Search/evaluation callers may initialize feature state from prior-only
+    # observations.  FeatureStrategyRunner.warmup deliberately emits no orders
+    # and does not call normal strategy signal generation.
+    runner.warmup(warmup_bars or ())
     simulator = IntentFillSimulator(
         default_price_field="open", allow_short=True, backend="timeframe_lag_experiment"
     )
@@ -600,6 +609,7 @@ def write_case(
     vip9_fee_bps: float,
     vip0_fee_bps: float,
     semantic_metadata: dict[str, Any] | None = None,
+    original_only: bool = False,
 ) -> dict[str, dict[str, Any]]:
     event_time = np.fromiter((bar.event_time_ns for bar in bars), dtype=np.int64)
     market_open = np.fromiter((bar.open for bar in bars), dtype=np.float64)
@@ -608,6 +618,9 @@ def write_case(
     summaries: dict[str, dict[str, Any]] = {}
     direction_variants = build_direction_variants(direction)
     direction_validation = validate_direction_variants(direction, direction_variants)
+    if original_only:
+        direction_variants = {"normal": direction_variants["normal"]}
+        direction_validation = [row for row in direction_validation if row["variant"] == "original"]
     for variant, variant_direction in direction_variants.items():
         equity = pd.DataFrame(
             {"event_time_ns": event_time, "close": close, "position": variant_direction}
@@ -749,7 +762,11 @@ def run_strategy(
                     "module_semantic_provenance": (module_metadata or {}).get(
                         "semantic_provenance", ""
                     ),
+                    "modelled_interpretations": source_config.get("params", {}).get(
+                        "modelled_interpretations", ""
+                    ),
                 },
+                original_only=args.original_only,
             )
         rows.extend(summaries.values())
         print(

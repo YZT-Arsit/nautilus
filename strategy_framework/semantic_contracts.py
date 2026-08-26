@@ -16,6 +16,7 @@ class SemanticProvenance(str, Enum):
     STANDARD_CONTRACT_RESOLVED = "STANDARD_CONTRACT_RESOLVED"
     PARAMETER_DEFAULTED = "PARAMETER_DEFAULTED"
     SESSION_CONTRACT_RESOLVED = "SESSION_CONTRACT_RESOLVED"
+    MODELLED_BASELINE_INTERPRETATION = "MODELLED_BASELINE_INTERPRETATION"
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,64 @@ CONTRACTS: tuple[SemanticContract, ...] = (
                      "higher-timeframe state is visible only after its aligned bar is complete"),
     SemanticContract("PRICE_VS_SINGLE_MA", 1,
                      "single moving-average bullish/bearish alignment means close above/below that average"),
+    SemanticContract("VOLUME_EXPANSION_SMA20_X1_5", 1,
+                     "current completed-bar volume is at least 1.5 times SMA20 volume",
+                     ("lookback", "multiplier"), (("lookback", 20), ("multiplier", 1.5)),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("VOLUME_CONTRACTION_SMA20_X0_7", 1,
+                     "current completed-bar volume is at most 0.7 times SMA20 volume",
+                     ("lookback", "multiplier"), (("lookback", 20), ("multiplier", 0.7)),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_VOLUME_REFERENCE_SMA20", 1,
+                     "omitted average-volume reference is SMA20 while an explicit multiplier is preserved",
+                     ("lookback",), (("lookback", 20),),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("VALID_BREAKOUT_2_CLOSE", 1,
+                     "two consecutive completed closes remain beyond the explicit boundary",
+                     ("bars",), (("bars", 2),),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_SUPPORT_CONFIRMED_FRACTAL_LOW", 1,
+                     "most recent 2-left/2-right confirmed fractal low; visible after confirmation",
+                     ("side_bars",), (("side_bars", 2),),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_RESISTANCE_CONFIRMED_FRACTAL_HIGH", 1,
+                     "most recent 2-left/2-right confirmed fractal high; visible after confirmation",
+                     ("side_bars",), (("side_bars", 2),),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_KEY_LEVEL_FRACTAL_60", 1,
+                     "most recent confirmed fractal extremum within 60 completed bars",
+                     ("lookback", "side_bars"), (("lookback", 60), ("side_bars", 2)),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_ROLLING_EXTREME_Q10_Q90_100", 1,
+                     "current value compared with Q10/Q90 of the prior 100 completed observations",
+                     ("lookback", "low_quantile", "high_quantile"),
+                     (("lookback", 100), ("low_quantile", 0.1), ("high_quantile", 0.9)),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_INDICATOR_STRENGTHEN_SLOPE", 1,
+                     "named indicator current value is greater than its previous completed value",
+                     provenance=SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_INDICATOR_WEAKEN_SLOPE", 1,
+                     "named indicator current value is less than its previous completed value",
+                     provenance=SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_ADX_STRONG_25", 1, "ADX14 is at least 25",
+                     ("period", "threshold"), (("period", 14), ("threshold", 25)),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_FALSE_BREAKOUT_RETURN_2BAR", 1,
+                     "completed breakout returns through its explicit level within two completed bars",
+                     ("return_horizon",), (("return_horizon", 2),),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_PRICE_CHANNEL_20", 1,
+                     "prior 20-completed-bar high/low channel; current observation excluded",
+                     ("lookback",), (("lookback", 20),),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_DOJI_BODY_LE_10PCT_RANGE", 1,
+                     "absolute candle body is at most 10 percent of high-low range",
+                     ("maximum_body_fraction",), (("maximum_body_fraction", 0.1),),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
+    SemanticContract("MODELLED_LONG_SHADOW_BODY_X2", 1,
+                     "named upper or lower shadow is at least twice absolute candle body",
+                     ("minimum_ratio",), (("minimum_ratio", 2.0),),
+                     SemanticProvenance.MODELLED_BASELINE_INTERPRETATION),
 )
 
 REGISTRY: Mapping[str, SemanticContract] = {contract.versioned_id: contract for contract in CONTRACTS}
@@ -238,3 +297,91 @@ def reduce_current(exposure: float, fraction: float = 0.5) -> float:
     if not 0 <= fraction <= 1:
         raise ValueError("fraction must be in [0, 1]")
     return exposure * (1.0 - fraction)
+
+
+def volume_expansion(volume: float, reference: float, multiplier: float = 1.5) -> bool:
+    return reference > 0 and volume >= multiplier * reference
+
+
+def volume_contraction(volume: float, reference: float, multiplier: float = 0.7) -> bool:
+    return reference > 0 and volume <= multiplier * reference
+
+
+def rolling_extreme(value: float, prior: Sequence[float], *, high: bool,
+                    quantile: float | None = None) -> bool:
+    """Compare with a prior-only empirical quantile without lookahead."""
+    if not prior:
+        return False
+    q = (0.9 if high else 0.1) if quantile is None else quantile
+    if not 0 <= q <= 1:
+        raise ValueError("quantile must be in [0, 1]")
+    ordered = sorted(float(item) for item in prior)
+    index = (len(ordered) - 1) * q
+    lower = int(index)
+    upper = min(lower + 1, len(ordered) - 1)
+    threshold = ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower)
+    return value >= threshold if high else value <= threshold
+
+
+def indicator_strengthened(previous: float, current: float) -> bool:
+    return current > previous
+
+
+def indicator_weakened(previous: float, current: float) -> bool:
+    return current < previous
+
+
+def adx_strong(value: float, threshold: float = 25.0) -> bool:
+    return value >= threshold
+
+
+def doji(open_: float, high: float, low: float, close: float,
+         maximum_body_fraction: float = 0.1) -> bool:
+    candle_range = high - low
+    return candle_range > 0 and abs(close - open_) <= maximum_body_fraction * candle_range
+
+
+def long_upper_shadow(open_: float, high: float, close: float,
+                      minimum_ratio: float = 2.0) -> bool:
+    return high - max(open_, close) >= minimum_ratio * abs(close - open_)
+
+
+def long_lower_shadow(open_: float, low: float, close: float,
+                      minimum_ratio: float = 2.0) -> bool:
+    return min(open_, close) - low >= minimum_ratio * abs(close - open_)
+
+
+def recent_confirmed_level(levels: Sequence[float | None], lookback: int = 60) -> float | None:
+    """Return the latest confirmed level within a prior-only completed window."""
+    if lookback <= 0:
+        raise ValueError("lookback must be positive")
+    for level in reversed(levels[-lookback:]):
+        if level is not None:
+            return float(level)
+    return None
+
+
+@dataclass
+class FalseBreakoutState:
+    direction: int
+    return_horizon: int = 2
+    breakout_age: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.direction not in (-1, 1) or self.return_horizon <= 0:
+            raise ValueError("invalid false-breakout contract")
+
+    def update(self, close: float, level: float) -> bool:
+        beyond = close > level if self.direction > 0 else close < level
+        returned = close < level if self.direction > 0 else close > level
+        if self.breakout_age is None:
+            if beyond:
+                self.breakout_age = 0
+            return False
+        self.breakout_age += 1
+        if returned and self.breakout_age <= self.return_horizon:
+            self.breakout_age = None
+            return True
+        if self.breakout_age >= self.return_horizon:
+            self.breakout_age = None
+        return False

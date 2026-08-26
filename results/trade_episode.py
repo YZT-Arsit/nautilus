@@ -1,18 +1,23 @@
-"""Executed-position episode/de-risk break-even cost analytics.
+"""
+Executed-position episode/de-risk break-even cost analytics.
 
 The primary metric follows the research contract: an episode is measured from
 an executed-position opening (or the residual position after a prior de-risk)
 through the next partial reduction, close, or reversal.  It consumes persisted
 gross-return and turnover streams; it does not replay strategy signals.
 """
+
 from __future__ import annotations
 
 import csv
 import math
 import statistics
-from datetime import UTC, datetime
+from collections.abc import Iterable
+from datetime import UTC
+from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 
 EPISODE_COLUMNS = (
@@ -28,6 +33,8 @@ EPISODE_COLUMNS = (
     "side",
     "start_timestamp",
     "completion_timestamp",
+    "holding_duration_seconds",
+    "holding_duration_minutes",
     "start_position",
     "maximum_abs_position",
     "end_position",
@@ -46,7 +53,7 @@ def _iso(timestamp_ns: int) -> str:
     return datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC).isoformat()
 
 
-def build_de_risk_episodes(
+def build_de_risk_episodes(  # noqa: C901 - explicit lifecycle state machine
     *,
     event_time_ns: Iterable[int],
     executed_position: Iterable[float],
@@ -60,7 +67,8 @@ def build_de_risk_episodes(
     variant: str = "original",
     tolerance: float = 1e-12,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Segment an executed stream at reductions, closes, and reversals.
+    """
+    Segment an executed stream at reductions, closes, and reversals.
 
     Reversal turnover is deterministically split in proportion to the closing
     and opening absolute quantities.  For ``+0.8 -> -0.4``, two thirds of the
@@ -75,7 +83,7 @@ def build_de_risk_episodes(
     length = len(times)
     if not all(len(values) == length for values in (positions, turnover, returns)):
         raise ValueError("episode source columns must have equal length")
-    if any(right < left for left, right in zip(times, times[1:])):
+    if any(right < left for left, right in pairwise(times)):
         raise ValueError("episode timestamps must be non-decreasing")
     if any(value < -tolerance for value in turnover):
         raise ValueError("turnover increments cannot be negative")
@@ -111,6 +119,9 @@ def build_de_risk_episodes(
             active = None
             return
         break_even = delta_return * 10_000.0 / delta_turnover
+        start_time = datetime.fromisoformat(str(active["start_timestamp"]))
+        completion_time = datetime.fromisoformat(_iso(timestamp))
+        holding_duration_seconds = (completion_time - start_time).total_seconds()
         episodes.append(
             {
                 "episode_id": len(episodes) + 1,
@@ -124,7 +135,9 @@ def build_de_risk_episodes(
                 "premium_mode": premium_mode,
                 "side": active["side"],
                 "start_timestamp": active["start_timestamp"],
-                "completion_timestamp": _iso(timestamp),
+                "completion_timestamp": completion_time.isoformat(),
+                "holding_duration_seconds": holding_duration_seconds,
+                "holding_duration_minutes": holding_duration_seconds / 60.0,
                 "start_position": active["start_position"],
                 "maximum_abs_position": active["maximum_abs_position"],
                 "end_position": end_position,
@@ -167,9 +180,7 @@ def build_de_risk_episodes(
                 active = start_episode(timestamp, position, 0.0)
         elif active is not None:
             active["turnover"] = float(active["turnover"]) + turnover_delta
-            active["maximum_abs_position"] = max(
-                float(active["maximum_abs_position"]), current_abs
-            )
+            active["maximum_abs_position"] = max(float(active["maximum_abs_position"]), current_abs)
         else:
             unmatched_turnover += turnover_delta
         previous_position = position
@@ -191,7 +202,9 @@ def build_de_risk_episodes(
     break_even_values = [float(row["break_even_bps"]) for row in episodes]
     summary = {
         "completed_episode_count": len(episodes),
-        "partial_reduce_count": sum(row["completion_reason"] == "partial_reduce" for row in episodes),
+        "partial_reduce_count": sum(
+            row["completion_reason"] == "partial_reduce" for row in episodes
+        ),
         "close_count": sum(row["completion_reason"] == "close" for row in episodes),
         "reversal_count": sum(row["completion_reason"] == "reversal" for row in episodes),
         "open_unfinished_episode_count": int(active is not None),
@@ -204,9 +217,7 @@ def build_de_risk_episodes(
         "break_even_bps_median": (
             statistics.median(break_even_values) if break_even_values else None
         ),
-        "break_even_bps_mean": (
-            statistics.fmean(break_even_values) if break_even_values else None
-        ),
+        "break_even_bps_mean": (statistics.fmean(break_even_values) if break_even_values else None),
         "break_even_bps_max": max(break_even_values, default=None),
     }
     return episodes, summary

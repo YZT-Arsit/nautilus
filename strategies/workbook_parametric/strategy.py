@@ -7,6 +7,8 @@ from strategy_framework.modules import GridPyramidState, PyramidDirection
 from strategy_framework.semantic_contracts import turn_down, turn_up
 
 from strategies.workbook_parametric.config import WorkbookParametricConfig
+import base64
+import json
 
 BUY, SELL, HOLD, EXIT = "BUY", "SELL", "HOLD", "EXIT"
 
@@ -27,6 +29,12 @@ class WorkbookParametricStrategy:
             step_atr=config.entry_distance_multiple,
             layer_fraction=config.layer_fraction,
         ) if config.family == "donchian_pyramid" else None
+        self._phase5a_rule = (
+            json.loads(base64.urlsafe_b64decode(config.rule_spec_b64.encode()).decode())
+            if config.family == "phase5a_declarative" else None
+        )
+        self._phase5a_history: dict[str, list[float]] = {}
+        self._phase5a_condition_history: dict[str, list[bool]] = {}
 
     def synchronize_execution(self, *, position: float, fill_price: float) -> None:
         if self._grid is not None:
@@ -35,6 +43,102 @@ class WorkbookParametricStrategy:
     def _value(self, snapshot: FeatureSnapshot, name: str) -> float | None:
         value = snapshot.value(name)
         return None if value is None else float(value)
+
+    def _phase5a_operand(self, node: object, values: dict[str, float]) -> float | None:
+        if isinstance(node, (int, float)):
+            return float(node)
+        if isinstance(node, str):
+            return values.get(node)
+        if isinstance(node, dict) and node.get("op") == "previous":
+            history = self._phase5a_history.get(str(node["value"]), [])
+            lag = int(node.get("lag", 1))
+            return history[-lag] if len(history) >= lag else None
+        raise ValueError(f"invalid Phase 5A operand: {node!r}")
+
+    def _phase5a_eval(self, node: dict, values: dict[str, float], key: str) -> bool:
+        op = str(node["op"])
+        if op in {"and", "or"}:
+            states = [self._phase5a_eval(child, values, f"{key}.{index}")
+                      for index, child in enumerate(node["args"])]
+            return all(states) if op == "and" else any(states)
+        if op == "not":
+            return not self._phase5a_eval(node["arg"], values, f"{key}.not")
+        if op == "true":
+            return True
+        if op == "consecutive":
+            state = self._phase5a_eval(node["arg"], values, f"{key}.inner")
+            history = self._phase5a_condition_history.setdefault(key, [])
+            history.append(state)
+            bars = int(node["bars"])
+            if len(history) > bars:
+                del history[:-bars]
+            return len(history) == bars and all(history)
+        if op in {"gt", "gte", "lt", "lte", "eq"}:
+            left = self._phase5a_operand(node["left"], values)
+            right = self._phase5a_operand(node["right"], values)
+            if left is None or right is None:
+                return False
+            return {"gt": left > right, "gte": left >= right, "lt": left < right,
+                    "lte": left <= right, "eq": left == right}[op]
+        if op in {"cross_above", "cross_below"}:
+            left_name, right_node = str(node["left"]), node["right"]
+            current_left = values.get(left_name)
+            current_right = self._phase5a_operand(right_node, values)
+            left_history = self._phase5a_history.get(left_name, [])
+            if isinstance(right_node, str):
+                right_history = self._phase5a_history.get(right_node, [])
+                previous_right = right_history[-1] if right_history else None
+            else:
+                previous_right = self._phase5a_operand(right_node, values)
+            if current_left is None or current_right is None or not left_history or previous_right is None:
+                return False
+            previous_left = left_history[-1]
+            return (previous_left <= previous_right and current_left > current_right) if op == "cross_above" else (
+                previous_left >= previous_right and current_left < current_right
+            )
+        if op in {"turn_up", "turn_down"}:
+            name = str(node["value"])
+            history = self._phase5a_history.get(name, [])
+            current = values.get(name)
+            if current is None or len(history) < 2:
+                return False
+            return turn_up(history[-2], history[-1], current) if op == "turn_up" else turn_down(
+                history[-2], history[-1], current
+            )
+        if op == "pulse":
+            value = values.get(str(node["value"]))
+            return value is not None and value > 0
+        raise ValueError(f"unsupported Phase 5A expression operator: {op}")
+
+    def _on_phase5a_snapshot(self, snapshot: FeatureSnapshot) -> PlannedSignal | str:
+        assert self._phase5a_rule is not None
+        values: dict[str, float] = {}
+        ready = True
+        for feature in self._phase5a_rule["features"]:
+            value = self._value(snapshot, str(feature["name"]))
+            if value is None:
+                ready = False
+            else:
+                values[str(feature["name"])] = value
+        if not ready:
+            return HOLD
+        exit_node = self._phase5a_rule.get("exit_long" if self.decision_position > 0 else "exit_short")
+        reduce_node = self._phase5a_rule.get("reduce_long" if self.decision_position > 0 else "reduce_short")
+        signal: PlannedSignal | str = HOLD
+        if self.decision_position and exit_node and self._phase5a_eval(exit_node, values, "exit"):
+            signal = self._set(0)
+        elif self.decision_position and reduce_node and self._phase5a_eval(reduce_node, values, "reduce"):
+            signal = self._set(self.decision_position * float(self._phase5a_rule.get("reduction_fraction", 0.5)))
+        elif self._phase5a_eval(self._phase5a_rule["long"], values, "long"):
+            signal = self._set(1)
+        elif self._phase5a_eval(self._phase5a_rule["short"], values, "short"):
+            signal = self._set(-1)
+        for name, value in values.items():
+            history = self._phase5a_history.setdefault(name, [])
+            history.append(value)
+            if len(history) > 128:
+                del history[:-128]
+        return signal
 
     def _set(self, target: float) -> PlannedSignal:
         target = float(target)
@@ -183,6 +287,8 @@ class WorkbookParametricStrategy:
 
     def on_snapshot(self, snapshot: FeatureSnapshot) -> str:
         family = self.config.family
+        if family == "phase5a_declarative":
+            return self._on_phase5a_snapshot(snapshot)
         close = self._value(snapshot, "workbook_close")
         if close is None:
             return HOLD

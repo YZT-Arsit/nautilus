@@ -1,0 +1,121 @@
+{
+  "registry_version": "WORKBOOK_PHASE5A_MODELLED_V1",
+  "frozen_before_backtest": true,
+  "contracts": [
+    {
+      "contract_id": "VOLUME_EXPANSION_SMA20_X1_5", "contract_version": 1,
+      "source_phrase_family": ["放量", "明显放量", "成交量显著放大"],
+      "machine_definition": "volume[t] >= 1.5 * SMA(volume,20)[t] on completed bars",
+      "default_parameters": {"lookback": 20, "multiplier": 1.5},
+      "provenance": "MODELLED_BASELINE_INTERPRETATION", "lookahead_rule": "completed bars only",
+      "applicable_contexts": ["bar volume exists and source gives no formula"],
+      "non_applicable_contexts": ["source supplies an explicit reference or multiplier"]
+    },
+    {
+      "contract_id": "VOLUME_CONTRACTION_SMA20_X0_7", "contract_version": 1,
+      "source_phrase_family": ["缩量", "明显缩量", "成交量萎缩"],
+      "machine_definition": "volume[t] <= 0.7 * SMA(volume,20)[t] on completed bars",
+      "default_parameters": {"lookback": 20, "multiplier": 0.7},
+      "provenance": "MODELLED_BASELINE_INTERPRETATION", "lookahead_rule": "completed bars only",
+      "applicable_contexts": ["bar volume exists and source gives no formula"],
+      "non_applicable_contexts": ["source supplies an explicit reference or multiplier"]
+    },
+    {
+      "contract_id": "MODELLED_VOLUME_REFERENCE_SMA20", "contract_version": 1,
+      "source_phrase_family": ["均量", "平均成交量"],
+      "machine_definition": "omitted volume reference is SMA(volume,20); an explicit source multiplier remains unchanged",
+      "default_parameters": {"lookback": 20},
+      "provenance": "MODELLED_BASELINE_INTERPRETATION", "lookahead_rule": "completed bars only",
+      "applicable_contexts": ["source gives a volume multiplier but omits reference lookback"],
+      "non_applicable_contexts": ["source explicitly supplies the volume lookback"]
+    },
+    {
+      "contract_id": "VALID_BREAKOUT_2_CLOSE", "contract_version": 1,
+      "source_phrase_family": ["有效突破", "确认突破"],
+      "machine_definition": "two consecutive completed closes beyond the explicit boundary",
+      "default_parameters": {"bars": 2}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "current and previous completed close only",
+      "applicable_contexts": ["an explicit boundary exists"], "non_applicable_contexts": ["no identifiable boundary"]
+    },
+    {
+      "contract_id": "MODELLED_SUPPORT_CONFIRMED_FRACTAL_LOW", "contract_version": 1,
+      "source_phrase_family": ["支撑"], "machine_definition": "most recent confirmed 2-left/2-right fractal low",
+      "default_parameters": {"side_bars": 2}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "pivot visible only after two right bars complete",
+      "applicable_contexts": ["source gives no support level"], "non_applicable_contexts": ["source names MA/VWAP/band/high/price"]
+    },
+    {
+      "contract_id": "MODELLED_RESISTANCE_CONFIRMED_FRACTAL_HIGH", "contract_version": 1,
+      "source_phrase_family": ["压力", "阻力"], "machine_definition": "most recent confirmed 2-left/2-right fractal high",
+      "default_parameters": {"side_bars": 2}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "pivot visible only after two right bars complete",
+      "applicable_contexts": ["source gives no resistance level"], "non_applicable_contexts": ["source names MA/VWAP/band/low/price"]
+    },
+    {
+      "contract_id": "MODELLED_KEY_LEVEL_FRACTAL_60", "contract_version": 1,
+      "source_phrase_family": ["关键支撑", "重要支撑", "关键压力", "重要压力"],
+      "machine_definition": "most recent confirmed fractal extremum within 60 completed bars",
+      "default_parameters": {"lookback": 60, "side_bars": 2}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "confirmed pivots and prior 60 completed bars only",
+      "applicable_contexts": ["key level omitted"], "non_applicable_contexts": ["source supplies the key level"]
+    },
+    {
+      "contract_id": "MODELLED_ROLLING_EXTREME_Q10_Q90_100", "contract_version": 1,
+      "source_phrase_family": ["历史高位", "历史低位", "极端高", "极端低", "相对近期极值"],
+      "machine_definition": "value compared with prior-only Q10/Q90 over 100 completed observations",
+      "default_parameters": {"lookback": 100, "low_quantile": 0.1, "high_quantile": 0.9},
+      "provenance": "MODELLED_BASELINE_INTERPRETATION", "lookahead_rule": "current observation excluded from reference quantile",
+      "applicable_contexts": ["explicit unbounded variable"], "non_applicable_contexts": ["bounded indicator or generic rise/fall"]
+    },
+    {
+      "contract_id": "MODELLED_INDICATOR_STRENGTHEN_SLOPE", "contract_version": 1,
+      "source_phrase_family": ["动能增强", "指标增强", "趋势指标转强"],
+      "machine_definition": "explicitly named X[t] > X[t-1]", "default_parameters": {},
+      "provenance": "MODELLED_BASELINE_INTERPRETATION", "lookahead_rule": "two completed observations",
+      "applicable_contexts": ["X is explicitly named"], "non_applicable_contexts": ["no identifiable X"]
+    },
+    {
+      "contract_id": "MODELLED_INDICATOR_WEAKEN_SLOPE", "contract_version": 1,
+      "source_phrase_family": ["动能减弱", "指标减弱", "趋势指标转弱"],
+      "machine_definition": "explicitly named X[t] < X[t-1]", "default_parameters": {},
+      "provenance": "MODELLED_BASELINE_INTERPRETATION", "lookahead_rule": "two completed observations",
+      "applicable_contexts": ["X is explicitly named"], "non_applicable_contexts": ["no identifiable X"]
+    },
+    {
+      "contract_id": "MODELLED_ADX_STRONG_25", "contract_version": 1,
+      "source_phrase_family": ["趋势明显", "趋势较强"], "machine_definition": "ADX(14) >= 25",
+      "default_parameters": {"period": 14, "threshold": 25}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "completed-bar Wilder ADX", "applicable_contexts": ["source explicitly references ADX"],
+      "non_applicable_contexts": ["source does not identify ADX/trend-strength variable"]
+    },
+    {
+      "contract_id": "MODELLED_FALSE_BREAKOUT_RETURN_2BAR", "contract_version": 1,
+      "source_phrase_family": ["假突破"], "machine_definition": "breakout returns through explicit level within next two completed bars",
+      "default_parameters": {"return_horizon": 2}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "online state; signal occurs only when return bar completes",
+      "applicable_contexts": ["explicit reference level"], "non_applicable_contexts": ["no identifiable level"]
+    },
+    {
+      "contract_id": "MODELLED_PRICE_CHANNEL_20", "contract_version": 1,
+      "source_phrase_family": ["通道"], "machine_definition": "prior 20-completed-bar high/low channel",
+      "default_parameters": {"lookback": 20}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "current bar excluded from channel", "applicable_contexts": ["source names no channel type"],
+      "non_applicable_contexts": ["Donchian/Bollinger/Keltner or another explicit channel"]
+    },
+    {
+      "contract_id": "MODELLED_DOJI_BODY_LE_10PCT_RANGE", "contract_version": 1,
+      "source_phrase_family": ["十字", "十字星"], "machine_definition": "abs(close-open) <= 0.1*(high-low)",
+      "default_parameters": {"maximum_body_fraction": 0.1}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "completed candle only", "applicable_contexts": ["source gives no doji ratio"],
+      "non_applicable_contexts": ["source gives an explicit candle ratio"]
+    },
+    {
+      "contract_id": "MODELLED_LONG_SHADOW_BODY_X2", "contract_version": 1,
+      "source_phrase_family": ["长上影", "长下影"],
+      "machine_definition": "named shadow length >= 2*abs(close-open)",
+      "default_parameters": {"minimum_ratio": 2.0}, "provenance": "MODELLED_BASELINE_INTERPRETATION",
+      "lookahead_rule": "completed candle only", "applicable_contexts": ["source gives no shadow ratio"],
+      "non_applicable_contexts": ["explicit named pattern with its own contract"]
+    }
+  ]
+}

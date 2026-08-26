@@ -1,0 +1,17 @@
+"""Typed configuration compiled from workbook row xlsx_s2_0452."""
+
+from dataclasses import dataclass
+
+from strategies.workbook_parametric.config import WorkbookParametricConfig
+
+
+@dataclass(frozen=True)
+class XlsxS20452Config(WorkbookParametricConfig):
+    source_registry_id: str = 'xlsx_s2_0452'
+    family: str = 'phase5a_declarative'
+    semantic_provenance: str = 'STANDARD_CONTRACT_RESOLVED'
+    contracts_applied: str = 'CONFLUENCE_AND_V1;TURN_SLOPE_SIGN_CHANGE_V1'
+    defaulted_parameters: str = ''
+    rule_spec_b64: str = 'eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3JvY18xMiJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfcm9jXzEyIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJmYXN0X3dpbmRvdyI6NSwia2luZCI6ImFvIiwibmFtZSI6InA1X2FvIiwic2xvd193aW5kb3ciOjM0fSx7ImtpbmQiOiJyZXR1cm4iLCJuYW1lIjoicDVfcm9jXzEyIiwid2luZG93IjoxMn1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSx7ImxlZnQiOiJwNV9yb2NfMTIiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FvIiwib3AiOiJsdCIsInJpZ2h0IjowLjB9LHsibGVmdCI6InA1X3JvY18xMiIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6MC4wfV0sIm9wIjoiYW5kIn19'
+    contract_versions: str = 'CONFLUENCE_AND_V1;TURN_SLOPE_SIGN_CHANGE_V1'
+    modelled_interpretations: str = ''

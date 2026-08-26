@@ -224,6 +224,7 @@ _SEMANTIC_PLANS = (
     Path(__file__).resolve().parents[1] / "configs/semantic_contracts/workbook_phase2_2b_strategies.json",
     Path(__file__).resolve().parents[1] / "configs/semantic_contracts/workbook_phase2_2c_strategies.json",
     Path(__file__).resolve().parents[1] / "configs/semantic_contracts/workbook_phase2_3_strategies.json",
+    Path(__file__).resolve().parents[1] / "configs/semantic_contracts/workbook_phase5a_strategies.json",
 )
 for _semantic_plan in _SEMANTIC_PLANS:
     if not _semantic_plan.is_file():

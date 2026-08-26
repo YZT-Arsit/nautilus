@@ -26,7 +26,17 @@ from feature_engine.api import (
     session_flatten_due_spec,
     completed_timeframe_spec,
     return_n_spec,
+    candle_body_ratio_spec,
+    lower_shadow_ratio_spec,
+    momentum_n_spec,
+    price_position_spec,
+    rolling_range_spec,
+    upper_shadow_ratio_spec,
+    volume_ratio_spec,
+    zscore_spec,
 )
+import base64
+import json
 from strategy_framework.plugin import StrategyPlugin
 
 from strategies.workbook_parametric.config import WorkbookParametricConfig
@@ -35,6 +45,60 @@ from strategies.workbook_parametric.strategy import WorkbookParametricStrategy
 
 def build_specs(config: WorkbookParametricConfig) -> list[FeatureSpec]:
     common = [rolling_mean_spec("workbook_close", input_field="close", window=1)]
+    if config.family == "phase5a_declarative":
+        rule = json.loads(base64.urlsafe_b64decode(config.rule_spec_b64.encode()).decode())
+        specs: list[FeatureSpec] = []
+        builders = {
+            "bar": lambda name, item: rolling_mean_spec(
+                name, input_field=str(item["field"]), window=1,
+            ),
+            "sma": lambda name, item: rolling_mean_spec(
+                name, input_field=str(item.get("field", "close")), window=int(item["window"]),
+            ),
+            "ema": lambda name, item: ema_spec(
+                name, input_field=str(item.get("field", "close")), window=int(item["window"]),
+            ),
+            "rsi": lambda name, item: rsi_spec(name, window=int(item.get("window", 14))),
+            "cci": lambda name, item: cci_spec(name, window=int(item.get("window", 20))),
+            "adx": lambda name, item: adx_spec(name, window=int(item.get("window", 14))),
+            "plus_di": lambda name, item: plus_di_spec(name, window=int(item.get("window", 14))),
+            "minus_di": lambda name, item: minus_di_spec(name, window=int(item.get("window", 14))),
+            "atr": lambda name, item: atr_spec(name, window=int(item.get("window", 14))),
+            "ao": lambda name, item: awesome_oscillator_spec(
+                name, fast_window=int(item.get("fast_window", 5)),
+                slow_window=int(item.get("slow_window", 34)),
+            ),
+            "macd": lambda name, item: macd_spec(
+                name, fast_window=int(item.get("fast_window", 12)),
+                slow_window=int(item.get("slow_window", 26)),
+                signal_window=int(item.get("signal_window", 9)),
+                output=str(item.get("output", "dif")),
+            ),
+            "breakout_up": lambda name, item: breakout_up_spec(name, window=int(item["window"])),
+            "breakout_down": lambda name, item: breakout_down_spec(name, window=int(item["window"])),
+            "fractal": lambda name, item: confirmed_fractal_spec(name, output=str(item["output"])),
+            "return": lambda name, item: return_n_spec(name, window=int(item.get("window", 1))),
+            "momentum": lambda name, item: momentum_n_spec(name, window=int(item.get("window", 1))),
+            "price_position": lambda name, item: price_position_spec(name, window=int(item["window"])),
+            "volume_ratio": lambda name, item: volume_ratio_spec(name, window=int(item.get("window", 20))),
+            "zscore": lambda name, item: zscore_spec(name, window=int(item.get("window", 20))),
+            "bollinger_width": lambda name, item: bollinger_width_spec(
+                name, window=int(item.get("window", 20)), k=float(item.get("k", 2.0)),
+            ),
+            "bollinger_percent_b": lambda name, item: bollinger_percent_b_spec(
+                name, window=int(item.get("window", 20)), k=float(item.get("k", 2.0)),
+            ),
+            "candle_body_ratio": lambda name, item: candle_body_ratio_spec(name),
+            "upper_shadow_ratio": lambda name, item: upper_shadow_ratio_spec(name),
+            "lower_shadow_ratio": lambda name, item: lower_shadow_ratio_spec(name),
+            "rolling_range": lambda name, item: rolling_range_spec(name),
+        }
+        for item in rule["features"]:
+            kind = str(item["kind"])
+            if kind not in builders:
+                raise ValueError(f"unsupported Phase 5A feature kind: {kind}")
+            specs.append(builders[kind](str(item["name"]), item))
+        return specs
     if config.family.startswith("session_"):
         session = common + [
             crypto_utc_session_spec("workbook_session_vwap", output="session_vwap"),

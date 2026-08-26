@@ -1,0 +1,806 @@
+{
+  "xlsx_s1_0435": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiZ3RlIiwicmlnaHQiOjEwMC4wfSwiZXhpdF9zaG9ydCI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJsdGUiLCJyaWdodCI6LTEwMC4wfSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJjY2kiLCJuYW1lIjoicDVfY2NpXzIwIiwid2luZG93IjoyMH0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV8yMCIsIndpbmRvdyI6MjB9XSwibG9uZyI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJndCIsInJpZ2h0IjoicDVfc21hXzIwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOi0xMDAuMH1dLCJvcCI6ImFuZCJ9LCJyZWR1Y2VfbG9uZyI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6MC4wfSwicmVkdWN0aW9uX2ZyYWN0aW9uIjowLjUsInNjaGVtYV92ZXJzaW9uIjoxLCJzaG9ydCI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJsdCIsInJpZ2h0IjoicDVfc21hXzIwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2JlbG93IiwicmlnaHQiOjEwMC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "STABLE_CLOSE_2BAR_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "MEAN_REVERSION_COMPLETION",
+      "POSITION_FRACTION_MISSING",
+      "TOUCH_SEMANTICS"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "50c75f15cae812024945c1d19a04ab73ef58355ca42a4e7c1526661633cfa388"
+  },
+  "xlsx_s1_0436": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3NtYV8yMCJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfc21hXzIwIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV8yMCIsIndpbmRvdyI6MjB9LHsiZmFzdF93aW5kb3ciOjUsImtpbmQiOiJhbyIsIm5hbWUiOiJwNV9hbyIsInNsb3dfd2luZG93IjozNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9zbWFfMjAiLCJvcCI6Imd0IiwicmlnaHQiOnsib3AiOiJwcmV2aW91cyIsInZhbHVlIjoicDVfc21hXzIwIn19LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjowLjB9LHsiYXJnIjp7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSwiYmFycyI6Miwib3AiOiJjb25zZWN1dGl2ZSJ9XSwib3AiOiJhbmQifSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9zbWFfMjAiLCJvcCI6Imx0IiwicmlnaHQiOnsib3AiOiJwcmV2aW91cyIsInZhbHVlIjoicDVfc21hXzIwIn19LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LHsiYXJnIjp7ImxlZnQiOiJwNV9hbyIsIm9wIjoibHQiLCJyaWdodCI6MC4wfSwiYmFycyI6Miwib3AiOiJjb25zZWN1dGl2ZSJ9XSwib3AiOiJhbmQifX0=",
+      "contract_versions": "CONFLUENCE_AND_V1;PERSISTENCE_2BAR_V1;TURN_SLOPE_SIGN_CHANGE_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "PERSISTENCE_2BAR_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "PERSISTENCE_COUNT_MISSING",
+      "POSITION_FRACTION_MISSING"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "f7bb41483ee7fdfd3bed85a820ba946e89a6a13ce1fe632fe12a7797f7aa64b8"
+  },
+  "xlsx_s1_0480": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJndGUiLCJyaWdodCI6NzAuMH1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdGUiLCJyaWdodCI6MzAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoicnNpIiwibmFtZSI6InA1X3JzaV81Iiwid2luZG93Ijo1fSx7ImtpbmQiOiJyc2kiLCJuYW1lIjoicDVfcnNpXzE0Iiwid2luZG93IjoxNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9yc2lfNSIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3JzaV8xNCJ9LHsibGVmdCI6InA1X3JzaV8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6NDAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdCIsInJpZ2h0Ijo2MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "BOUNDED_INDICATOR_EXTREMES_V1;CONFLUENCE_AND_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "BOUNDED_INDICATOR_EXTREMES_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "TOUCH_SEMANTICS",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "831c82310ff9397e4e273d689fae8be0379dea2f536c30a4eac407691fef788f"
+  },
+  "xlsx_s2_0169": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJndGUiLCJyaWdodCI6NzAuMH1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdGUiLCJyaWdodCI6MzAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoicnNpIiwibmFtZSI6InA1X3JzaV81Iiwid2luZG93Ijo1fSx7ImtpbmQiOiJyc2kiLCJuYW1lIjoicDVfcnNpXzE0Iiwid2luZG93IjoxNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9yc2lfNSIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3JzaV8xNCJ9LHsibGVmdCI6InA1X3JzaV8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6NDAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdCIsInJpZ2h0Ijo2MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "BOUNDED_INDICATOR_EXTREMES_V1;CONFLUENCE_AND_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "BOUNDED_INDICATOR_EXTREMES_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "TOUCH_SEMANTICS",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "831c82310ff9397e4e273d689fae8be0379dea2f536c30a4eac407691fef788f"
+  },
+  "xlsx_s2_0285": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiZ3RlIiwicmlnaHQiOjEwMC4wfSwiZXhpdF9zaG9ydCI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJsdGUiLCJyaWdodCI6LTEwMC4wfSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJjY2kiLCJuYW1lIjoicDVfY2NpXzIwIiwid2luZG93IjoyMH0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV82MCIsIndpbmRvdyI6NjB9XSwibG9uZyI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJndCIsInJpZ2h0IjoicDVfc21hXzYwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOi0xMDAuMH1dLCJvcCI6ImFuZCJ9LCJyZWR1Y2VfbG9uZyI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6MC4wfSwicmVkdWN0aW9uX2ZyYWN0aW9uIjowLjUsInNjaGVtYV92ZXJzaW9uIjoxLCJzaG9ydCI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJsdCIsInJpZ2h0IjoicDVfc21hXzYwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2JlbG93IiwicmlnaHQiOjEwMC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "STABLE_CLOSE_2BAR_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "POSITION_FRACTION_MISSING",
+      "STABLE_ABOVE",
+      "TOUCH_SEMANTICS"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "668c1bea89bb710303b80bc14bb69f5d9a51981515e05f718c88ee99a1d5726f"
+  },
+  "xlsx_s2_0343": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3NtYV8yMCJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfc21hXzIwIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV8yMCIsIndpbmRvdyI6MjB9LHsiZmFzdF93aW5kb3ciOjUsImtpbmQiOiJhbyIsIm5hbWUiOiJwNV9hbyIsInNsb3dfd2luZG93IjozNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9zbWFfMjAiLCJvcCI6Imd0IiwicmlnaHQiOnsib3AiOiJwcmV2aW91cyIsInZhbHVlIjoicDVfc21hXzIwIn19LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjowLjB9LHsiYXJnIjp7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSwiYmFycyI6Miwib3AiOiJjb25zZWN1dGl2ZSJ9XSwib3AiOiJhbmQifSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9zbWFfMjAiLCJvcCI6Imx0IiwicmlnaHQiOnsib3AiOiJwcmV2aW91cyIsInZhbHVlIjoicDVfc21hXzIwIn19LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LHsiYXJnIjp7ImxlZnQiOiJwNV9hbyIsIm9wIjoibHQiLCJyaWdodCI6MC4wfSwiYmFycyI6Miwib3AiOiJjb25zZWN1dGl2ZSJ9XSwib3AiOiJhbmQifX0=",
+      "contract_versions": "CONFLUENCE_AND_V1;PERSISTENCE_2BAR_V1;TURN_SLOPE_SIGN_CHANGE_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "PERSISTENCE_2BAR_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "PERSISTENCE_COUNT_MISSING",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "f7bb41483ee7fdfd3bed85a820ba946e89a6a13ce1fe632fe12a7797f7aa64b8"
+  },
+  "xlsx_s2_0353": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJndGUiLCJyaWdodCI6NzAuMH1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdGUiLCJyaWdodCI6MzAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoicnNpIiwibmFtZSI6InA1X3JzaV81Iiwid2luZG93Ijo1fSx7ImtpbmQiOiJyc2kiLCJuYW1lIjoicDVfcnNpXzE0Iiwid2luZG93IjoxNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9yc2lfNSIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3JzaV8xNCJ9LHsibGVmdCI6InA1X3JzaV8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6NDAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdCIsInJpZ2h0Ijo2MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "BOUNDED_INDICATOR_EXTREMES_V1;CONFLUENCE_AND_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "BOUNDED_INDICATOR_EXTREMES_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFLUENCE_COMPOSITION",
+      "EXTREME_THRESHOLD_MISSING",
+      "TOUCH_SEMANTICS",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "831c82310ff9397e4e273d689fae8be0379dea2f536c30a4eac407691fef788f"
+  },
+  "xlsx_s2_0364": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0sImV4aXRfc2hvcnQiOnsibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoiYWR4IiwibmFtZSI6InA1X2FkeF8xNCIsIndpbmRvdyI6MTR9LHsia2luZCI6InNtYSIsIm5hbWUiOiJwNV9zbWFfMjAiLCJ3aW5kb3ciOjIwfSx7ImtpbmQiOiJzbWEiLCJuYW1lIjoicDVfc21hXzYwIiwid2luZG93Ijo2MH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hZHhfMTQiLCJvcCI6Imd0IiwicmlnaHQiOjI1LjB9LHsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3NtYV82MCJ9XSwib3AiOiJhbmQifSwicmVkdWNlX2xvbmciOnsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6InA1X3NtYV82MCJ9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3NtYV82MCJ9LCJyZWR1Y3Rpb25fZnJhY3Rpb24iOjAuNSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hZHhfMTQiLCJvcCI6Imd0IiwicmlnaHQiOjI1LjB9LHsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6InA1X3NtYV82MCJ9XSwib3AiOiJhbmQifX0=",
+      "contract_versions": "CONFLUENCE_AND_V1;LAYERED_REDUCTION_EQUAL_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "LAYERED_REDUCTION_SCHEDULE",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "581b7a8e1f5368439ceeea36c88f7fa6de11274de089966c887915f7abe64ad0"
+  },
+  "xlsx_s2_0371": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiZ3RlIiwicmlnaHQiOjEwMC4wfSwiZXhpdF9zaG9ydCI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJsdGUiLCJyaWdodCI6LTEwMC4wfSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJjY2kiLCJuYW1lIjoicDVfY2NpXzIwIiwid2luZG93IjoyMH0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV82MCIsIndpbmRvdyI6NjB9XSwibG9uZyI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJndCIsInJpZ2h0IjoicDVfc21hXzYwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOi0xMDAuMH1dLCJvcCI6ImFuZCJ9LCJyZWR1Y2VfbG9uZyI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6MC4wfSwicmVkdWN0aW9uX2ZyYWN0aW9uIjowLjUsInNjaGVtYV92ZXJzaW9uIjoxLCJzaG9ydCI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJsdCIsInJpZ2h0IjoicDVfc21hXzYwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2JlbG93IiwicmlnaHQiOjEwMC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "STABLE_CLOSE_2BAR_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "MEAN_REVERSION_COMPLETION",
+      "STABLE_ABOVE",
+      "TOUCH_SEMANTICS"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "668c1bea89bb710303b80bc14bb69f5d9a51981515e05f718c88ee99a1d5726f"
+  },
+  "xlsx_s2_0374": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3JvY18xMiJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfcm9jXzEyIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJmYXN0X3dpbmRvdyI6NSwia2luZCI6ImFvIiwibmFtZSI6InA1X2FvIiwic2xvd193aW5kb3ciOjM0fSx7ImtpbmQiOiJyZXR1cm4iLCJuYW1lIjoicDVfcm9jXzEyIiwid2luZG93IjoxMn1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSx7ImxlZnQiOiJwNV9yb2NfMTIiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FvIiwib3AiOiJsdCIsInJpZ2h0IjowLjB9LHsibGVmdCI6InA1X3JvY18xMiIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "CONFLUENCE_AND_V1;TURN_SLOPE_SIGN_CHANGE_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "SYNCHRONOUS_STATE_TIMING",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "f7a5b97922920d739fe48f65d2502a689f23efb8390d8ade44695727ab2e18d2"
+  },
+  "xlsx_s2_0395": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV91cHBlcl9mcmFjdGFsIn1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9sb3dlcl9mcmFjdGFsIn1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoiYWR4IiwibmFtZSI6InA1X2FkeF8xNCIsIndpbmRvdyI6MTR9LHsia2luZCI6ImZyYWN0YWwiLCJuYW1lIjoicDVfbG93ZXJfZnJhY3RhbCIsIm91dHB1dCI6Imxvd2VyX3B1bHNlIn0seyJraW5kIjoiZnJhY3RhbCIsIm5hbWUiOiJwNV91cHBlcl9mcmFjdGFsIiwib3V0cHV0IjoidXBwZXJfcHVsc2UifSx7ImtpbmQiOiJicmVha291dF91cCIsIm5hbWUiOiJwNV91cF8yMCIsIndpbmRvdyI6MjB9LHsia2luZCI6ImJyZWFrb3V0X2Rvd24iLCJuYW1lIjoicDVfZG93bl8yMCIsIndpbmRvdyI6MjB9XSwibG9uZyI6eyJhcmdzIjpbeyJsZWZ0IjoicDVfYWR4XzE0Iiwib3AiOiJndCIsInJpZ2h0IjoyNC4wfSx7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X2xvd2VyX2ZyYWN0YWwifSx7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X3VwXzIwIn1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6MjQuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV91cHBlcl9mcmFjdGFsIn0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9kb3duXzIwIn1dLCJvcCI6ImFuZCJ9fQ==",
+      "contract_versions": "CONFLUENCE_AND_V1;CONFIRMED_FRACTAL_2X2_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "CONFIRMED_FRACTAL_2X2_V1"
+    ],
+    "defaulted_parameters": {
+      "fractal_side_bars": 2
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "FRACTAL_SCALE_DEFINITION",
+      "SYNCHRONOUS_STATE_TIMING",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "44e8e05e419e7683353669fb37c1174d557d18e9348065b31d0e5cc83ee7e4c2"
+  },
+  "xlsx_s2_0414": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsib3AiOiJwdWxzZSIsInZhbHVlIjoicDVfdXBwZXJfZnJhY3RhbCJ9LCJleGl0X3Nob3J0Ijp7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X2xvd2VyX2ZyYWN0YWwifSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJjY2kiLCJuYW1lIjoicDVfY2NpXzIwIiwid2luZG93IjoyMH0seyJraW5kIjoiZnJhY3RhbCIsIm5hbWUiOiJwNV9sb3dlcl9mcmFjdGFsIiwib3V0cHV0IjoibG93ZXJfcHVsc2UifSx7ImtpbmQiOiJmcmFjdGFsIiwibmFtZSI6InA1X3VwcGVyX2ZyYWN0YWwiLCJvdXRwdXQiOiJ1cHBlcl9wdWxzZSJ9XSwibG9uZyI6eyJhcmdzIjpbeyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9sb3dlcl9mcmFjdGFsIn0seyJvcCI6InR1cm5fdXAiLCJ2YWx1ZSI6InA1X2NjaV8yMCJ9LHsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiZ3QiLCJyaWdodCI6LTEwMC4wfV0sIm9wIjoiYW5kIn0sInJlZHVjZV9sb25nIjp7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2JlbG93IiwicmlnaHQiOjAuMH0sInJlZHVjZV9zaG9ydCI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjowLjB9LCJyZWR1Y3Rpb25fZnJhY3Rpb24iOjAuNSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X3VwcGVyX2ZyYWN0YWwifSx7Im9wIjoidHVybl9kb3duIiwidmFsdWUiOiJwNV9jY2lfMjAifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6Imx0IiwicmlnaHQiOjEwMC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "CONFIRMED_FRACTAL_2X2_V1;TURN_SLOPE_SIGN_CHANGE_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFIRMED_FRACTAL_2X2_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "fractal_side_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "MEAN_REVERSION_COMPLETION",
+      "TURN_DOWN",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "cbe0ffb9d97022ebfdcc1040a6bcc710c83c8d405621a916254d89a833847f39"
+  },
+  "xlsx_s2_0452": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3JvY18xMiJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfcm9jXzEyIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJmYXN0X3dpbmRvdyI6NSwia2luZCI6ImFvIiwibmFtZSI6InA1X2FvIiwic2xvd193aW5kb3ciOjM0fSx7ImtpbmQiOiJyZXR1cm4iLCJuYW1lIjoicDVfcm9jXzEyIiwid2luZG93IjoxMn1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSx7ImxlZnQiOiJwNV9yb2NfMTIiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FvIiwib3AiOiJsdCIsInJpZ2h0IjowLjB9LHsibGVmdCI6InA1X3JvY18xMiIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "CONFLUENCE_AND_V1;TURN_SLOPE_SIGN_CHANGE_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFLUENCE_COMPOSITION",
+      "PERSISTENCE_COUNT_MISSING",
+      "SYNCHRONOUS_STATE_TIMING",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "f7a5b97922920d739fe48f65d2502a689f23efb8390d8ade44695727ab2e18d2"
+  },
+  "xlsx_s2_0480": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJndGUiLCJyaWdodCI6NzAuMH1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdGUiLCJyaWdodCI6MzAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoicnNpIiwibmFtZSI6InA1X3JzaV81Iiwid2luZG93Ijo1fSx7ImtpbmQiOiJyc2kiLCJuYW1lIjoicDVfcnNpXzE0Iiwid2luZG93IjoxNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9yc2lfNSIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3JzaV8xNCJ9LHsibGVmdCI6InA1X3JzaV8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6NDAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdCIsInJpZ2h0Ijo2MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "BOUNDED_INDICATOR_EXTREMES_V1;CONFLUENCE_AND_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "BOUNDED_INDICATOR_EXTREMES_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFLUENCE_COMPOSITION",
+      "EXTREME_THRESHOLD_MISSING",
+      "TOUCH_SEMANTICS",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "831c82310ff9397e4e273d689fae8be0379dea2f536c30a4eac407691fef788f"
+  },
+  "xlsx_s2_0540": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3NtYV8yMCJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfc21hXzIwIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV8yMCIsIndpbmRvdyI6MjB9LHsiZmFzdF93aW5kb3ciOjUsImtpbmQiOiJhbyIsIm5hbWUiOiJwNV9hbyIsInNsb3dfd2luZG93IjozNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9zbWFfMjAiLCJvcCI6Imd0IiwicmlnaHQiOnsib3AiOiJwcmV2aW91cyIsInZhbHVlIjoicDVfc21hXzIwIn19LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjowLjB9LHsiYXJnIjp7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSwiYmFycyI6Miwib3AiOiJjb25zZWN1dGl2ZSJ9XSwib3AiOiJhbmQifSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9zbWFfMjAiLCJvcCI6Imx0IiwicmlnaHQiOnsib3AiOiJwcmV2aW91cyIsInZhbHVlIjoicDVfc21hXzIwIn19LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LHsiYXJnIjp7ImxlZnQiOiJwNV9hbyIsIm9wIjoibHQiLCJyaWdodCI6MC4wfSwiYmFycyI6Miwib3AiOiJjb25zZWN1dGl2ZSJ9XSwib3AiOiJhbmQifX0=",
+      "contract_versions": "CONFLUENCE_AND_V1;PERSISTENCE_2BAR_V1;TURN_SLOPE_SIGN_CHANGE_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "PERSISTENCE_2BAR_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "PERSISTENCE_COUNT_MISSING",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "f7bb41483ee7fdfd3bed85a820ba946e89a6a13ce1fe632fe12a7797f7aa64b8"
+  },
+  "xlsx_s2_0550": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJndGUiLCJyaWdodCI6NzAuMH1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdGUiLCJyaWdodCI6MzAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoicnNpIiwibmFtZSI6InA1X3JzaV81Iiwid2luZG93Ijo1fSx7ImtpbmQiOiJyc2kiLCJuYW1lIjoicDVfcnNpXzE0Iiwid2luZG93IjoxNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9yc2lfNSIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3JzaV8xNCJ9LHsibGVmdCI6InA1X3JzaV8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6NDAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdCIsInJpZ2h0Ijo2MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "BOUNDED_INDICATOR_EXTREMES_V1;CONFLUENCE_AND_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "BOUNDED_INDICATOR_EXTREMES_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFLUENCE_COMPOSITION",
+      "EXTREME_THRESHOLD_MISSING",
+      "TOUCH_SEMANTICS",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "831c82310ff9397e4e273d689fae8be0379dea2f536c30a4eac407691fef788f"
+  },
+  "xlsx_s2_0561": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0sImV4aXRfc2hvcnQiOnsibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoiYWR4IiwibmFtZSI6InA1X2FkeF8xNCIsIndpbmRvdyI6MTR9LHsia2luZCI6InNtYSIsIm5hbWUiOiJwNV9zbWFfMjAiLCJ3aW5kb3ciOjIwfSx7ImtpbmQiOiJzbWEiLCJuYW1lIjoicDVfc21hXzYwIiwid2luZG93Ijo2MH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hZHhfMTQiLCJvcCI6Imd0IiwicmlnaHQiOjI1LjB9LHsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3NtYV82MCJ9XSwib3AiOiJhbmQifSwicmVkdWNlX2xvbmciOnsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6InA1X3NtYV82MCJ9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3NtYV82MCJ9LCJyZWR1Y3Rpb25fZnJhY3Rpb24iOjAuNSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hZHhfMTQiLCJvcCI6Imd0IiwicmlnaHQiOjI1LjB9LHsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6InA1X3NtYV82MCJ9XSwib3AiOiJhbmQifX0=",
+      "contract_versions": "CONFLUENCE_AND_V1;LAYERED_REDUCTION_EQUAL_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "LAYERED_REDUCTION_SCHEDULE",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "581b7a8e1f5368439ceeea36c88f7fa6de11274de089966c887915f7abe64ad0"
+  },
+  "xlsx_s2_0568": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiZ3RlIiwicmlnaHQiOjEwMC4wfSwiZXhpdF9zaG9ydCI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJsdGUiLCJyaWdodCI6LTEwMC4wfSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJjY2kiLCJuYW1lIjoicDVfY2NpXzIwIiwid2luZG93IjoyMH0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV82MCIsIndpbmRvdyI6NjB9XSwibG9uZyI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJndCIsInJpZ2h0IjoicDVfc21hXzYwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOi0xMDAuMH1dLCJvcCI6ImFuZCJ9LCJyZWR1Y2VfbG9uZyI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6MC4wfSwicmVkdWN0aW9uX2ZyYWN0aW9uIjowLjUsInNjaGVtYV92ZXJzaW9uIjoxLCJzaG9ydCI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJsdCIsInJpZ2h0IjoicDVfc21hXzYwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2JlbG93IiwicmlnaHQiOjEwMC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "STABLE_CLOSE_2BAR_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "MEAN_REVERSION_COMPLETION",
+      "STABLE_ABOVE",
+      "TOUCH_SEMANTICS"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "668c1bea89bb710303b80bc14bb69f5d9a51981515e05f718c88ee99a1d5726f"
+  },
+  "xlsx_s2_0571": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3JvY18xMiJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfcm9jXzEyIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJmYXN0X3dpbmRvdyI6NSwia2luZCI6ImFvIiwibmFtZSI6InA1X2FvIiwic2xvd193aW5kb3ciOjM0fSx7ImtpbmQiOiJyZXR1cm4iLCJuYW1lIjoicDVfcm9jXzEyIiwid2luZG93IjoxMn1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSx7ImxlZnQiOiJwNV9yb2NfMTIiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FvIiwib3AiOiJsdCIsInJpZ2h0IjowLjB9LHsibGVmdCI6InA1X3JvY18xMiIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "CONFLUENCE_AND_V1;TURN_SLOPE_SIGN_CHANGE_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "SYNCHRONOUS_STATE_TIMING",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "f7a5b97922920d739fe48f65d2502a689f23efb8390d8ade44695727ab2e18d2"
+  },
+  "xlsx_s2_0592": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV91cHBlcl9mcmFjdGFsIn1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9sb3dlcl9mcmFjdGFsIn1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoiYWR4IiwibmFtZSI6InA1X2FkeF8xNCIsIndpbmRvdyI6MTR9LHsia2luZCI6ImZyYWN0YWwiLCJuYW1lIjoicDVfbG93ZXJfZnJhY3RhbCIsIm91dHB1dCI6Imxvd2VyX3B1bHNlIn0seyJraW5kIjoiZnJhY3RhbCIsIm5hbWUiOiJwNV91cHBlcl9mcmFjdGFsIiwib3V0cHV0IjoidXBwZXJfcHVsc2UifSx7ImtpbmQiOiJicmVha291dF91cCIsIm5hbWUiOiJwNV91cF8yMCIsIndpbmRvdyI6MjB9LHsia2luZCI6ImJyZWFrb3V0X2Rvd24iLCJuYW1lIjoicDVfZG93bl8yMCIsIndpbmRvdyI6MjB9XSwibG9uZyI6eyJhcmdzIjpbeyJsZWZ0IjoicDVfYWR4XzE0Iiwib3AiOiJndCIsInJpZ2h0IjoyNC4wfSx7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X2xvd2VyX2ZyYWN0YWwifSx7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X3VwXzIwIn1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6MjQuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV91cHBlcl9mcmFjdGFsIn0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9kb3duXzIwIn1dLCJvcCI6ImFuZCJ9fQ==",
+      "contract_versions": "CONFLUENCE_AND_V1;CONFIRMED_FRACTAL_2X2_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "CONFIRMED_FRACTAL_2X2_V1"
+    ],
+    "defaulted_parameters": {
+      "fractal_side_bars": 2
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "FRACTAL_SCALE_DEFINITION",
+      "SYNCHRONOUS_STATE_TIMING",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "44e8e05e419e7683353669fb37c1174d557d18e9348065b31d0e5cc83ee7e4c2"
+  },
+  "xlsx_s2_0611": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsib3AiOiJwdWxzZSIsInZhbHVlIjoicDVfdXBwZXJfZnJhY3RhbCJ9LCJleGl0X3Nob3J0Ijp7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X2xvd2VyX2ZyYWN0YWwifSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJjY2kiLCJuYW1lIjoicDVfY2NpXzIwIiwid2luZG93IjoyMH0seyJraW5kIjoiZnJhY3RhbCIsIm5hbWUiOiJwNV9sb3dlcl9mcmFjdGFsIiwib3V0cHV0IjoibG93ZXJfcHVsc2UifSx7ImtpbmQiOiJmcmFjdGFsIiwibmFtZSI6InA1X3VwcGVyX2ZyYWN0YWwiLCJvdXRwdXQiOiJ1cHBlcl9wdWxzZSJ9XSwibG9uZyI6eyJhcmdzIjpbeyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9sb3dlcl9mcmFjdGFsIn0seyJvcCI6InR1cm5fdXAiLCJ2YWx1ZSI6InA1X2NjaV8yMCJ9LHsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiZ3QiLCJyaWdodCI6LTEwMC4wfV0sIm9wIjoiYW5kIn0sInJlZHVjZV9sb25nIjp7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2JlbG93IiwicmlnaHQiOjAuMH0sInJlZHVjZV9zaG9ydCI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjowLjB9LCJyZWR1Y3Rpb25fZnJhY3Rpb24iOjAuNSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X3VwcGVyX2ZyYWN0YWwifSx7Im9wIjoidHVybl9kb3duIiwidmFsdWUiOiJwNV9jY2lfMjAifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6Imx0IiwicmlnaHQiOjEwMC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "CONFIRMED_FRACTAL_2X2_V1;TURN_SLOPE_SIGN_CHANGE_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFIRMED_FRACTAL_2X2_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "fractal_side_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "MEAN_REVERSION_COMPLETION",
+      "TURN_DOWN",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "cbe0ffb9d97022ebfdcc1040a6bcc710c83c8d405621a916254d89a833847f39"
+  },
+  "xlsx_s2_0685": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2VtYV8xMCIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6InA1X2VtYV8zMCJ9LCJleGl0X3Nob3J0Ijp7ImxlZnQiOiJwNV9lbWFfMTAiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOiJwNV9lbWFfMzAifSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJlbWEiLCJuYW1lIjoicDVfZW1hXzEwIiwid2luZG93IjoxMH0seyJraW5kIjoiZW1hIiwibmFtZSI6InA1X2VtYV8zMCIsIndpbmRvdyI6MzB9LHsia2luZCI6InZvbHVtZV9yYXRpbyIsIm5hbWUiOiJwNV92b2x1bWVfcmF0aW9fMjAiLCJ3aW5kb3ciOjIwfV0sImxvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X2VtYV8xMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X2VtYV8zMCJ9LHsibGVmdCI6InA1X3ZvbHVtZV9yYXRpb18yMCIsIm9wIjoiZ3RlIiwicmlnaHQiOjIuMH1dLCJvcCI6ImFuZCJ9LCJyZWR1Y2VfbG9uZyI6eyJsZWZ0IjoicDVfdm9sdW1lX3JhdGlvXzIwIiwib3AiOiJsdCIsInJpZ2h0IjoxLjB9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X3ZvbHVtZV9yYXRpb18yMCIsIm9wIjoibHQiLCJyaWdodCI6MS4wfSwicmVkdWN0aW9uX2ZyYWN0aW9uIjowLjUsInNjaGVtYV92ZXJzaW9uIjoxLCJzaG9ydCI6eyJhcmdzIjpbeyJsZWZ0IjoicDVfZW1hXzEwIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfZW1hXzMwIn0seyJsZWZ0IjoicDVfdm9sdW1lX3JhdGlvXzIwIiwib3AiOiJndGUiLCJyaWdodCI6Mi4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "MODELLED_VOLUME_REFERENCE_SMA20_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": "MODELLED_VOLUME_REFERENCE_SMA20_V1"
+    },
+    "semantic_provenance": "MODELLED_BASELINE_INTERPRETATION",
+    "contracts_applied": [
+      "MODELLED_VOLUME_REFERENCE_SMA20_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "volume_lookback": 20,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [
+      "MODELLED_VOLUME_REFERENCE_SMA20_V1"
+    ],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "POSITION_FRACTION_MISSING",
+      "VOLUME_EXPANSION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "efdab67b630812f8046635edd6b2d02d77cd26b87f40d7a1881b845e76006893"
+  },
+  "xlsx_s2_0717": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3NtYV8yMCJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfc21hXzIwIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV8yMCIsIndpbmRvdyI6MjB9LHsiZmFzdF93aW5kb3ciOjUsImtpbmQiOiJhbyIsIm5hbWUiOiJwNV9hbyIsInNsb3dfd2luZG93IjozNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9zbWFfMjAiLCJvcCI6Imd0IiwicmlnaHQiOnsib3AiOiJwcmV2aW91cyIsInZhbHVlIjoicDVfc21hXzIwIn19LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjowLjB9LHsiYXJnIjp7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSwiYmFycyI6Miwib3AiOiJjb25zZWN1dGl2ZSJ9XSwib3AiOiJhbmQifSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9zbWFfMjAiLCJvcCI6Imx0IiwicmlnaHQiOnsib3AiOiJwcmV2aW91cyIsInZhbHVlIjoicDVfc21hXzIwIn19LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LHsiYXJnIjp7ImxlZnQiOiJwNV9hbyIsIm9wIjoibHQiLCJyaWdodCI6MC4wfSwiYmFycyI6Miwib3AiOiJjb25zZWN1dGl2ZSJ9XSwib3AiOiJhbmQifX0=",
+      "contract_versions": "CONFLUENCE_AND_V1;PERSISTENCE_2BAR_V1;TURN_SLOPE_SIGN_CHANGE_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "PERSISTENCE_2BAR_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "PERSISTENCE_COUNT_MISSING",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "f7bb41483ee7fdfd3bed85a820ba946e89a6a13ce1fe632fe12a7797f7aa64b8"
+  },
+  "xlsx_s2_0727": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJndGUiLCJyaWdodCI6NzAuMH1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdGUiLCJyaWdodCI6MzAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoicnNpIiwibmFtZSI6InA1X3JzaV81Iiwid2luZG93Ijo1fSx7ImtpbmQiOiJyc2kiLCJuYW1lIjoicDVfcnNpXzE0Iiwid2luZG93IjoxNH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9yc2lfNSIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3JzaV8xNCJ9LHsibGVmdCI6InA1X3JzaV8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6NDAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X3JzaV81Iiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfcnNpXzE0In0seyJsZWZ0IjoicDVfcnNpXzE0Iiwib3AiOiJsdCIsInJpZ2h0Ijo2MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "BOUNDED_INDICATOR_EXTREMES_V1;CONFLUENCE_AND_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "BOUNDED_INDICATOR_EXTREMES_V1",
+      "CONFLUENCE_AND_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFLUENCE_COMPOSITION",
+      "EXTREME_THRESHOLD_MISSING",
+      "TOUCH_SEMANTICS",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "831c82310ff9397e4e273d689fae8be0379dea2f536c30a4eac407691fef788f"
+  },
+  "xlsx_s2_0738": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0sImV4aXRfc2hvcnQiOnsibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoiYWR4IiwibmFtZSI6InA1X2FkeF8xNCIsIndpbmRvdyI6MTR9LHsia2luZCI6InNtYSIsIm5hbWUiOiJwNV9zbWFfMjAiLCJ3aW5kb3ciOjIwfSx7ImtpbmQiOiJzbWEiLCJuYW1lIjoicDVfc21hXzYwIiwid2luZG93Ijo2MH1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hZHhfMTQiLCJvcCI6Imd0IiwicmlnaHQiOjI1LjB9LHsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3NtYV82MCJ9XSwib3AiOiJhbmQifSwicmVkdWNlX2xvbmciOnsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6InA1X3NtYV82MCJ9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X3NtYV82MCJ9LCJyZWR1Y3Rpb25fZnJhY3Rpb24iOjAuNSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hZHhfMTQiLCJvcCI6Imd0IiwicmlnaHQiOjI1LjB9LHsibGVmdCI6InA1X3NtYV8yMCIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6InA1X3NtYV82MCJ9XSwib3AiOiJhbmQifX0=",
+      "contract_versions": "CONFLUENCE_AND_V1;LAYERED_REDUCTION_EQUAL_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "LAYERED_REDUCTION_EQUAL_V1"
+    ],
+    "defaulted_parameters": {
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "LAYERED_REDUCTION_SCHEDULE",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "581b7a8e1f5368439ceeea36c88f7fa6de11274de089966c887915f7abe64ad0"
+  },
+  "xlsx_s2_0745": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiZ3RlIiwicmlnaHQiOjEwMC4wfSwiZXhpdF9zaG9ydCI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJsdGUiLCJyaWdodCI6LTEwMC4wfSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJjY2kiLCJuYW1lIjoicDVfY2NpXzIwIiwid2luZG93IjoyMH0seyJraW5kIjoic21hIiwibmFtZSI6InA1X3NtYV82MCIsIndpbmRvdyI6NjB9XSwibG9uZyI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJndCIsInJpZ2h0IjoicDVfc21hXzYwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOi0xMDAuMH1dLCJvcCI6ImFuZCJ9LCJyZWR1Y2VfbG9uZyI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6MC4wfSwicmVkdWN0aW9uX2ZyYWN0aW9uIjowLjUsInNjaGVtYV92ZXJzaW9uIjoxLCJzaG9ydCI6eyJhcmdzIjpbeyJhcmciOnsibGVmdCI6InA1X2Nsb3NlIiwib3AiOiJsdCIsInJpZ2h0IjoicDVfc21hXzYwIn0sImJhcnMiOjIsIm9wIjoiY29uc2VjdXRpdmUifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2JlbG93IiwicmlnaHQiOjEwMC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "STABLE_CLOSE_2BAR_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "STABLE_CLOSE_2BAR_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "persistence_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "MEAN_REVERSION_COMPLETION",
+      "STABLE_ABOVE",
+      "TOUCH_SEMANTICS"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "668c1bea89bb710303b80bc14bb69f5d9a51981515e05f718c88ee99a1d5726f"
+  },
+  "xlsx_s2_0748": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sib3AiOiJ0dXJuX2Rvd24iLCJ2YWx1ZSI6InA1X3JvY18xMiJ9LHsibGVmdCI6InA1X2FvIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjowLjB9XSwib3AiOiJvciJ9LCJleGl0X3Nob3J0Ijp7ImFyZ3MiOlt7Im9wIjoidHVybl91cCIsInZhbHVlIjoicDVfcm9jXzEyIn0seyJsZWZ0IjoicDVfYW8iLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJmYXN0X3dpbmRvdyI6NSwia2luZCI6ImFvIiwibmFtZSI6InA1X2FvIiwic2xvd193aW5kb3ciOjM0fSx7ImtpbmQiOiJyZXR1cm4iLCJuYW1lIjoicDVfcm9jXzEyIiwid2luZG93IjoxMn1dLCJsb25nIjp7ImFyZ3MiOlt7ImxlZnQiOiJwNV9hbyIsIm9wIjoiZ3QiLCJyaWdodCI6MC4wfSx7ImxlZnQiOiJwNV9yb2NfMTIiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOjAuMH1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FvIiwib3AiOiJsdCIsInJpZ2h0IjowLjB9LHsibGVmdCI6InA1X3JvY18xMiIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6MC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "CONFLUENCE_AND_V1;TURN_SLOPE_SIGN_CHANGE_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "STANDARD_CONTRACT_RESOLVED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1"
+    ],
+    "defaulted_parameters": {},
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "CONFLUENCE_COMPOSITION",
+      "SYNCHRONOUS_STATE_TIMING",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "f7a5b97922920d739fe48f65d2502a689f23efb8390d8ade44695727ab2e18d2"
+  },
+  "xlsx_s2_0769": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV91cHBlcl9mcmFjdGFsIn1dLCJvcCI6Im9yIn0sImV4aXRfc2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoibHQiLCJyaWdodCI6MjAuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9sb3dlcl9mcmFjdGFsIn1dLCJvcCI6Im9yIn0sImZlYXR1cmVzIjpbeyJmaWVsZCI6ImNsb3NlIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9jbG9zZSJ9LHsiZmllbGQiOiJvcGVuIiwia2luZCI6ImJhciIsIm5hbWUiOiJwNV9vcGVuIn0seyJraW5kIjoiYWR4IiwibmFtZSI6InA1X2FkeF8xNCIsIndpbmRvdyI6MTR9LHsia2luZCI6ImZyYWN0YWwiLCJuYW1lIjoicDVfbG93ZXJfZnJhY3RhbCIsIm91dHB1dCI6Imxvd2VyX3B1bHNlIn0seyJraW5kIjoiZnJhY3RhbCIsIm5hbWUiOiJwNV91cHBlcl9mcmFjdGFsIiwib3V0cHV0IjoidXBwZXJfcHVsc2UifSx7ImtpbmQiOiJicmVha291dF91cCIsIm5hbWUiOiJwNV91cF8yMCIsIndpbmRvdyI6MjB9LHsia2luZCI6ImJyZWFrb3V0X2Rvd24iLCJuYW1lIjoicDVfZG93bl8yMCIsIndpbmRvdyI6MjB9XSwibG9uZyI6eyJhcmdzIjpbeyJsZWZ0IjoicDVfYWR4XzE0Iiwib3AiOiJndCIsInJpZ2h0IjoyNC4wfSx7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X2xvd2VyX2ZyYWN0YWwifSx7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X3VwXzIwIn1dLCJvcCI6ImFuZCJ9LCJzY2hlbWFfdmVyc2lvbiI6MSwic2hvcnQiOnsiYXJncyI6W3sibGVmdCI6InA1X2FkeF8xNCIsIm9wIjoiZ3QiLCJyaWdodCI6MjQuMH0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV91cHBlcl9mcmFjdGFsIn0seyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9kb3duXzIwIn1dLCJvcCI6ImFuZCJ9fQ==",
+      "contract_versions": "CONFLUENCE_AND_V1;CONFIRMED_FRACTAL_2X2_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFLUENCE_AND_V1",
+      "CONFIRMED_FRACTAL_2X2_V1"
+    ],
+    "defaulted_parameters": {
+      "fractal_side_bars": 2
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "FRACTAL_SCALE_DEFINITION",
+      "SYNCHRONOUS_STATE_TIMING",
+      "TREND_STATE_DEFINITION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "44e8e05e419e7683353669fb37c1174d557d18e9348065b31d0e5cc83ee7e4c2"
+  },
+  "xlsx_s2_0788": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsib3AiOiJwdWxzZSIsInZhbHVlIjoicDVfdXBwZXJfZnJhY3RhbCJ9LCJleGl0X3Nob3J0Ijp7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X2xvd2VyX2ZyYWN0YWwifSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJjY2kiLCJuYW1lIjoicDVfY2NpXzIwIiwid2luZG93IjoyMH0seyJraW5kIjoiZnJhY3RhbCIsIm5hbWUiOiJwNV9sb3dlcl9mcmFjdGFsIiwib3V0cHV0IjoibG93ZXJfcHVsc2UifSx7ImtpbmQiOiJmcmFjdGFsIiwibmFtZSI6InA1X3VwcGVyX2ZyYWN0YWwiLCJvdXRwdXQiOiJ1cHBlcl9wdWxzZSJ9XSwibG9uZyI6eyJhcmdzIjpbeyJvcCI6InB1bHNlIiwidmFsdWUiOiJwNV9sb3dlcl9mcmFjdGFsIn0seyJvcCI6InR1cm5fdXAiLCJ2YWx1ZSI6InA1X2NjaV8yMCJ9LHsibGVmdCI6InA1X2NjaV8yMCIsIm9wIjoiZ3QiLCJyaWdodCI6LTEwMC4wfV0sIm9wIjoiYW5kIn0sInJlZHVjZV9sb25nIjp7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6ImNyb3NzX2JlbG93IiwicmlnaHQiOjAuMH0sInJlZHVjZV9zaG9ydCI6eyJsZWZ0IjoicDVfY2NpXzIwIiwib3AiOiJjcm9zc19hYm92ZSIsInJpZ2h0IjowLjB9LCJyZWR1Y3Rpb25fZnJhY3Rpb24iOjAuNSwic2NoZW1hX3ZlcnNpb24iOjEsInNob3J0Ijp7ImFyZ3MiOlt7Im9wIjoicHVsc2UiLCJ2YWx1ZSI6InA1X3VwcGVyX2ZyYWN0YWwifSx7Im9wIjoidHVybl9kb3duIiwidmFsdWUiOiJwNV9jY2lfMjAifSx7ImxlZnQiOiJwNV9jY2lfMjAiLCJvcCI6Imx0IiwicmlnaHQiOjEwMC4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "CONFIRMED_FRACTAL_2X2_V1;TURN_SLOPE_SIGN_CHANGE_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": ""
+    },
+    "semantic_provenance": "PARAMETER_DEFAULTED",
+    "contracts_applied": [
+      "CONFIRMED_FRACTAL_2X2_V1",
+      "TURN_SLOPE_SIGN_CHANGE_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "fractal_side_bars": 2,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [],
+    "resolved_blockers": [
+      "EXTREME_THRESHOLD_MISSING",
+      "MEAN_REVERSION_COMPLETION",
+      "TURN_DOWN",
+      "TURN_UP"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "cbe0ffb9d97022ebfdcc1040a6bcc710c83c8d405621a916254d89a833847f39"
+  },
+  "xlsx_s2_0862": {
+    "family": "phase5a_declarative",
+    "params": {
+      "rule_spec_b64": "eyJleGl0X2xvbmciOnsibGVmdCI6InA1X2VtYV8xMCIsIm9wIjoiY3Jvc3NfYmVsb3ciLCJyaWdodCI6InA1X2VtYV8zMCJ9LCJleGl0X3Nob3J0Ijp7ImxlZnQiOiJwNV9lbWFfMTAiLCJvcCI6ImNyb3NzX2Fib3ZlIiwicmlnaHQiOiJwNV9lbWFfMzAifSwiZmVhdHVyZXMiOlt7ImZpZWxkIjoiY2xvc2UiLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X2Nsb3NlIn0seyJmaWVsZCI6Im9wZW4iLCJraW5kIjoiYmFyIiwibmFtZSI6InA1X29wZW4ifSx7ImtpbmQiOiJlbWEiLCJuYW1lIjoicDVfZW1hXzEwIiwid2luZG93IjoxMH0seyJraW5kIjoiZW1hIiwibmFtZSI6InA1X2VtYV8zMCIsIndpbmRvdyI6MzB9LHsia2luZCI6InZvbHVtZV9yYXRpbyIsIm5hbWUiOiJwNV92b2x1bWVfcmF0aW9fMjAiLCJ3aW5kb3ciOjIwfV0sImxvbmciOnsiYXJncyI6W3sibGVmdCI6InA1X2VtYV8xMCIsIm9wIjoiY3Jvc3NfYWJvdmUiLCJyaWdodCI6InA1X2VtYV8zMCJ9LHsibGVmdCI6InA1X3ZvbHVtZV9yYXRpb18yMCIsIm9wIjoiZ3RlIiwicmlnaHQiOjIuMH1dLCJvcCI6ImFuZCJ9LCJyZWR1Y2VfbG9uZyI6eyJsZWZ0IjoicDVfdm9sdW1lX3JhdGlvXzIwIiwib3AiOiJsdCIsInJpZ2h0IjoxLjB9LCJyZWR1Y2Vfc2hvcnQiOnsibGVmdCI6InA1X3ZvbHVtZV9yYXRpb18yMCIsIm9wIjoibHQiLCJyaWdodCI6MS4wfSwicmVkdWN0aW9uX2ZyYWN0aW9uIjowLjUsInNjaGVtYV92ZXJzaW9uIjoxLCJzaG9ydCI6eyJhcmdzIjpbeyJsZWZ0IjoicDVfZW1hXzEwIiwib3AiOiJjcm9zc19iZWxvdyIsInJpZ2h0IjoicDVfZW1hXzMwIn0seyJsZWZ0IjoicDVfdm9sdW1lX3JhdGlvXzIwIiwib3AiOiJndGUiLCJyaWdodCI6Mi4wfV0sIm9wIjoiYW5kIn19",
+      "contract_versions": "MODELLED_VOLUME_REFERENCE_SMA20_V1;REDUCE_HALF_CURRENT_V1",
+      "modelled_interpretations": "MODELLED_VOLUME_REFERENCE_SMA20_V1"
+    },
+    "semantic_provenance": "MODELLED_BASELINE_INTERPRETATION",
+    "contracts_applied": [
+      "MODELLED_VOLUME_REFERENCE_SMA20_V1",
+      "REDUCE_HALF_CURRENT_V1"
+    ],
+    "defaulted_parameters": {
+      "volume_lookback": 20,
+      "reduction_fraction": 0.5
+    },
+    "modelled_interpretations": [
+      "MODELLED_VOLUME_REFERENCE_SMA20_V1"
+    ],
+    "resolved_blockers": [
+      "CONFIRMATION_RULE",
+      "POSITION_FRACTION_MISSING",
+      "VOLUME_EXPANSION"
+    ],
+    "remaining_blockers": [],
+    "modules_applied": [],
+    "source_timeframe": "1m",
+    "rule_hash": "efdab67b630812f8046635edd6b2d02d77cd26b87f40d7a1881b845e76006893"
+  }
+}

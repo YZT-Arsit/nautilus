@@ -11,6 +11,7 @@ import argparse
 from math import isqrt
 from pathlib import Path
 import sys
+import json
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 if str(REPOSITORY_ROOT) not in sys.path:
@@ -77,9 +78,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--plan", type=Path,
+        help="Generate/check only strategy IDs from this compiled JSON plan.",
+    )
     args = parser.parse_args()
     mismatches: list[str] = []
-    for registry_id, definition in sorted(IMPLEMENTED.items()):
+    selected = IMPLEMENTED
+    if args.plan:
+        selected = json.loads(args.plan.read_text(encoding="utf-8"))
+    for registry_id, definition in sorted(selected.items()):
         package = args.root / "strategies" / registry_id
         for filename, content in render(registry_id, definition).items():
             path = package / filename
@@ -94,7 +102,7 @@ def main() -> int:
     if mismatches:
         print("\n".join(mismatches))
         return 1
-    print(f"workbook strategy packages: {len(IMPLEMENTED)}")
+    print(f"workbook strategy packages: {len(selected)}")
     return 0
 
 
