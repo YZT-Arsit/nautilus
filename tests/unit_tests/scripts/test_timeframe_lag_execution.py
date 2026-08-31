@@ -12,6 +12,8 @@ from scripts.internal.run_all_strategy_timeframe_lag import execution_bar
 from scripts.internal.run_all_strategy_timeframe_lag import parse_cases
 from scripts.internal.run_all_strategy_timeframe_lag import run_decision_lifecycle
 from scripts.internal.run_all_strategy_timeframe_lag import validate_direction_variants
+from scripts.internal.run_boss_multitimeframe_tick_screen import persistence_metrics
+from scripts.internal.run_boss_multitimeframe_tick_screen import semantic_identity
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
 from strategy_framework.execution.duration_lag import DurationLagTargetAdapter
 from strategy_framework.execution.intents import PlannedSignal
@@ -166,3 +168,67 @@ def test_optional_module_hook_is_baseline_invariant_when_disabled_and_fill_based
     assert meta["module_decision_count"] > 0
     assert any(row["module_id"] == "test_stop" for row in events)
     assert np.any(with_stop != baseline_a)
+
+
+def test_external_exact_execution_events_use_tick_price_and_boundary_position_clock() -> None:
+    prices = [100.0] * 25 + [101.0 + index for index in range(15)]
+    bars = [
+        BarEvent(
+            close=price,
+            open=price,
+            high=price + 0.5,
+            low=price - 0.5,
+            volume=1.0,
+            instrument_id="BTCUSDT-PERP.BINANCE",
+            event_time_ns=index * MINUTE_NS,
+        )
+        for index, price in enumerate(prices)
+    ]
+    ticks = [
+        BarEvent(
+            close=price + 0.125,
+            open=price + 0.125,
+            high=price + 0.125,
+            low=price + 0.125,
+            volume=0.01,
+            instrument_id="BTCUSDT-PERP.BINANCE",
+            event_time_ns=index * MINUTE_NS + 125_000_000,
+        )
+        for index, price in enumerate(prices)
+    ]
+    direction, events, metadata = run_decision_lifecycle(
+        strategy_name="ma_crossover",
+        source_config={"params": {"fast_window": 3, "slow_window": 10}},
+        frequency="1m",
+        lag_minutes=0,
+        bars_1m=bars,
+        strategy_bars=bars,
+        execution_events=ticks,
+        end_exclusive_ns=(len(bars) + 1) * MINUTE_NS,
+    )
+    filled = [row for row in events if row["fill_count"]]
+    assert filled
+    first = filled[0]
+    assert first["fill_time_ns"] == first["due_time_ns"] + 125_000_000
+    assert first["fill_price"] == ticks[first["due_time_ns"] // MINUTE_NS].open
+    assert direction[first["due_time_ns"] // MINUTE_NS] != 0
+    assert metadata["execution_source"] == "external_exact_events"
+
+
+def test_workbook_semantic_equivalence_identity_ignores_only_row_provenance() -> None:
+    first, _ = semantic_identity("xlsx_s2_0126")
+    second, _ = semantic_identity("xlsx_s2_0437")
+    different, _ = semantic_identity("xlsx_s1_0003")
+    assert first == second
+    assert first != different
+
+
+def test_persistence_metrics_use_executed_position_and_reconcile_fractions() -> None:
+    metrics = persistence_metrics(np.array([0, 1, 1, -1, -1, 0], dtype=float))
+    assert metrics["long_fraction"] == 2 / 6
+    assert metrics["short_fraction"] == 2 / 6
+    assert metrics["flat_fraction"] == 2 / 6
+    assert metrics["nonflat_fraction"] == 4 / 6
+    assert metrics["position_change_count"] == 3
+    assert metrics["sign_switch_count"] == 1
+    assert metrics["median_holding_duration_seconds"] == 120.0

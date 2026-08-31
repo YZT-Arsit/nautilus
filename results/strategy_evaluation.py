@@ -336,6 +336,7 @@ def render_additive_strategy_evaluation(
     destination: str | Path,
     run_name: str,
     lag_label: str,
+    turnover_display_percent: bool = False,
 ) -> str:
     """Render one deterministic three-panel figure for a saved bar run."""
     if not series:
@@ -387,13 +388,20 @@ def render_additive_strategy_evaluation(
     turnover_axis = upper.twinx()
     turnover_axis.plot(
         timestamps,
-        values("cumulative_turnover"),
+        [
+            value * (100.0 if turnover_display_percent else 1.0)
+            for value in values("cumulative_turnover")
+        ],
         color="#6a3d9a",
         linewidth=0.9,
         linestyle=":",
         label="Cumulative turnover",
     )
-    turnover_axis.set_ylabel("Cumulative Turnover (x capital)")
+    turnover_axis.set_ylabel(
+        "Cumulative Turnover (% of capital)"
+        if turnover_display_percent
+        else "Cumulative Turnover (x capital)"
+    )
     handles, labels = upper.get_legend_handles_labels()
     right_handles, right_labels = turnover_axis.get_legend_handles_labels()
     upper.legend(handles + right_handles, labels + right_labels, loc="best", fontsize=9)
@@ -428,7 +436,9 @@ def render_additive_strategy_evaluation(
     excluded = metrics["excluded"]
     figure.suptitle(
         f"{run_name} — Strategy Evaluation\n"
-        f"lag={lag_label} | BE bps premium={included['break_even_bps']:.4f}, "
+        f"lag={lag_label} | Return premium={included['final_return_1x']:.2%}, "
+        f"no-premium={excluded['final_return_1x']:.2%}\n"
+        f"BE bps premium={included['break_even_bps']:.4f}, "
         f"no-premium={excluded['break_even_bps']:.4f}\n"
         f"MDD premium={included['max_drawdown']:.2%}, "
         f"no-premium={excluded['max_drawdown']:.2%}",

@@ -14,6 +14,7 @@ import math
 import os
 import time
 import zipfile
+from collections.abc import Iterator
 from datetime import date
 from itertools import chain
 from pathlib import Path
@@ -102,13 +103,21 @@ def download_verified_archive(
     raise last_error
 
 
-def read_raw_trade_archive(
+def iter_raw_trade_archive(
     archive: Path,
     *,
     symbol: str,
-) -> list[TradeEvent]:
-    """Normalize one verified Binance raw-trade ZIP to sorted TradeEvents."""
-    trades: list[TradeEvent] = []
+    validate_order: bool = True,
+) -> Iterator[TradeEvent]:
+    """Stream one verified archive as deterministically ordered TradeEvents.
+
+    Binance's official daily ``trades`` files are ordered chronologically.  The
+    streaming contract validates that ordering instead of retaining and sorting
+    an entire (potentially very large) trading day in memory.  Any source-order
+    violation is therefore explicit and cannot silently change first-trade
+    execution semantics.
+    """
+    prior_key: tuple[int, int] | None = None
     with zipfile.ZipFile(archive) as bundle:
         members = [name for name in bundle.namelist() if name.lower().endswith(".csv")]
         if len(members) != 1:
@@ -142,19 +151,34 @@ def read_raw_trade_archive(
                     for value in (price_value, quantity_value, quote_quantity_value)
                 ):
                     raise ValueError(f"invalid numeric raw trade row in {archive}: {row[:6]}")
-                trades.append(
-                    make_trade_event(
-                        price=price_value,
-                        quantity=quantity_value,
-                        quote_quantity=quote_quantity_value,
-                        quote_quantity_source="source_quote_qty",
-                        instrument_id=symbol,
-                        event_time_ns=int(timestamp) * 1_000_000,
-                        is_buyer_maker=maker_text == "true",
-                        trade_id=int(trade_id),
-                        source="binance_vision_raw_trades",
+                event_time_ns = int(timestamp) * 1_000_000
+                trade_id_value = int(trade_id)
+                key = (event_time_ns, trade_id_value)
+                if validate_order and prior_key is not None and key <= prior_key:
+                    raise ValueError(
+                        f"raw trade source order violation in {archive}: {key} <= {prior_key}"
                     )
+                prior_key = key
+                yield make_trade_event(
+                    price=price_value,
+                    quantity=quantity_value,
+                    quote_quantity=quote_quantity_value,
+                    quote_quantity_source="source_quote_qty",
+                    instrument_id=symbol,
+                    event_time_ns=event_time_ns,
+                    is_buyer_maker=maker_text == "true",
+                    trade_id=trade_id_value,
+                    source="binance_vision_raw_trades",
                 )
+
+
+def read_raw_trade_archive(
+    archive: Path,
+    *,
+    symbol: str,
+) -> list[TradeEvent]:
+    """Normalize one verified Binance raw-trade ZIP to sorted TradeEvents."""
+    trades = list(iter_raw_trade_archive(archive, symbol=symbol, validate_order=False))
     trades.sort(key=lambda trade: (trade.event_time_ns, int(trade.trade_id)))
     return trades
 
@@ -178,6 +202,7 @@ def download_and_read_raw_trades(
 __all__ = [
     "download_and_read_raw_trades",
     "download_verified_archive",
+    "iter_raw_trade_archive",
     "raw_trade_archive_url",
     "read_raw_trade_archive",
 ]

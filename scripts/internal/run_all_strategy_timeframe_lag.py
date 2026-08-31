@@ -396,6 +396,7 @@ def run_decision_lifecycle(
     end_exclusive_ns: int,
     strategy_module: StrategyModule | None = None,
     warmup_bars: list[BarEvent] | None = None,
+    execution_events: list[BarEvent] | None = None,
 ) -> tuple[np.ndarray, list[dict[str, Any]], dict[str, Any]]:
     plugin = get_entry(strategy_name)
     config_obj = _build_config_obj(
@@ -417,6 +418,14 @@ def run_decision_lifecycle(
         default_price_field="open", allow_short=True, backend="timeframe_lag_experiment"
     )
     market_times = np.fromiter((bar.event_time_ns for bar in bars_1m), dtype=np.int64)
+    execution_source = execution_events if execution_events is not None else bars_1m
+    execution_times = np.fromiter(
+        (event.event_time_ns for event in execution_source), dtype=np.int64
+    )
+    if len(execution_source) != len(execution_times) or (
+        len(execution_times) > 1 and np.any(np.diff(execution_times) < 0)
+    ):
+        raise ValueError("execution events must be chronologically non-decreasing")
     fills: list[FillRecord] = []
     current_quantity = 0.0
     current_direction = 0
@@ -517,7 +526,7 @@ def run_decision_lifecycle(
             continue
 
         due_time_ns = event.event_time_ns + lag_minutes * MINUTE_NS
-        fill_event = execution_bar(bars_1m, market_times, due_time_ns)
+        fill_event = execution_bar(execution_source, execution_times, due_time_ns)
         if fill_event is None or fill_event.event_time_ns >= end_exclusive_ns:
             dropped_tail += 1
             continue
@@ -550,7 +559,14 @@ def run_decision_lifecycle(
                 module_high = float(fill_event.high) if current_quantity else None
                 module_low = float(fill_event.low) if current_quantity else None
         if abs(current_quantity - quantity_before) > 1e-15:
-            change_times.append(fill_event.event_time_ns)
+            # For an exact boundary index the fill may occur milliseconds after
+            # the minute boundary.  Minute accounting uses the new exposure
+            # from that exact fill price onward, so anchor the position state to
+            # the corresponding due boundary while retaining the true fill time
+            # in the execution audit.
+            change_times.append(
+                due_time_ns if execution_events is not None else fill_event.event_time_ns
+            )
             change_quantities.append(current_quantity)
         audit_rows.append(
             {
@@ -590,6 +606,7 @@ def run_decision_lifecycle(
         "final_direction": int(current_direction),
         "final_exposure": float(current_quantity),
         "module_decision_count": module_decision_count,
+        "execution_source": "external_exact_events" if execution_events is not None else "bar_open",
     }
     return direction, audit_rows, meta
 
