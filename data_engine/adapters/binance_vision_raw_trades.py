@@ -109,13 +109,13 @@ def iter_raw_trade_archive(
     symbol: str,
     validate_order: bool = True,
 ) -> Iterator[TradeEvent]:
-    """Stream one verified archive as deterministically ordered TradeEvents.
+    """Stream one verified archive in source-row order as TradeEvents.
 
-    Binance's official daily ``trades`` files are ordered chronologically.  The
-    streaming contract validates that ordering instead of retaining and sorting
-    an entire (potentially very large) trading day in memory.  Any source-order
-    violation is therefore explicit and cannot silently change first-trade
-    execution semantics.
+    ``validate_order`` is an audit option, not a source guarantee.  At least one
+    official daily futures ``trades`` archive contains neighbouring trade IDs
+    whose timestamps are not chronological.  Callers that require deterministic
+    chronological order must either use :func:`read_raw_trade_archive` or perform
+    a bounded exact aggregation that explicitly orders by timestamp/trade ID.
     """
     prior_key: tuple[int, int] | None = None
     with zipfile.ZipFile(archive) as bundle:

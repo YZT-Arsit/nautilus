@@ -4,6 +4,19 @@ import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
 
 const root = process.argv[2];
 if (!root) throw new Error("usage: node build_boss_multitimeframe_workbooks.mjs <result-root>");
+const previewRoot = path.join(root, "workbook_previews");
+await fs.mkdir(previewRoot, { recursive: true });
+
+function excelColumn(columnCount) {
+  let value = columnCount;
+  let result = "";
+  while (value > 0) {
+    value -= 1;
+    result = String.fromCharCode(65 + (value % 26)) + result;
+    value = Math.floor(value / 26);
+  }
+  return result;
+}
 
 const imports = [
   ["boss_multitimeframe_overview.csv", "Overview"],
@@ -94,14 +107,37 @@ const checks = await workbook.inspect({
 if (checks.ndjson && /#REF!|#DIV\/0!|#VALUE!|#NAME\?|#N\/A/.test(checks.ndjson)) {
   throw new Error(`workbook formula error scan failed: ${checks.ndjson}`);
 }
-
-const preview = await workbook.render({
-  sheetName: "Overview", autoCrop: "all", scale: 1, format: "png",
+const reviewInspection = await workbook.inspect({
+  kind: "table",
+  range: "Overview!A1:B20",
+  include: "values,formulas",
+  tableMaxRows: 20,
+  tableMaxCols: 8,
 });
-await fs.writeFile(
-  path.join(root, "boss_multitimeframe_tick_review_preview.png"),
-  new Uint8Array(await preview.arrayBuffer()),
-);
+if (!reviewInspection.ndjson) throw new Error("review workbook inspection returned no data");
+for (const [, sheetName] of imports) {
+  const sheet = workbook.worksheets.getItem(sheetName);
+  const values = sheet.getUsedRange(true)?.values ?? [[""]];
+  const rows = Math.max(1, Math.min(25, values.length));
+  const cols = Math.max(1, Math.min(12, values[0]?.length ?? 1));
+  const preview = await workbook.render({
+    sheetName,
+    range: `A1:${excelColumn(cols)}${rows}`,
+    scale: 1,
+    format: "png",
+  });
+  const previewBytes = new Uint8Array(await preview.arrayBuffer());
+  await fs.writeFile(
+    path.join(previewRoot, `${sheetName}.png`),
+    previewBytes,
+  );
+  if (sheetName === "Overview") {
+    await fs.writeFile(
+      path.join(root, "boss_multitimeframe_tick_review_preview.png"),
+      previewBytes,
+    );
+  }
+}
 const output = await SpreadsheetFile.exportXlsx(workbook);
 await output.save(path.join(root, "boss_multitimeframe_tick_review.xlsx"));
 
@@ -126,6 +162,33 @@ for (let col = 0; col < candidateCols; col += 1) {
   if (/Turnover_raw/i.test(label)) column.format.numberFormat = "0.00x;[Red](0.00x);-";
   column.format.columnWidthPx = /why_shortlisted/i.test(label) ? 220 : Math.min(150, Math.max(80, label.length * 7));
 }
+const candidateInspection = await candidateWorkbook.inspect({
+  kind: "table",
+  range: "Candidates!A1:L25",
+  include: "values,formulas",
+  tableMaxRows: 25,
+  tableMaxCols: 12,
+});
+if (!candidateInspection.ndjson) throw new Error("candidate workbook inspection returned no data");
+const candidateErrors = await candidateWorkbook.inspect({
+  kind: "match",
+  searchTerm: "#REF!|#DIV/0!|#VALUE!|#NAME\\?|#N/A",
+  options: { useRegex: true, maxResults: 100 },
+  summary: "candidate formula error scan",
+});
+if (candidateErrors.ndjson && /#REF!|#DIV\/0!|#VALUE!|#NAME\?|#N\/A/.test(candidateErrors.ndjson)) {
+  throw new Error(`candidate workbook formula error scan failed: ${candidateErrors.ndjson}`);
+}
+const candidatePreview = await candidateWorkbook.render({
+  sheetName: "Candidates",
+  range: `A1:${excelColumn(Math.min(12, candidateCols))}${Math.min(25, candidateValues.length)}`,
+  scale: 1,
+  format: "png",
+});
+await fs.writeFile(
+  path.join(previewRoot, "Candidates.png"),
+  new Uint8Array(await candidatePreview.arrayBuffer()),
+);
 const candidateOutput = await SpreadsheetFile.exportXlsx(candidateWorkbook);
 await candidateOutput.save(path.join(root, "boss_multitimeframe_candidates.xlsx"));
 

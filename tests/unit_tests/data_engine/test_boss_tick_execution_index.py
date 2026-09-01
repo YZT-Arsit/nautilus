@@ -11,6 +11,7 @@ from data_engine.adapters.binance_vision_raw_trades import iter_raw_trade_archiv
 from scripts.internal.build_boss_tick_execution_index import (
     IndexedTrade,
     build_minute_index_rows,
+    build_minute_index_rows_from_source,
     utc_day_start_ms,
     write_index_partition,
 )
@@ -62,6 +63,27 @@ def test_cross_day_first_trade_resolves_sparse_tail() -> None:
     assert summary["unresolved_boundaries"] == 0
     assert rows[-1]["first_trade_id"] == 99
     assert rows[-1]["wait_ms"] == 60_017
+
+
+def test_unordered_official_source_still_builds_exact_first_trade_index() -> None:
+    day = date(2024, 7, 1)
+    start = utc_day_start_ms(day)
+    rows, summary = build_minute_index_rows_from_source(
+        [
+            trade(start + 60_900, 13, 0),
+            trade(start + 125, 10, 1),
+            trade(start + 60_050, 12, 2),
+            trade(start + 125, 11, 3),
+            trade(start + 86_399_999, 14, 4),
+        ],
+        day=day,
+    )
+    assert summary["raw_trade_count"] == 5
+    assert summary["unresolved_boundaries"] == 0
+    assert rows[0]["first_trade_id"] == 10
+    assert rows[1]["first_trade_id"] == 12
+    assert rows[1]["source_row_index"] == 2
+    assert rows[-1]["first_trade_id"] == 14
 
 
 def test_atomic_parquet_contains_source_quote_quantity(tmp_path: Path) -> None:

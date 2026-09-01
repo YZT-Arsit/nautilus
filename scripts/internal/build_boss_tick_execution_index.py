@@ -302,6 +302,128 @@ def build_minute_index_rows(
     }
 
 
+def build_minute_index_rows_from_source(
+    trades: Iterable[IndexedTrade],
+    *,
+    day: date,
+    future_trade: IndexedTrade | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Build an exact minute index without assuming source-row ordering.
+
+    Only the chronological first and last trade for each of the 1,440 UTC
+    minutes are retained.  A reverse suffix pass then selects the exact first
+    trade at or after every minute boundary.  This is equivalent to sorting the
+    full daily archive by ``(timestamp, trade_id)`` while keeping memory bounded
+    independently of the raw trade count.
+    """
+    day_start = utc_day_start_ms(day)
+    first_by_minute: list[IndexedTrade | None] = [None] * 1440
+    last_by_minute: list[IndexedTrade | None] = [None] * 1440
+    minute_counts = [0] * 1440
+    raw_count = 0
+    first_trade: IndexedTrade | None = None
+    last_trade: IndexedTrade | None = None
+
+    def key(trade: IndexedTrade) -> tuple[int, int]:
+        return trade.event_time_ms, trade.trade_id
+
+    for trade in trades:
+        raw_count += 1
+        offset = trade.event_time_ms - day_start
+        if not 0 <= offset < DAY_MS:
+            raise ValueError(
+                f"raw trade timestamp outside UTC source partition {day}: "
+                f"{trade.event_time_ms}"
+            )
+        minute = offset // MINUTE_MS
+        minute_counts[minute] += 1
+        if first_trade is None or key(trade) < key(first_trade):
+            first_trade = trade
+        if last_trade is None or key(trade) > key(last_trade):
+            last_trade = trade
+        current_first = first_by_minute[minute]
+        if current_first is None or key(trade) < key(current_first):
+            first_by_minute[minute] = trade
+        current_last = last_by_minute[minute]
+        if current_last is None or key(trade) > key(current_last):
+            last_by_minute[minute] = trade
+
+    selected: list[IndexedTrade | None] = [None] * 1440
+    next_trade = future_trade
+    for minute in range(1439, -1, -1):
+        if first_by_minute[minute] is not None:
+            next_trade = first_by_minute[minute]
+        selected[minute] = next_trade
+
+    predecessor: list[IndexedTrade | None] = [None] * 1440
+    prior: IndexedTrade | None = None
+    for minute in range(1440):
+        predecessor[minute] = prior
+        candidate = last_by_minute[minute]
+        if candidate is not None and (prior is None or key(candidate) > key(prior)):
+            prior = candidate
+
+    rows: list[dict[str, Any]] = []
+    validation_candidates: list[dict[str, Any]] = []
+    for minute, trade in enumerate(selected):
+        if trade is None:
+            continue
+        boundary = day_start + minute * MINUTE_MS
+        prior = predecessor[minute]
+        row = {
+            "minute_boundary_timestamp": boundary,
+            "first_trade_timestamp": trade.event_time_ms,
+            "first_trade_id": trade.trade_id,
+            "price": trade.price,
+            "quantity": trade.quantity,
+            "quote_quantity": trade.quote_quantity,
+            "is_buyer_maker": trade.is_buyer_maker,
+            "wait_ms": trade.event_time_ms - boundary,
+            "source_date": trade.source_date,
+            "source_archive_name": trade.source_archive_name,
+            "source_checksum": trade.source_checksum,
+            "source_row_index": trade.source_row_index,
+        }
+        rows.append(row)
+        if (
+            minute in {0, 1, 719, 1438, 1439}
+            or trade.event_time_ms == boundary
+            or int(hashlib.sha256(f"{day}:{minute}".encode()).hexdigest()[:8], 16) % 31 == 0
+        ):
+            validation_candidates.append(
+                {
+                    **row,
+                    "previous_trade_timestamp": prior.event_time_ms if prior else "",
+                    "previous_trade_id": prior.trade_id if prior else "",
+                    "proof_selected_not_before_boundary": trade.event_time_ms >= boundary,
+                    "proof_predecessor_before_boundary":
+                    prior is None or prior.event_time_ms < boundary,
+                }
+            )
+
+    if rows:
+        high_minute = max(range(1440), key=minute_counts.__getitem__)
+        if selected[high_minute] is not None:
+            validation_candidates.append(
+                {**rows[high_minute], "sample_category": "HIGH_VOLUME"}
+            )
+        nonzero = [minute for minute, count in enumerate(minute_counts) if count]
+        if nonzero:
+            low_minute = min(nonzero, key=minute_counts.__getitem__)
+            if selected[low_minute] is not None:
+                validation_candidates.append(
+                    {**rows[low_minute], "sample_category": "LOW_VOLUME"}
+                )
+    return rows, {
+        "raw_trade_count": raw_count,
+        "first_trade_timestamp": first_trade.event_time_ms if first_trade else None,
+        "last_trade_timestamp": last_trade.event_time_ms if last_trade else None,
+        "resolved_boundaries": len(rows),
+        "unresolved_boundaries": 1440 - len(rows),
+        "validation_candidates": validation_candidates,
+    }
+
+
 def write_index_partition(path: Path, rows: list[dict[str, Any]]) -> str:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -347,14 +469,20 @@ def _archive_uncompressed_bytes(archive: Path) -> int:
 def _first_trade(
     *, symbol: str, day: date, archive: Path, checksum: str
 ) -> IndexedTrade:
-    iterator = iter_raw_trade_archive(archive, symbol=symbol)
-    try:
-        trade = next(iterator)
-    except StopIteration as exc:
-        raise ValueError(f"empty official raw trade archive: {archive}") from exc
+    first: tuple[int, TradeEvent] | None = None
+    for row_index, trade in enumerate(
+        iter_raw_trade_archive(archive, symbol=symbol, validate_order=False)
+    ):
+        if first is None or (trade.event_time_ns, int(trade.trade_id)) < (
+            first[1].event_time_ns,
+            int(first[1].trade_id),
+        ):
+            first = row_index, trade
+    if first is None:
+        raise ValueError(f"empty official raw trade archive: {archive}")
     return to_indexed(
-        trade,
-        row_index=0,
+        first[1],
+        row_index=first[0],
         source_day=day,
         archive_name=archive.name,
         checksum=checksum,
@@ -391,9 +519,11 @@ def process_day(
             archive_name=archive.name,
             checksum=checksum,
         )
-        for row_index, trade in enumerate(iter_raw_trade_archive(archive, symbol=symbol))
+        for row_index, trade in enumerate(
+            iter_raw_trade_archive(archive, symbol=symbol, validate_order=False)
+        )
     )
-    rows, summary = build_minute_index_rows(indexed_trades, day=day)
+    rows, summary = build_minute_index_rows_from_source(indexed_trades, day=day)
     lookahead_archive: Path | None = None
     if summary["unresolved_boundaries"]:
         lookahead_day = day + timedelta(days=1)
@@ -414,9 +544,13 @@ def process_day(
                 archive_name=archive.name,
                 checksum=checksum,
             )
-            for row_index, trade in enumerate(iter_raw_trade_archive(archive, symbol=symbol))
+            for row_index, trade in enumerate(
+                iter_raw_trade_archive(archive, symbol=symbol, validate_order=False)
+            )
         )
-        rows, summary = build_minute_index_rows(indexed_trades, day=day, future_trade=future)
+        rows, summary = build_minute_index_rows_from_source(
+            indexed_trades, day=day, future_trade=future
+        )
     if len(rows) != 1440 or summary["unresolved_boundaries"] != 0:
         raise ValueError(f"unresolved minute boundaries for {symbol} {day}: {summary}")
     if any(row["wait_ms"] < 0 for row in rows):

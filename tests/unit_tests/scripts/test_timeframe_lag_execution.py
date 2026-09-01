@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 from data_engine.events import BarEvent
 from scripts.internal.run_all_strategy_timeframe_lag import MINUTE_NS
@@ -13,6 +14,7 @@ from scripts.internal.run_all_strategy_timeframe_lag import parse_cases
 from scripts.internal.run_all_strategy_timeframe_lag import run_decision_lifecycle
 from scripts.internal.run_all_strategy_timeframe_lag import validate_direction_variants
 from scripts.internal.run_boss_multitimeframe_tick_screen import persistence_metrics
+from scripts.internal.run_boss_multitimeframe_tick_screen import review_sample_indices
 from scripts.internal.run_boss_multitimeframe_tick_screen import semantic_identity
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
 from strategy_framework.execution.duration_lag import DurationLagTargetAdapter
@@ -232,3 +234,9 @@ def test_persistence_metrics_use_executed_position_and_reconcile_fractions() -> 
     assert metrics["position_change_count"] == 3
     assert metrics["sign_switch_count"] == 1
     assert metrics["median_holding_duration_seconds"] == 120.0
+
+
+def test_review_sampling_compares_series_by_position_not_index_label() -> None:
+    executed = pd.Series([0.0, 1.0, 1.0, -1.0], index=[10, 11, 12, 13])
+    sample = review_sample_indices(executed, np.array([0.0, 0.0, -0.1, -0.2]))
+    np.testing.assert_array_equal(sample, [0, 1, 2, 3])

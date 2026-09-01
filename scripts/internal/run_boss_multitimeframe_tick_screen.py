@@ -205,6 +205,24 @@ def tick_wait_metrics(boundary_times: np.ndarray, waits: np.ndarray, timeframe: 
     }
 
 
+def review_sample_indices(
+    executed_position: pd.Series | np.ndarray,
+    drawdown_values: np.ndarray,
+) -> np.ndarray:
+    """Retain daily review points and every actual position transition."""
+    position = np.asarray(executed_position, dtype=np.float64)
+    changes = np.flatnonzero(np.r_[True, position[1:] != position[:-1]])
+    return np.unique(
+        np.r_[
+            np.arange(0, len(position), 1440),
+            changes,
+            np.maximum(changes - 1, 0),
+            len(position) - 1,
+            int(np.argmin(drawdown_values)),
+        ]
+    )
+
+
 def run_group_case(
     *, representative: str, members: list[str], source: dict[str, Any], semantic_hash: str,
     symbol: str, timeframe: str, bars: list[BarEvent], funding: pd.DataFrame,
@@ -268,13 +286,7 @@ def run_group_case(
     # Daily points keep return/drawdown review files bounded.  Every executed
     # position transition (plus its predecessor) is also retained so the boss
     # position panel is the actual step path, not a daily approximation.
-    position_changes = np.flatnonzero(np.r_[True, result.direction[1:] != result.direction[:-1]])
-    sample = np.unique(
-        np.r_[
-            np.arange(0, len(review), 1440), position_changes,
-            np.maximum(position_changes - 1, 0), len(review) - 1, int(np.argmin(dd)),
-        ]
-    )
+    sample = review_sample_indices(result.direction, dd)
     return summary, review.iloc[sample].reset_index(drop=True)
 
 
