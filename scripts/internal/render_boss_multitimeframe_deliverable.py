@@ -17,6 +17,19 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def metric_label(value: object, format_spec: str, suffix: str = "") -> str:
+    """Format an optional finite metric without manufacturing a numeric value."""
+    if value is None:
+        return "N/A"
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return "N/A"
+    if not np.isfinite(numeric):
+        return "N/A"
+    return f"{numeric:{format_spec}}{suffix}"
+
+
 def performance_figure(summary: dict, timeseries: pd.DataFrame, output: Path) -> None:
     timestamps = pd.to_datetime(timeseries.event_time_ns, unit="ns", utc=True)
     figure, axes = plt.subplots(
@@ -42,9 +55,12 @@ def performance_figure(summary: dict, timeseries: pd.DataFrame, output: Path) ->
     axes[2].set_xlabel("UTC time")
     figure.suptitle(
         f"{summary['representative_strategy_id']} | {summary['symbol']} | {summary['timeframe']} signal → raw tick execution\n"
-        f"FEE0 Return={summary['Return_fee0']:.2%} | 5bp={summary['Return_5bp']:.2%} | "
-        f"BE={summary['BE_bps']:.2f} bps | MDD={summary['MDD']:.2%} | "
-        f"Nonflat={summary['nonflat_fraction']:.1%} | Wait P95={summary['first_tick_wait_p95_ms']:.0f} ms",
+        f"FEE0 Return={metric_label(summary['Return_fee0'], '.2%')} | "
+        f"5bp={metric_label(summary['Return_5bp'], '.2%')} | "
+        f"BE={metric_label(summary['BE_bps'], '.2f', ' bps')} | "
+        f"MDD={metric_label(summary['MDD'], '.2%')} | "
+        f"Nonflat={metric_label(summary['nonflat_fraction'], '.1%')} | "
+        f"Wait P95={metric_label(summary['first_tick_wait_p95_ms'], '.0f', ' ms')}",
         fontsize=12,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -81,13 +97,17 @@ def render(root: Path) -> dict:
             continue
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         target = figures / f"{summary['representative_strategy_id']}_{row.symbol}_{row.timeframe}_performance.png"
-        performance_figure(summary, pd.read_parquet(source), target)
+        if not target.is_file():
+            performance_figure(summary, pd.read_parquet(source), target)
         rendered.append(str(target))
 
     # One compact reference-vs-project position-shape comparison.
     reference = pd.read_csv(root / "reference_position_behavior.csv")
     ours = master.sort_values(["nonflat_fraction", "BE_bps"], ascending=[False, False]).head(5)
-    labels = [f"External {row.strategy}/{row.symbol}" for row in reference.head(4).itertuples()]
+    labels = [
+        f"External {row.reference_strategy}/{row.symbol}"
+        for row in reference.head(4).itertuples()
+    ]
     values = [
         (row.long_fraction, row.short_fraction, row.flat_fraction)
         for row in reference.head(4).itertuples()

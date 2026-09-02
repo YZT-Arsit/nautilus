@@ -13,14 +13,46 @@ from scripts.internal.run_all_strategy_timeframe_lag import execution_bar
 from scripts.internal.run_all_strategy_timeframe_lag import parse_cases
 from scripts.internal.run_all_strategy_timeframe_lag import run_decision_lifecycle
 from scripts.internal.run_all_strategy_timeframe_lag import validate_direction_variants
+from scripts.internal.finalize_boss_multitimeframe_tick_screen import (
+    descriptive_best_timeframes,
+)
 from scripts.internal.run_boss_multitimeframe_tick_screen import persistence_metrics
 from scripts.internal.run_boss_multitimeframe_tick_screen import review_sample_indices
 from scripts.internal.run_boss_multitimeframe_tick_screen import semantic_identity
+from scripts.internal.render_boss_multitimeframe_deliverable import metric_label
 from strategy_framework.backends.nautilus_simulation import IntentFillSimulator
 from strategy_framework.execution.duration_lag import DurationLagTargetAdapter
 from strategy_framework.execution.intents import PlannedSignal
 from strategy_framework.execution.intents import TradeAction
 from strategy_framework.modules import AtrHardStopModule
+
+
+def test_descriptive_best_timeframe_preserves_missing_be() -> None:
+    summary = pd.DataFrame(
+        [
+            {
+                "strategy_id": "no_episode",
+                "timeframe": "1m",
+                "median_Return": -0.1,
+                "median_BE": np.nan,
+            },
+            {
+                "strategy_id": "no_episode",
+                "timeframe": "5m",
+                "median_Return": 0.2,
+                "median_BE": np.nan,
+            },
+        ]
+    )
+    result = descriptive_best_timeframes(summary).iloc[0]
+    assert result.best_raw_timeframe == "5m"
+    assert result.best_BE_timeframe == ""
+
+
+def test_optional_plot_metric_preserves_missing_value() -> None:
+    assert metric_label(None, ".2f", " bps") == "N/A"
+    assert metric_label(np.nan, ".2f", " bps") == "N/A"
+    assert metric_label(-1.25, ".2f", " bps") == "-1.25 bps"
 
 
 def test_execute_planned_returns_each_fill_once_without_mutating_external_ledger() -> None:

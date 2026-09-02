@@ -12,6 +12,7 @@ from scripts.internal.build_boss_tick_execution_index import (
     IndexedTrade,
     build_minute_index_rows,
     build_minute_index_rows_from_source,
+    select_validation_samples,
     utc_day_start_ms,
     write_index_partition,
 )
@@ -125,3 +126,38 @@ def test_canonical_stream_parser_preserves_quote_qty_and_rejects_bad_order(
         )
     with pytest.raises(ValueError, match="source order violation"):
         list(iter_raw_trade_archive(bad, symbol="BTCUSDT"))
+
+
+def test_spot_selection_keeps_proofs_and_volume_regimes() -> None:
+    samples = []
+    for minute in range(120):
+        samples.append(
+            {
+                "symbol": "BTCUSDT",
+                "minute_boundary_timestamp": minute * 60_000,
+                "proof_selected_not_before_boundary": True,
+                "proof_predecessor_before_boundary": True,
+            }
+        )
+    samples.extend(
+        [
+            {
+                "symbol": "BTCUSDT",
+                "minute_boundary_timestamp": 9_000_000,
+                "sample_category": "HIGH_VOLUME",
+            },
+            {
+                "symbol": "BTCUSDT",
+                "minute_boundary_timestamp": 9_060_000,
+                "sample_category": "LOW_VOLUME",
+            },
+        ]
+    )
+    selected = select_validation_samples(samples)
+    btc = [row for row in selected if row["symbol"] == "BTCUSDT"]
+    proof = [row for row in btc if "proof_predecessor_before_boundary" in row]
+    assert len(proof) == 100
+    assert {row.get("sample_category") for row in btc} >= {
+        "HIGH_VOLUME",
+        "LOW_VOLUME",
+    }

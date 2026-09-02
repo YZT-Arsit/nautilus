@@ -198,6 +198,28 @@ def data_availability(root: Path, market_root: Path) -> pd.DataFrame:
     return frame
 
 
+def descriptive_best_timeframes(summary: pd.DataFrame) -> pd.DataFrame:
+    """Return descriptive optima without inventing a winner for all-NA metrics."""
+    rows: list[dict[str, Any]] = []
+    for strategy, group in summary.groupby("strategy_id"):
+        valid_return = group.dropna(subset=["median_Return"])
+        valid_be = group.dropna(subset=["median_BE"])
+        rows.append(
+            {
+                "strategy_id": strategy,
+                "best_raw_timeframe": (
+                    valid_return.loc[valid_return.median_Return.idxmax()].timeframe
+                    if not valid_return.empty else ""
+                ),
+                "best_BE_timeframe": (
+                    valid_be.loc[valid_be.median_BE.idxmax()].timeframe
+                    if not valid_be.empty else ""
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def finalise(root: Path, market_root: Path) -> dict[str, Any]:
     availability = data_availability(root, market_root)
     atomic_csv(root / "boss_multitimeframe_data_availability.csv", availability)
@@ -222,13 +244,32 @@ def finalise(root: Path, market_root: Path) -> dict[str, Any]:
     proof_columns = [
         "proof_selected_not_before_boundary", "proof_predecessor_before_boundary",
     ]
+    missing_proof_columns = [column for column in proof_columns if column not in spot]
+    if missing_proof_columns:
+        raise ValueError(f"spot validation proof columns missing: {missing_proof_columns}")
+    proof_rows = spot[spot[proof_columns].notna().all(axis=1)].copy()
     proof_ok = all(
-        (spot[column] if spot[column].dtype == bool else spot[column].astype(str).str.lower().eq("true")).all()
+        (
+            proof_rows[column]
+            if proof_rows[column].dtype == bool
+            else proof_rows[column].astype(str).str.lower().eq("true")
+        ).all()
         for column in proof_columns
+    )
+    category_coverage = (
+        spot.dropna(subset=["sample_category"])
+        .groupby("symbol")["sample_category"]
+        .agg(lambda values: {str(value) for value in values})
+        .to_dict()
     )
     if (
         set(spot.symbol) != set(SYMBOLS)
-        or int(spot.groupby("symbol").size().min()) < 100
+        or set(proof_rows.symbol) != set(SYMBOLS)
+        or int(proof_rows.groupby("symbol").size().min()) < 100
+        or any(
+            not {"HIGH_VOLUME", "LOW_VOLUME"} <= category_coverage.get(symbol, set())
+            for symbol in SYMBOLS
+        )
         or not proof_ok
     ):
         raise ValueError("raw-trade first-tick spot validation failed")
@@ -362,19 +403,10 @@ def finalise(root: Path, market_root: Path) -> dict[str, Any]:
         ]
     )
     atomic_csv(root / "persistent_position_reference_audit.csv", reference)
-    grouped = summary.groupby("strategy_id")
-    best = []
-    for strategy, group in grouped:
-        row_return = group.loc[group.median_Return.idxmax()]
-        row_be = group.loc[group.median_BE.idxmax()]
-        best.append(
-            {
-                "strategy_id": strategy,
-                "best_raw_timeframe": row_return.timeframe,
-                "best_BE_timeframe": row_be.timeframe,
-            }
-        )
-    atomic_csv(root / "cross_timeframe_descriptive_best.csv", pd.DataFrame(best))
+    atomic_csv(
+        root / "cross_timeframe_descriptive_best.csv",
+        descriptive_best_timeframes(summary),
+    )
     physical_runs = len(physical)
     top_persistent_ids = (
         master.groupby("strategy_id", as_index=False)

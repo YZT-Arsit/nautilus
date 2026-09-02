@@ -583,6 +583,53 @@ def process_day(
     return {**record, "status": "COMPLETE"}
 
 
+def select_validation_samples(
+    samples: list[dict[str, Any]], *, per_symbol: int = 100
+) -> list[dict[str, Any]]:
+    """Select proof-bearing spot checks plus explicit volume-regime cases.
+
+    Volume-regime candidates created by older index partitions intentionally
+    did not carry predecessor proof columns.  They remain useful coverage
+    observations, but must not crowd all proof-bearing observations out of the
+    deterministic cap.
+    """
+    selected: list[dict[str, Any]] = []
+    proof_columns = {
+        "proof_selected_not_before_boundary",
+        "proof_predecessor_before_boundary",
+    }
+    for symbol in SYMBOLS:
+        candidates = [sample for sample in samples if sample["symbol"] == symbol]
+        proof = [sample for sample in candidates if proof_columns <= sample.keys()]
+        proof.sort(
+            key=lambda row: hashlib.sha256(
+                f"{row['symbol']}:{row['minute_boundary_timestamp']}".encode()
+            ).hexdigest()
+        )
+        chosen = proof[:per_symbol]
+        seen = {
+            (row["symbol"], row["minute_boundary_timestamp"])
+            for row in chosen
+        }
+        for category in ("HIGH_VOLUME", "LOW_VOLUME"):
+            category_rows = [
+                row for row in candidates if row.get("sample_category") == category
+            ]
+            category_rows.sort(
+                key=lambda row: hashlib.sha256(
+                    f"{row['symbol']}:{row['minute_boundary_timestamp']}".encode()
+                ).hexdigest()
+            )
+            if category_rows:
+                row = category_rows[0]
+                identity = (row["symbol"], row["minute_boundary_timestamp"])
+                if identity not in seen:
+                    chosen.append(row)
+                    seen.add(identity)
+        selected.extend(chosen)
+    return selected
+
+
 def consolidate_manifest(output_root: Path, state_root: Path) -> dict[str, Any]:
     records = []
     samples = []
@@ -596,20 +643,9 @@ def consolidate_manifest(output_root: Path, state_root: Path) -> dict[str, Any]:
     if records:
         fields = [key for key in records[0] if not isinstance(records[0][key], (list, dict))]
         atomic_csv(output_root / "tick_execution_index_manifest.csv", records, fields)
-    # Deterministic capped sample: >=100 per completed symbol, with category
-    # candidates retained before hash-ordered generic observations.
-    selected = []
-    for symbol in SYMBOLS:
-        candidates = [sample for sample in samples if sample["symbol"] == symbol]
-        candidates.sort(
-            key=lambda row: (
-                0 if row.get("sample_category") in {"HIGH_VOLUME", "LOW_VOLUME"} else 1,
-                hashlib.sha256(
-                    f"{row['symbol']}:{row['minute_boundary_timestamp']}".encode()
-                ).hexdigest(),
-            )
-        )
-        selected.extend(candidates[:100])
+    # Keep at least 100 exact predecessor-proof observations per symbol, then
+    # retain deterministic high/low-volume coverage rows as additional cases.
+    selected = select_validation_samples(samples)
     if selected:
         fields = sorted({key for row in selected for key in row})
         atomic_csv(output_root / "tick_execution_index_spot_validation.csv", selected, fields)
