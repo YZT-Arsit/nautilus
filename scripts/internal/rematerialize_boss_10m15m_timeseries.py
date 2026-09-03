@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Deterministically re-materialize only the deleted 10m/15m review series.
+"""Deterministically re-materialize selected deleted review series.
 
 This deliberately reuses the frozen strategy scope, canonical market data,
 compact first-trade index, and the original case function.  It validates every
 recomputed aggregate against the preserved 9,612-row master before publishing
-the compact Parquet.  No 1m/5m case is evaluated.
+the compact Parquet.  The caller explicitly freezes timeframes and groups.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from scripts.internal.run_boss_multitimeframe_tick_screen import (  # noqa: E402
     strategy_scope,
 )
 
-TIMEFRAMES = ("10m", "15m")
+DEFAULT_TIMEFRAMES = ("10m", "15m")
 METRICS = ("Return_fee0", "Turnover_raw", "BE_bps", "MDD")
 TOL = 1e-11
 
@@ -86,12 +86,32 @@ def metric_residual(actual: object, expected: object) -> float:
     return abs(left - right)
 
 
+def existing_review_residuals(path: Path, expected: pd.Series) -> dict[str, float]:
+    frame = pd.read_parquet(path)
+    result_return = float(frame.cumulative_return_with_premium.iloc[-1])
+    turnover = float(frame.cumulative_turnover.iloc[-1])
+    break_even = result_return * 10000.0 / turnover if turnover > 0 else float("nan")
+    actual = {
+        "Return_fee0": result_return,
+        "Turnover_raw": turnover,
+        "BE_bps": break_even,
+        "MDD": float(frame.drawdown.min()),
+    }
+    return {metric: metric_residual(actual[metric], expected[metric]) for metric in METRICS}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=ROOT)
     parser.add_argument("--symbols", required=True, help="comma-separated frozen symbols")
+    parser.add_argument("--timeframes", default=",".join(DEFAULT_TIMEFRAMES))
+    parser.add_argument("--semantic-hashes-file", type=Path)
+    parser.add_argument("--qualifying-review", type=Path)
     parser.add_argument("--limit-groups", type=int)
     args = parser.parse_args()
+    timeframes = tuple(value.strip() for value in args.timeframes.split(",") if value.strip())
+    if not timeframes or any(value not in {"1m", "5m", "10m", "15m"} for value in timeframes):
+        raise ValueError(f"unsupported timeframe selection: {timeframes}")
     repo = args.repo.resolve()
     result_root = repo / "outputs/baseline_evaluation/boss_multitimeframe_tick_screen"
     master_path = (
@@ -99,7 +119,7 @@ def main() -> int:
         "boss_multitimeframe_tick_master.csv"
     )
     master = pd.read_csv(master_path)
-    master = master[master.timeframe.isin(TIMEFRAMES)].copy()
+    master = master[master.timeframe.isin(timeframes)].copy()
     scope_path = result_root / "boss_multitimeframe_strategy_scope.csv"
     strategies = (
         strategy_scope(scope_path)
@@ -109,6 +129,31 @@ def main() -> int:
     if len(strategies) != 267:
         raise ValueError(f"frozen master must contain 267 strategies, found {len(strategies)}")
     groups = semantic_groups(strategies)
+    if args.semantic_hashes_file and args.qualifying_review:
+        raise ValueError("choose one semantic-group selector")
+    if args.qualifying_review:
+        review = pd.read_csv(args.qualifying_review)
+        selected_hashes = set(
+            review.loc[
+                review.Signed_BE_bps.abs().gt(10) & review.Sharpe.abs().gt(1),
+                "semantic_execution_hash",
+            ].astype(str)
+        )
+    elif args.semantic_hashes_file:
+        selected_hashes = {
+            value.strip()
+            for value in args.semantic_hashes_file.read_text(encoding="utf-8").splitlines()
+            if value.strip()
+        }
+    else:
+        selected_hashes = set()
+    if (args.semantic_hashes_file or args.qualifying_review) and not selected_hashes:
+        raise ValueError("semantic-group selector produced no groups")
+    if selected_hashes:
+        groups = [group for group in groups if group[0] in selected_hashes]
+        found_hashes = {group[0] for group in groups}
+        if found_hashes != selected_hashes:
+            raise ValueError(f"semantic hash selection mismatch: missing={sorted(selected_hashes - found_hashes)}")
     if args.limit_groups:
         groups = groups[: args.limit_groups]
     hashes = inventory_hashes(repo)
@@ -122,7 +167,7 @@ def main() -> int:
     end_exclusive = window["common_end_exclusive"]
     end_inclusive = (date.fromisoformat(end_exclusive) - timedelta(days=1)).isoformat()
     end_ns = int(pd.Timestamp(end_exclusive, tz="UTC").value)
-    state_root = result_root / "timeseries_rematerialization_state"
+    state_root = result_root / "timeseries_rematerialization_state" / "_".join(timeframes)
     total = 0
     skipped = 0
     max_residual = 0.0
@@ -137,7 +182,7 @@ def main() -> int:
             end_inclusive,
         )
         completed = 0
-        for timeframe in TIMEFRAMES:
+        for timeframe in timeframes:
             for semantic_hash, members, source in groups:
                 destination = (
                     result_root / "matrix_cases" / f"symbol={symbol}" / f"timeframe={timeframe}"
@@ -149,13 +194,25 @@ def main() -> int:
                     skipped += 1
                     completed += 1
                     continue
+                expected = expected_row(master, semantic_hash, symbol, timeframe)
+                if destination.is_file():
+                    residuals = existing_review_residuals(destination, expected)
+                    if (
+                        residuals["Return_fee0"] <= 1e-10
+                        and residuals["Turnover_raw"] <= 1e-6
+                        and residuals["BE_bps"] <= 1e-10
+                        and residuals["MDD"] <= 1e-10
+                    ):
+                        max_residual = max(max_residual, *residuals.values())
+                        skipped += 1
+                        completed += 1
+                        continue
                 summary, review = run_group_case(
                     representative=members[0], members=members, source=source,
                     semantic_hash=semantic_hash, symbol=symbol, timeframe=timeframe,
                     bars=bars, funding=funding, execution=execution, tick_prices=tick_prices,
                     waits=waits, end_ns=end_ns,
                 )
-                expected = expected_row(master, semantic_hash, symbol, timeframe)
                 residuals = {metric: metric_residual(summary[metric], expected[metric]) for metric in METRICS}
                 max_residual = max(max_residual, *residuals.values())
                 if any(value > TOL for value in residuals.values()):
@@ -174,11 +231,11 @@ def main() -> int:
                 if completed % 10 == 0:
                     atomic_json(state_root / f"{symbol}.json", {
                         "status": "RUNNING", "symbol": symbol, "completed": completed,
-                        "planned": len(groups) * len(TIMEFRAMES), "max_metric_residual": max_residual,
+                        "planned": len(groups) * len(timeframes), "max_metric_residual": max_residual,
                     })
         atomic_json(state_root / f"{symbol}.json", {
             "status": "PASSED", "symbol": symbol, "completed": completed,
-            "planned": len(groups) * len(TIMEFRAMES), "newly_materialized": total,
+            "planned": len(groups) * len(timeframes), "newly_materialized": total,
             "skipped_existing": skipped, "max_metric_residual": max_residual,
             "parquet_hash_mismatches": len(hash_mismatches),
         })
