@@ -1,0 +1,30 @@
+protocol_version: MAKER_EXECUTION_RESEARCH_V1
+execution_mode: MAKER_ONLY
+maker_policy: NEXT_DECISION_CANCEL
+post_only: true
+trade_execution: true
+queue_position: auto_by_data_capability
+headline_data_requirement: L1_QUOTES_PLUS_TRADES
+trade_only_model_label: TRADE_ONLY_MAKER_APPROXIMATION
+fill_model:
+  native_class: FillModel
+  prob_fill_on_limit: 1.0
+  prob_slippage: 0.0
+  random_seed: 7
+  interpretation: OPTIMISTIC_TOUCH_FILL
+fees:
+  primary_scenario: MAKER_GROSS
+  maker_fee_rate: 0.0
+  account_specific_rate_available: false
+  rebate_rate_available: false
+order_lifecycle:
+  decision_interval: 1m
+  cancel_unfilled_remainder_at_next_decision: true
+  retain_partial_fills: true
+  recompute_delta_from_actual_filled_position: true
+  taker_fallback: false
+candidate_scope:
+  source: tick_review_stageA_9symbols/qualifying_1m_sharpe_cases.csv
+  frozen_predicate: abs(FIRST_TICK_IDEALIZED.Sharpe) > 1.5
+  expected_cases: 698
+stage_b_all_symbols: NOT_AUTHORIZED
