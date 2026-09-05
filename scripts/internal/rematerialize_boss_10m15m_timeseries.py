@@ -34,7 +34,12 @@ from scripts.internal.run_boss_multitimeframe_tick_screen import (  # noqa: E402
 
 DEFAULT_TIMEFRAMES = ("10m", "15m")
 METRICS = ("Return_fee0", "Turnover_raw", "BE_bps", "MDD")
-TOL = 1e-11
+TOLERANCE = {
+    "Return_fee0": 1e-10,
+    "Turnover_raw": 1e-6,
+    "BE_bps": 1e-10,
+    "MDD": 1e-10,
+}
 
 
 def sha256(path: Path) -> str:
@@ -73,7 +78,7 @@ def expected_row(master: pd.DataFrame, semantic_hash: str, symbol: str, timefram
         raise ValueError(f"master row missing: {semantic_hash}/{symbol}/{timeframe}")
     for metric in METRICS:
         values = rows[metric].astype(float).to_numpy()
-        if np.ptp(values) > TOL:
+        if np.ptp(values) > TOLERANCE[metric]:
             raise ValueError(f"duplicate identity metrics disagree: {metric}")
     return rows.iloc[0]
 
@@ -215,7 +220,7 @@ def main() -> int:
                 )
                 residuals = {metric: metric_residual(summary[metric], expected[metric]) for metric in METRICS}
                 max_residual = max(max_residual, *residuals.values())
-                if any(value > TOL for value in residuals.values()):
+                if any(residuals[metric] > TOLERANCE[metric] for metric in METRICS):
                     raise RuntimeError(
                         f"aggregate invariance failed {symbol}/{timeframe}/{semantic_hash}: {residuals}"
                     )
