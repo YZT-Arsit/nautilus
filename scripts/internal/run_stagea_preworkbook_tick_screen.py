@@ -88,7 +88,7 @@ def semantic_identity(strategy_id: str) -> tuple[str, dict[str, Any]]:
 def run_symbol(args: argparse.Namespace) -> int:
     canonical_root = args.canonical_tick_root.resolve()
     window = json.loads(
-        (canonical_root / "boss_tick_index_data_window.json").read_text(encoding="utf-8")
+        (canonical_root / "boss_tick_index_data_window.json").read_text(encoding="utf-8-sig")
     )
     start = args.start or window["common_start"]
     end_exclusive = args.end_exclusive or window["common_end_exclusive"]
@@ -103,18 +103,25 @@ def run_symbol(args: argparse.Namespace) -> int:
     )
     scope = canonical_preworkbook_scope()
     strategies = sorted(scope.loc[scope.included, "strategy_name"].tolist())
+    timeframes = tuple(args.timeframe) if args.timeframe else TIMEFRAMES
     if args.strategy:
         requested = set(args.strategy)
         unknown = requested - set(strategies)
         if unknown:
             raise ValueError(f"unknown/noncanonical PRE_WORKBOOK strategies: {sorted(unknown)}")
         strategies = [value for value in strategies if value in requested]
+    if args.shard_count < 1 or not 0 <= args.shard_index < args.shard_count:
+        raise ValueError("invalid shard index/count")
+    strategies = strategies[args.shard_index :: args.shard_count]
 
     completed = failures = physical = reused = 0
-    progress = args.output_root / f"progress_{args.symbol}.json"
+    progress = args.output_root / (
+        f"progress_{args.symbol}.json" if args.shard_count == 1
+        else f"progress_{args.symbol}_shard_{args.shard_index}_of_{args.shard_count}.json"
+    )
     for strategy_id in strategies:
         semantic_hash, source = semantic_identity(strategy_id)
-        for timeframe in TIMEFRAMES:
+        for timeframe in timeframes:
             case_root = (
                 args.output_root
                 / "matrix_cases"
@@ -126,7 +133,12 @@ def run_symbol(args: argparse.Namespace) -> int:
             review_path = case_root / "review_timeseries.parquet"
             if result_path.is_file() and review_path.is_file():
                 saved = json.loads(result_path.read_text(encoding="utf-8"))
-                if saved.get("status") == "COMPLETED":
+                if (
+                    saved.get("status") == "COMPLETED"
+                    and saved.get("review_sample_version") == 2
+                    and saved.get("n_daily_observations") == 1826
+                    and len(saved.get("yearly_blocks", [])) == 5
+                ):
                     completed += 1
                     reused += 1
                     continue
@@ -179,7 +191,7 @@ def run_symbol(args: argparse.Namespace) -> int:
                 {
                     "status": "RUNNING",
                     "symbol": args.symbol,
-                    "logical_planned": len(strategies) * len(TIMEFRAMES),
+                    "logical_planned": len(strategies) * len(timeframes),
                     "logical_completed": completed,
                     "logical_failures": failures,
                     "physical_runs_this_process": physical,
@@ -193,7 +205,7 @@ def run_symbol(args: argparse.Namespace) -> int:
         {
             "status": "PASSED" if failures == 0 else "COMPLETED_WITH_FAILURES",
             "symbol": args.symbol,
-            "logical_planned": len(strategies) * len(TIMEFRAMES),
+            "logical_planned": len(strategies) * len(timeframes),
             "logical_completed": completed,
             "logical_failures": failures,
             "physical_runs_this_process": physical,
@@ -207,6 +219,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--symbol", required=True, choices=SYMBOLS)
     parser.add_argument("--strategy", action="append")
+    parser.add_argument("--timeframe", action="append", choices=TIMEFRAMES)
+    parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--start")
     parser.add_argument("--end-exclusive")
     parser.add_argument(

@@ -205,6 +205,58 @@ def tick_wait_metrics(boundary_times: np.ndarray, waits: np.ndarray, timeframe: 
     }
 
 
+def long_horizon_metrics(
+    event_time_ns: np.ndarray,
+    return_increments: np.ndarray,
+    turnover_increments: np.ndarray,
+) -> dict[str, Any]:
+    """Exact daily Sharpe and fixed anniversary-year robustness metrics."""
+    if len(return_increments) % 1440:
+        raise ValueError("long-horizon minute series is not whole-day complete")
+    day_count = len(return_increments) // 1440
+    daily = np.asarray(return_increments, dtype=np.float64).reshape(day_count, 1440).sum(axis=1)
+    daily_turnover = np.asarray(turnover_increments, dtype=np.float64).reshape(day_count, 1440).sum(axis=1)
+    sample_std = float(np.std(daily, ddof=1)) if day_count > 1 else 0.0
+    sharpe = float(np.mean(daily) / sample_std * np.sqrt(365.0)) if sample_std > 0 else 0.0
+    first_day = pd.Timestamp(int(event_time_ns[0]), unit="ns", tz="UTC").date()
+    dates = pd.date_range(first_day, periods=day_count, freq="D")
+    blocks: list[dict[str, Any]] = []
+    for block_index in range(5):
+        block_start = pd.Timestamp(first_day) + pd.DateOffset(years=block_index)
+        block_end = pd.Timestamp(first_day) + pd.DateOffset(years=block_index + 1)
+        mask = (dates >= block_start) & (dates < block_end)
+        indices = np.flatnonzero(mask)
+        if not len(indices):
+            continue
+        day_lo, day_hi = int(indices[0]), int(indices[-1] + 1)
+        minute_returns = np.asarray(return_increments[day_lo * 1440 : day_hi * 1440], dtype=np.float64)
+        block_daily = daily[day_lo:day_hi]
+        block_turnover = float(daily_turnover[day_lo:day_hi].sum())
+        block_return = float(minute_returns.sum())
+        block_std = float(np.std(block_daily, ddof=1)) if len(block_daily) > 1 else 0.0
+        block_sharpe = float(np.mean(block_daily) / block_std * np.sqrt(365.0)) if block_std > 0 else 0.0
+        blocks.append({
+            "block": f"Y{block_index + 1}",
+            "start": block_start.date().isoformat(),
+            "end_exclusive": block_end.date().isoformat(),
+            "n_daily_observations": int(len(block_daily)),
+            "Return": block_return,
+            "Sharpe": block_sharpe,
+            "Signed_BE_bps": float(block_return / block_turnover * 10_000.0) if block_turnover else 0.0,
+            "MaxDD": drawdown(minute_returns),
+            "Turnover_raw": block_turnover,
+        })
+    return {
+        "window_start": first_day.isoformat(),
+        "window_end_exclusive": (pd.Timestamp(first_day) + pd.Timedelta(days=day_count)).date().isoformat(),
+        "n_daily_observations": int(day_count),
+        "daily_mean_return": float(np.mean(daily)),
+        "daily_sample_std": sample_std,
+        "Sharpe": sharpe,
+        "yearly_blocks": blocks,
+    }
+
+
 def review_sample_indices(
     executed_position: pd.Series | np.ndarray,
     drawdown_values: np.ndarray,
@@ -215,6 +267,7 @@ def review_sample_indices(
     return np.unique(
         np.r_[
             np.arange(0, len(position), 1440),
+            np.arange(1439, len(position), 1440),
             changes,
             np.maximum(changes - 1, 0),
             len(position) - 1,
@@ -227,6 +280,7 @@ def run_group_case(
     *, representative: str, members: list[str], source: dict[str, Any], semantic_hash: str,
     symbol: str, timeframe: str, bars: list[BarEvent], funding: pd.DataFrame,
     execution: list[BarEvent], tick_prices: np.ndarray, waits: np.ndarray, end_ns: int,
+    direction_multiplier: int = 1,
 ) -> tuple[dict[str, Any], pd.DataFrame]:
     clock = build_strategy_clock(bars, timeframe)
     direction, audit, lifecycle = run_decision_lifecycle(
@@ -234,6 +288,10 @@ def run_group_case(
         bars_1m=bars, strategy_bars=clock, execution_events=execution,
         end_exclusive_ns=end_ns,
     )
+    normal_direction = np.asarray(direction, dtype=np.float64)
+    if direction_multiplier not in (-1, 1):
+        raise ValueError("direction_multiplier must be -1 or 1")
+    direction = normal_direction * direction_multiplier
     event_time = np.fromiter((bar.event_time_ns for bar in bars), dtype=np.int64)
     close = np.fromiter((bar.close for bar in bars), dtype=np.float64)
     result, accounting = calculate_overlay(
@@ -250,6 +308,11 @@ def run_group_case(
     total_return = accounting["total_simple_return_fee0"]
     turnover = accounting["total_turnover_x"]
     waits_summary = tick_wait_metrics(event_time, waits, timeframe)
+    horizon = long_horizon_metrics(
+        event_time,
+        result.total_return.to_numpy(dtype=np.float64, copy=False),
+        result.turnover.to_numpy(dtype=np.float64, copy=False),
+    )
     summary = {
         "status": "COMPLETED", "representative_strategy_id": representative,
         "member_strategy_ids": ";".join(members), "semantic_execution_hash": semantic_hash,
@@ -265,8 +328,14 @@ def run_group_case(
         "tick_source": "official_binance_raw_trades", "funding": "included",
         "max_boundary_notional_error_usdt": accounting["max_boundary_notional_error_usdt"],
         "accounting_identity_max_error": accounting["accounting_identity_max_error"],
+        "review_sample_version": 2,
+        "direction_multiplier": direction_multiplier,
+        "execution_variant": "STRICT_REVERSE" if direction_multiplier == -1 else "NORMAL",
+        "strict_reverse_target_mismatch_count": int(
+            np.count_nonzero(direction + normal_direction)
+        ) if direction_multiplier == -1 else 0,
         "first_tick_lookup_predecision_count": int(sum(row["fill_time_ns"] < row["due_time_ns"] for row in audit if row["fill_count"])),
-        **persistence_metrics(direction), **waits_summary,
+        **persistence_metrics(direction), **waits_summary, **horizon,
     }
     increments = result.total_return.to_numpy(dtype=np.float64, copy=False)
     cumulative = np.cumsum(increments, dtype=np.float64)
@@ -291,7 +360,7 @@ def run_group_case(
 
 
 def run_symbol(args: argparse.Namespace) -> int:
-    window = json.loads((args.output_root / "boss_tick_index_data_window.json").read_text(encoding="utf-8"))
+    window = json.loads((args.output_root / "boss_tick_index_data_window.json").read_text(encoding="utf-8-sig"))
     start = args.start or window["common_start"]
     end_exclusive = args.end_exclusive or window["common_end_exclusive"]
     end_inclusive = (date.fromisoformat(end_exclusive) - timedelta(days=1)).isoformat()
@@ -303,18 +372,31 @@ def run_symbol(args: argparse.Namespace) -> int:
     if args.strategy_limit:
         strategies = strategies[: args.strategy_limit]
     groups = semantic_groups(strategies)
-    progress = args.output_root / f"matrix_progress_{args.symbol}.json"
+    if args.shard_count < 1 or not 0 <= args.shard_index < args.shard_count:
+        raise ValueError("invalid shard index/count")
+    groups = groups[args.shard_index :: args.shard_count]
+    timeframes = tuple(args.timeframe) if args.timeframe else TIMEFRAMES
+    progress = args.output_root / (
+        f"matrix_progress_{args.symbol}.json" if args.shard_count == 1
+        else f"matrix_progress_{args.symbol}_shard_{args.shard_index}_of_{args.shard_count}.json"
+    )
+    logical_planned = sum(len(members) for _, members, _ in groups) * len(timeframes)
     completed = 0
     failures = 0
     physical = 0
-    for timeframe in TIMEFRAMES:
+    for timeframe in timeframes:
         for semantic_hash, members, source in groups:
             representative = members[0]
             case_root = args.output_root / "matrix_cases" / f"symbol={args.symbol}" / f"timeframe={timeframe}" / f"semantic={semantic_hash}"
             result_path = case_root / "summary.json"
             if result_path.is_file():
                 summary = json.loads(result_path.read_text(encoding="utf-8"))
-                if summary.get("status") == "COMPLETED":
+                if (
+                    summary.get("status") == "COMPLETED"
+                    and summary.get("review_sample_version") == 2
+                    and summary.get("n_daily_observations") == 1826
+                    and len(summary.get("yearly_blocks", [])) == 5
+                ):
                     completed += len(members)
                     continue
             try:
@@ -345,14 +427,14 @@ def run_symbol(args: argparse.Namespace) -> int:
                 })
             atomic_json(progress, {
                 "status": "RUNNING", "symbol": args.symbol,
-                "logical_planned": len(strategies) * len(TIMEFRAMES),
+                "logical_planned": logical_planned,
                 "logical_completed": completed, "logical_failures": failures,
                 "physical_runs_this_process": physical, "semantic_groups": len(groups),
                 "current_timeframe": timeframe, "current_strategy": representative,
             })
     atomic_json(progress, {
         "status": "PASSED" if failures == 0 else "COMPLETED_WITH_FAILURES",
-        "symbol": args.symbol, "logical_planned": len(strategies) * len(TIMEFRAMES),
+        "symbol": args.symbol, "logical_planned": logical_planned,
         "logical_completed": completed, "logical_failures": failures,
         "physical_runs_this_process": physical, "semantic_groups": len(groups),
     })
@@ -363,6 +445,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--symbol", required=True, choices=SYMBOLS)
     parser.add_argument("--strategy-limit", type=int)
+    parser.add_argument("--timeframe", action="append", choices=TIMEFRAMES)
+    parser.add_argument("--shard-count", type=int, default=1)
+    parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--start")
     parser.add_argument("--end-exclusive")
     parser.add_argument("--market-root", type=Path, default=ROOT / "historical_data/market_data")
