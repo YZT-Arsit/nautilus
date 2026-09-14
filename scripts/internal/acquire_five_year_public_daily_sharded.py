@@ -10,16 +10,21 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.internal.acquire_l1_maker_pilot_data import (  # noqa: E402
+    BOOK_COLUMNS,
     archive_urls,
     convert_book,
     convert_trades,
@@ -35,6 +40,73 @@ PUBLIC_BOOK_END = date(2024, 3, 31)
 PILOT_START = date(2024, 3, 1)
 PILOT_END = date(2024, 3, 31)
 MAY_EDGE_END = date(2023, 6, 1)
+
+
+def convert_book_with_chronology_normalization(archive: Path, output: Path) -> dict:
+    """Stable-sort a checksum-valid daily CSV whose time blocks are interleaved."""
+    with zipfile.ZipFile(archive) as zipped:
+        bad_member = zipped.testzip()
+        if bad_member is not None:
+            raise ValueError(f"corrupt ZIP member: {bad_member}")
+        members = zipped.infolist()
+        if len(members) != 1:
+            raise ValueError("daily bookTicker ZIP must contain exactly one CSV")
+        uncompressed = members[0].file_size
+        with zipped.open(members[0]) as handle:
+            frame = pd.read_csv(handle)
+    if list(frame.columns) != BOOK_COLUMNS:
+        raise ValueError(f"unexpected bookTicker columns: {list(frame.columns)}")
+    transaction = frame.transaction_time.to_numpy(np.int64, copy=False)
+    source_chronology_failures = int(np.count_nonzero(np.diff(transaction) < 0))
+    bid = frame.best_bid_price.to_numpy(float, copy=False)
+    ask = frame.best_ask_price.to_numpy(float, copy=False)
+    bid_size = frame.best_bid_qty.to_numpy(float, copy=False)
+    ask_size = frame.best_ask_qty.to_numpy(float, copy=False)
+    event = frame.event_time.to_numpy(np.int64, copy=False)
+    crossed = int(np.count_nonzero(bid > ask))
+    bad_qty = int(np.count_nonzero((bid_size <= 0) | (ask_size <= 0)))
+    bad_ts = int(np.count_nonzero((transaction <= 0) | (event <= 0)))
+    if crossed or bad_qty or bad_ts:
+        raise ValueError(
+            f"book validation failed after source audit crossed={crossed} "
+            f"bad_qty={bad_qty} bad_ts={bad_ts}"
+        )
+    frame.sort_values("transaction_time", kind="mergesort", inplace=True)
+    sorted_ts = frame.transaction_time.to_numpy(np.int64, copy=False)
+    if np.any(np.diff(sorted_ts) < 0):
+        raise ValueError("chronology normalization failed")
+    schema = pa.schema(
+        [
+            ("update_id", pa.int64()), ("bid_price", pa.float64()),
+            ("bid_size", pa.float64()), ("ask_price", pa.float64()),
+            ("ask_size", pa.float64()), ("ts_event_ns", pa.int64()),
+            ("ts_init_ns", pa.int64()),
+        ]
+    )
+    table = pa.table(
+        {
+            "update_id": frame.update_id.to_numpy(np.int64, copy=False),
+            "bid_price": frame.best_bid_price.to_numpy(float, copy=False),
+            "bid_size": frame.best_bid_qty.to_numpy(float, copy=False),
+            "ask_price": frame.best_ask_price.to_numpy(float, copy=False),
+            "ask_size": frame.best_ask_qty.to_numpy(float, copy=False),
+            "ts_event_ns": sorted_ts * 1_000_000,
+            "ts_init_ns": frame.event_time.to_numpy(np.int64, copy=False) * 1_000_000,
+        },
+        schema=schema,
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    temporary.unlink(missing_ok=True)
+    pq.write_table(table, temporary, compression="zstd", compression_level=6)
+    os.replace(temporary, output)
+    return {
+        "rows": len(frame), "first_timestamp": int(sorted_ts[0]),
+        "last_timestamp": int(sorted_ts[-1]), "uncompressed_bytes": uncompressed,
+        "chronology_failures": 0, "source_chronology_failures": source_chronology_failures,
+        "crossed_bbo_count": crossed, "nonpositive_quantity_count": bad_qty,
+        "malformed_timestamp_count": bad_ts, "chronology_normalized": True,
+    }
 
 
 def days(begin: date, end: date) -> list[date]:
@@ -125,13 +197,30 @@ def main() -> None:
         archive_name, archive_url, checksum_url = archive_urls(args.symbol, day_text, data_type)
         archive = args.temp_root.resolve() / f"worker={args.worker_index}" / data_type / archive_name
         checksum_path = archive.with_suffix(archive.suffix + ".CHECKSUM")
-        download(archive_url, archive)
-        download(checksum_url, checksum_path)
+        source_reused = False
+        if archive.is_file() and checksum_path.is_file():
+            try:
+                source_reused = sha256(archive) == expected_checksum(checksum_path)
+            except (OSError, ValueError, IndexError):
+                source_reused = False
+        if not source_reused:
+            download(archive_url, archive)
+            download(checksum_url, checksum_path)
         expected = expected_checksum(checksum_path)
         actual = sha256(archive)
         if actual != expected:
             raise ValueError(f"source checksum mismatch: {archive_name}")
-        metrics = convert_book(archive, destination) if data_type == "bookTicker" else convert_trades(archive, destination)
+        chronology_normalized = False
+        if data_type == "bookTicker":
+            try:
+                metrics = convert_book(archive, destination)
+            except ValueError as exc:
+                if "book validation failed order=" not in str(exc):
+                    raise
+                metrics = convert_book_with_chronology_normalization(archive, destination)
+                chronology_normalized = True
+        else:
+            metrics = convert_trades(archive, destination)
         compressed = archive.stat().st_size
         row = {
             "symbol": args.symbol, "data_type": data_type, "date": day_text,
@@ -144,6 +233,8 @@ def main() -> None:
             "validation_status": "PASSED", "compressed_bytes": compressed,
             "uncompressed_bytes": int(metrics["uncompressed_bytes"]), "converted_bytes": destination.stat().st_size,
             "bytes_reclaimed": compressed, "provenance_mode": "DAILY_DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED",
+            "source_chronology_failures": int(metrics.get("source_chronology_failures", 0)),
+            "chronology_normalized": chronology_normalized,
         }
         rows[partition] = row
         atomic_csv(pd.DataFrame(rows.values()).sort_values("partition"), manifest_path)
