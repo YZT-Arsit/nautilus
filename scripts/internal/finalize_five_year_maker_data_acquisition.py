@@ -50,10 +50,25 @@ def main() -> None:
     report = args.report_root.resolve()
     data = args.data_root.resolve()
     manifest_path = report / "acquisition_manifest.csv"
-    manifest = pd.read_csv(manifest_path)
+    manifest_files = [manifest_path, *sorted(report.glob("acquisition_manifest_monthly_*.csv"))]
+    frames = [pd.read_csv(path) for path in manifest_files if path.exists() and path.stat().st_size]
+    manifest = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
     if len(manifest):
-        manifest = manifest.drop_duplicates(["symbol", "data_type", "date"], keep="last")
-        manifest = manifest.sort_values(["symbol", "data_type", "date"])
+        manifest["partition"] = manifest.get("partition", manifest.data_type.astype(str) + ":" + manifest.date.astype(str))
+        manifest["partition"] = manifest.partition.fillna(manifest.data_type.astype(str) + ":" + manifest.date.astype(str))
+        manifest["coverage_start"] = manifest.get("coverage_start", manifest.date).fillna(manifest.date)
+        manifest["coverage_end"] = manifest.get("coverage_end", "")
+        missing_end = manifest.coverage_end.isna() | manifest.coverage_end.astype(str).eq("")
+        manifest.loc[missing_end, "coverage_end"] = manifest.loc[missing_end, "date"].map(
+            lambda value: (date.fromisoformat(str(value)) + timedelta(days=1)).isoformat()
+        )
+        if "coverage_days" not in manifest:
+            manifest["coverage_days"] = 1
+        else:
+            manifest["coverage_days"] = manifest.coverage_days.fillna(1).astype(int)
+    if len(manifest):
+        manifest = manifest.drop_duplicates(["symbol", "data_type", "partition"], keep="last")
+        manifest = manifest.sort_values(["symbol", "data_type", "coverage_start"])
     atomic_csv(manifest, manifest_path)
     atomic_csv(manifest, report / "five_year_maker_data_manifest.csv")
 
@@ -77,8 +92,16 @@ def main() -> None:
         for i in range((PUBLIC_BOOK_END - PUBLIC_BOOK_START).days)
     }
     expected_trade_dates = {(START + timedelta(days=i)).isoformat() for i in range(EXPECTED)}
-    valid_book_dates = set(book.date.astype(str))
-    valid_trade_dates = set(trades.date.astype(str))
+    def covered_dates(frame: pd.DataFrame) -> set[str]:
+        result: set[str] = set()
+        for row in frame.itertuples(index=False):
+            begin = date.fromisoformat(str(row.coverage_start))
+            finish = date.fromisoformat(str(row.coverage_end))
+            result.update((begin + timedelta(days=index)).isoformat() for index in range((finish - begin).days))
+        return result
+
+    valid_book_dates = covered_dates(book)
+    valid_trade_dates = covered_dates(trades)
     public_complete = expected_book_dates.issubset(valid_book_dates) and expected_trade_dates.issubset(valid_trade_dates)
     five_year_ready = EXPECTED == len(valid_book_dates.intersection(expected_trade_dates))
 
