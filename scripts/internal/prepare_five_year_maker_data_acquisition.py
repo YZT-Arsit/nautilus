@@ -237,9 +237,9 @@ def main() -> None:
     total_disk = shutil.disk_usage(data_root.anchor or str(data_root)).total
     reserve = int(total_disk * 0.20)
     plan = required_storage.copy()
-    plan["acquisition_batching"] = "4 concurrent monthly partitions; edge/pilot partitions daily"
-    plan["estimated_peak_temporary_bytes"] = 40 * 1024**3
-    plan["peak_estimate_basis"] = "conservative 4×(monthly source ZIP + streaming Parquet temporary output)"
+    plan["acquisition_batching"] = "8 concurrent daily partitions; validated March pilot reused"
+    plan["estimated_peak_temporary_bytes"] = 12 * 1024**3
+    plan["peak_estimate_basis"] = "conservative 8×(daily source ZIP + streaming Parquet temporary output)"
     plan["disk_total_bytes_before"] = total_disk
     plan["disk_free_bytes_before"] = free_before
     plan["required_free_reserve_bytes"] = reserve

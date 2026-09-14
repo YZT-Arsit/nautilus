@@ -51,7 +51,11 @@ def main() -> None:
     report = args.report_root.resolve()
     data = args.data_root.resolve()
     manifest_path = report / "acquisition_manifest.csv"
-    manifest_files = [manifest_path, *sorted(report.glob("acquisition_manifest_monthly_*.csv"))]
+    manifest_files = [
+        manifest_path,
+        *sorted(report.glob("acquisition_manifest_monthly_*.csv")),
+        *sorted(report.glob("acquisition_manifest_daily_*_of_*.csv")),
+    ]
     frames = [pd.read_csv(path) for path in manifest_files if path.exists() and path.stat().st_size]
     manifest = pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame()
     if len(manifest):
@@ -119,13 +123,21 @@ def main() -> None:
     atomic_csv(run_manifest, report / "five_year_maker_run_manifest.csv")
 
     disk = shutil.disk_usage(data.anchor or str(data))
-    locks = [*report.glob(".acquire_*.lock"), *report.glob(".monthly_worker_*.lock")]
+    locks = [
+        *report.glob(".acquire_*.lock"),
+        *report.glob(".monthly_worker_*.lock"),
+        *report.glob(".daily_worker_*.lock"),
+    ]
     current_temp_bytes = 0
     if args.temp_root and args.temp_root.exists():
         current_temp_bytes += sum(path.stat().st_size for path in args.temp_root.rglob("*") if path.is_file())
     current_temp_bytes += sum(path.stat().st_size for path in data.rglob("*.tmp") if path.is_file())
     downloaded_mask = valid.provenance_mode.astype(str).isin(
-        ["DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED", "MONTHLY_DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED"]
+        [
+            "DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED",
+            "MONTHLY_DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED",
+            "DAILY_DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED",
+        ]
     ) if len(valid) else pd.Series(dtype=bool)
     downloaded_now = valid[downloaded_mask] if len(valid) else valid
     persistent_paths = {Path(str(value)) for value in downloaded_now.output_path} if len(downloaded_now) else set()

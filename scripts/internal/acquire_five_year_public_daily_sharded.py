@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Parallel resumable acquisition of official monthly BTC maker data.
-
-Public bookTicker months cover June-2023 through February-2024 here; the May
-edge is acquired daily and the validated March pilot is reused. Raw trades are
-acquired monthly for the complete frozen five-year window.
-"""
+"""Shard checksum-validated daily Binance maker-data acquisition."""
 
 from __future__ import annotations
 
@@ -15,7 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -25,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.internal.acquire_l1_maker_pilot_data import (  # noqa: E402
+    archive_urls,
     convert_book,
     convert_trades,
     expected_checksum,
@@ -32,24 +28,32 @@ from scripts.internal.acquire_l1_maker_pilot_data import (  # noqa: E402
 )
 
 
+START = date(2021, 7, 1)
+END = date(2026, 7, 1)
+PUBLIC_BOOK_START = date(2023, 5, 16)
+PUBLIC_BOOK_END = date(2024, 3, 31)
+PILOT_START = date(2024, 3, 1)
+PILOT_END = date(2024, 3, 31)
+MAY_EDGE_END = date(2023, 6, 1)
+
+
+def days(begin: date, end: date) -> list[date]:
+    return [begin + timedelta(days=index) for index in range((end - begin).days)]
+
+
+def tasks() -> list[tuple[str, date]]:
+    # The May edge and March pilot are already registered as validated daily
+    # partitions. Only the still-missing public partitions are assigned.
+    book = [("bookTicker", day) for day in days(MAY_EDGE_END, PILOT_START)]
+    trades = [("trades", day) for day in days(START, END) if not PILOT_START <= day < PILOT_END]
+    return book + trades
+
+
 def atomic_csv(frame: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     frame.to_csv(temporary, index=False)
     os.replace(temporary, path)
-
-
-def month_range(start: date, end_exclusive: date) -> list[date]:
-    result: list[date] = []
-    current = start.replace(day=1)
-    while current < end_exclusive:
-        result.append(current)
-        current = date(current.year + (current.month == 12), current.month % 12 + 1, 1)
-    return result
-
-
-def next_month(value: date) -> date:
-    return date(value.year + (value.month == 12), value.month % 12 + 1, 1)
 
 
 def download(url: str, destination: Path) -> None:
@@ -60,22 +64,12 @@ def download(url: str, destination: Path) -> None:
     subprocess.run(
         [
             executable, "--fail", "--location", "--retry", "5", "--retry-all-errors",
-            "--connect-timeout", "60", "--max-time", "7200", "--silent", "--show-error",
+            "--connect-timeout", "60", "--max-time", "1800", "--silent", "--show-error",
             "--output", str(temporary), url,
         ],
         check=True,
     )
     os.replace(temporary, destination)
-
-
-def tasks() -> list[tuple[str, date]]:
-    book = [("bookTicker", month) for month in month_range(date(2023, 6, 1), date(2024, 3, 1))]
-    trades = [
-        ("trades", month)
-        for month in month_range(date(2021, 7, 1), date(2026, 7, 1))
-        if month != date(2024, 3, 1)  # reuse the checksum-validated daily pilot partitions
-    ]
-    return book + trades
 
 
 def main() -> None:
@@ -93,7 +87,7 @@ def main() -> None:
 
     report = args.report_root.resolve()
     report.mkdir(parents=True, exist_ok=True)
-    lock = report / f".monthly_worker_{args.worker_index}_of_{args.worker_count}.lock"
+    lock = report / f".daily_worker_{args.worker_index}_of_{args.worker_count}.lock"
     try:
         lock_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError as exc:
@@ -108,52 +102,52 @@ def main() -> None:
         lock.unlink(missing_ok=True)
 
     atexit.register(release)
-    manifest_path = report / f"acquisition_manifest_monthly_{args.worker_index}_of_{args.worker_count}.csv"
+    manifest_path = report / f"acquisition_manifest_daily_{args.worker_index}_of_{args.worker_count}.csv"
     prior = pd.read_csv(manifest_path) if manifest_path.exists() else pd.DataFrame()
     rows = {str(row.partition): row._asdict() for row in prior.itertuples(index=False)}
     assigned = [task for index, task in enumerate(tasks()) if index % args.worker_count == args.worker_index]
-    disk_root = Path(args.output_root.resolve().anchor)
+    output_root = args.output_root.resolve()
+    disk_root = Path(output_root.anchor)
 
-    for data_type, month in assigned:
-        partition = f"{data_type}:{month:%Y-%m}"
+    for data_type, day in assigned:
+        day_text = day.isoformat()
+        partition = f"{data_type}:{day_text}"
         folder = "l1_quotes" if data_type == "bookTicker" else "raw_trades"
-        destination = args.output_root.resolve() / folder / f"symbol={args.symbol}" / f"year={month.year}" / f"month={month.month:02d}" / "part.parquet"
+        destination = output_root / folder / f"symbol={args.symbol}" / f"year={day.year}" / f"date={day_text}" / "part.parquet"
         old = rows.get(partition)
         if old and old.get("validation_status") == "PASSED" and destination.is_file() and sha256(destination) == str(old.get("output_sha256")):
             continue
         usage = shutil.disk_usage(disk_root)
         reserve = int(usage.total * args.minimum_free_fraction)
-        if usage.free - 20 * 1024**3 < reserve:
+        if usage.free - 8 * 1024**3 < reserve:
             raise RuntimeError(f"disk safety gate: free={usage.free}, reserve={reserve}")
 
-        archive_name = f"{args.symbol}-{data_type}-{month:%Y-%m}.zip"
-        base = f"https://data.binance.vision/data/futures/um/monthly/{data_type}/{args.symbol}/{archive_name}"
-        temp = args.temp_root.resolve() / f"worker={args.worker_index}" / data_type / archive_name
-        checksum_path = temp.with_suffix(temp.suffix + ".CHECKSUM")
-        download(base, temp)
-        download(base + ".CHECKSUM", checksum_path)
+        archive_name, archive_url, checksum_url = archive_urls(args.symbol, day_text, data_type)
+        archive = args.temp_root.resolve() / f"worker={args.worker_index}" / data_type / archive_name
+        checksum_path = archive.with_suffix(archive.suffix + ".CHECKSUM")
+        download(archive_url, archive)
+        download(checksum_url, checksum_path)
         expected = expected_checksum(checksum_path)
-        actual = sha256(temp)
+        actual = sha256(archive)
         if actual != expected:
             raise ValueError(f"source checksum mismatch: {archive_name}")
-        metrics = convert_book(temp, destination) if data_type == "bookTicker" else convert_trades(temp, destination)
-        compressed = temp.stat().st_size
-        coverage_end = next_month(month)
+        metrics = convert_book(archive, destination) if data_type == "bookTicker" else convert_trades(archive, destination)
+        compressed = archive.stat().st_size
         row = {
-            "symbol": args.symbol, "data_type": data_type, "date": month.isoformat(),
-            "partition": partition, "coverage_start": month.isoformat(), "coverage_end": coverage_end.isoformat(),
-            "coverage_days": (coverage_end - month).days,
-            "source": "Binance Vision USD-M Futures monthly archive", "source_path_archive": base,
+            "symbol": args.symbol, "data_type": data_type, "date": day_text,
+            "partition": partition, "coverage_start": day_text,
+            "coverage_end": (day + timedelta(days=1)).isoformat(), "coverage_days": 1,
+            "source": "Binance Vision USD-M Futures daily archive", "source_path_archive": archive_url,
             "source_checksum": expected, "rows": int(metrics["rows"]),
             "first_timestamp": metrics["first_timestamp"], "last_timestamp": metrics["last_timestamp"],
             "output_path": str(destination), "output_sha256": sha256(destination),
             "validation_status": "PASSED", "compressed_bytes": compressed,
             "uncompressed_bytes": int(metrics["uncompressed_bytes"]), "converted_bytes": destination.stat().st_size,
-            "bytes_reclaimed": compressed, "provenance_mode": "MONTHLY_DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED",
+            "bytes_reclaimed": compressed, "provenance_mode": "DAILY_DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED",
         }
         rows[partition] = row
         atomic_csv(pd.DataFrame(rows.values()).sort_values("partition"), manifest_path)
-        temp.unlink(missing_ok=True)
+        archive.unlink(missing_ok=True)
         checksum_path.unlink(missing_ok=True)
 
     print(json.dumps({"worker": args.worker_index, "assigned": len(assigned), "completed": len(rows)}, indent=2))
