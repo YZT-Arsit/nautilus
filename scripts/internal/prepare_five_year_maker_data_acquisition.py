@@ -306,6 +306,39 @@ def main() -> None:
         if not path.exists():
             atomic_csv(pd.DataFrame(columns=empty_manifest_columns), path)
 
+    # Register the already validated March pilot as reused source partitions.
+    acquisition_path = output / "acquisition_manifest.csv"
+    acquisition = pd.read_csv(acquisition_path)
+    acquisition_rows = acquisition.to_dict("records")
+    existing_keys = {(str(row.get("symbol")), str(row.get("data_type")), str(row.get("date"))) for row in acquisition_rows}
+    for pilot_manifest in sorted(args.pilot_root.resolve().glob("ingest_manifest_*.csv")):
+        pilot = pd.read_csv(pilot_manifest)
+        pilot = pilot[
+            pilot.symbol.astype(str).isin(required_symbols)
+            & pilot.status.astype(str).eq("PASSED")
+            & pilot.checksum_valid.astype(bool)
+        ]
+        for row in pilot.to_dict("records"):
+            key = (str(row["symbol"]), str(row["data_type"]), str(row["date"]))
+            path = Path(str(row["converted_path"]))
+            if key in existing_keys or not path.is_file():
+                continue
+            acquisition_rows.append({
+                "symbol": row["symbol"], "data_type": row["data_type"], "date": row["date"],
+                "source": "Binance Vision USD-M Futures daily archive",
+                "source_path_archive": row.get("filename", ""),
+                "source_checksum": row.get("converted_sha256", ""),
+                "rows": int(row.get("rows", 0)), "first_timestamp": row.get("first_timestamp", ""),
+                "last_timestamp": row.get("last_timestamp", ""), "output_path": str(path),
+                "output_sha256": row.get("converted_sha256", ""), "validation_status": "PASSED",
+                "compressed_bytes": int(row.get("compressed_bytes", 0)),
+                "uncompressed_bytes": int(row.get("uncompressed_bytes", 0)),
+                "converted_bytes": path.stat().st_size, "bytes_reclaimed": 0,
+                "provenance_mode": "REFERENCE_REUSE_VALIDATED_MARCH_PILOT",
+            })
+            existing_keys.add(key)
+    atomic_csv(pd.DataFrame(acquisition_rows), acquisition_path)
+
     summary = {
         "status": "PARTIAL_DATA_ACQUIRED" if len(inventory) else "USER_ACTION_REQUIRED",
         "frozen_window": {"start": START.isoformat(), "end_exclusive": END.isoformat(), "days": EXPECTED_DAYS},

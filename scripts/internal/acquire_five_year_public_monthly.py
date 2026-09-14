@@ -70,7 +70,11 @@ def download(url: str, destination: Path) -> None:
 
 def tasks() -> list[tuple[str, date]]:
     book = [("bookTicker", month) for month in month_range(date(2023, 6, 1), date(2024, 3, 1))]
-    trades = [("trades", month) for month in month_range(date(2021, 7, 1), date(2026, 7, 1))]
+    trades = [
+        ("trades", month)
+        for month in month_range(date(2021, 7, 1), date(2026, 7, 1))
+        if month != date(2024, 3, 1)  # reuse the checksum-validated daily pilot partitions
+    ]
     return book + trades
 
 
