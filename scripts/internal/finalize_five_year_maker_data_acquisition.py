@@ -46,6 +46,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--report-root", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--temp-root", type=Path)
     args = parser.parse_args()
     report = args.report_root.resolve()
     data = args.data_root.resolve()
@@ -118,7 +119,11 @@ def main() -> None:
     atomic_csv(run_manifest, report / "five_year_maker_run_manifest.csv")
 
     disk = shutil.disk_usage(data.anchor or str(data))
-    locks = list(report.glob(".acquire_*.lock"))
+    locks = [*report.glob(".acquire_*.lock"), *report.glob(".monthly_worker_*.lock")]
+    current_temp_bytes = 0
+    if args.temp_root and args.temp_root.exists():
+        current_temp_bytes += sum(path.stat().st_size for path in args.temp_root.rglob("*") if path.is_file())
+    current_temp_bytes += sum(path.stat().st_size for path in data.rglob("*.tmp") if path.is_file())
     downloaded_mask = valid.provenance_mode.astype(str).isin(
         ["DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED", "MONTHLY_DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED"]
     ) if len(valid) else pd.Series(dtype=bool)
@@ -146,6 +151,10 @@ def main() -> None:
         "final_persistent_storage_bytes_this_task": persistent_bytes,
         "bytes_reclaimed": int(valid.bytes_reclaimed.sum()) if len(valid) else 0,
         "peak_temporary_bytes": int(valid.compressed_bytes.max()) if len(valid) else 0,
+        "current_inflight_temporary_bytes": current_temp_bytes,
+        "peak_temporary_bytes_observed_at_audit": max(
+            current_temp_bytes, int(valid.compressed_bytes.max()) if len(valid) else 0
+        ),
         "disk_total_bytes": disk.total,
         "disk_free_bytes": disk.free,
         "disk_free_fraction": disk.free / disk.total,
