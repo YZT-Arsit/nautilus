@@ -119,6 +119,12 @@ def main() -> None:
 
     disk = shutil.disk_usage(data.anchor or str(data))
     locks = list(report.glob(".acquire_*.lock"))
+    downloaded_mask = valid.provenance_mode.astype(str).isin(
+        ["DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED", "MONTHLY_DOWNLOADED_CHECKSUM_VALIDATED_CONVERTED"]
+    ) if len(valid) else pd.Series(dtype=bool)
+    downloaded_now = valid[downloaded_mask] if len(valid) else valid
+    persistent_paths = {Path(str(value)) for value in downloaded_now.output_path} if len(downloaded_now) else set()
+    persistent_bytes = sum(path.stat().st_size for path in persistent_paths if path.is_file())
     summary = {
         "status": "DATA_READY" if five_year_ready else ("PARTIAL_DATA_ACQUIRED" if len(valid) else "USER_ACTION_REQUIRED"),
         "frozen_start": START.isoformat(),
@@ -134,7 +140,10 @@ def main() -> None:
         "partial_symbols": 0 if five_year_ready else 1,
         "missing_symbols": 0,
         "compressed_source_bytes_processed": int(valid.compressed_bytes.sum()) if len(valid) else 0,
-        "converted_bytes": int(valid.converted_bytes.sum()) if len(valid) else 0,
+        "data_downloaded_bytes_this_task": int(downloaded_now.compressed_bytes.sum()) if len(downloaded_now) else 0,
+        "converted_bytes_including_reused_pilot": int(valid.converted_bytes.sum()) if len(valid) else 0,
+        "converted_bytes_persisted_this_task": persistent_bytes,
+        "final_persistent_storage_bytes_this_task": persistent_bytes,
         "bytes_reclaimed": int(valid.bytes_reclaimed.sum()) if len(valid) else 0,
         "peak_temporary_bytes": int(valid.compressed_bytes.max()) if len(valid) else 0,
         "disk_total_bytes": disk.total,
