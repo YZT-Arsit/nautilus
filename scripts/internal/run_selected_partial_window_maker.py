@@ -68,9 +68,11 @@ def load_day(quote_paths: dict[str, Path], trade_paths: dict[str, Path], day: st
     trades = pd.read_parquet(trade_paths[day])
     if quotes.empty or trades.empty:
         raise ValueError(f"empty maker partition for {day}")
-    if np.any(np.diff(quotes.ts_event_ns.to_numpy(np.int64)) < 0):
+    quote_time = quotes.ts_event_ns.to_numpy(np.int64, copy=False)
+    trade_time = trades.ts_event_ns.to_numpy(np.int64, copy=False)
+    if len(quote_time) > 1 and not np.all(quote_time[1:] >= quote_time[:-1]):
         raise ValueError(f"non-monotonic QuoteTick partition {day}")
-    if np.any(np.diff(trades.ts_event_ns.to_numpy(np.int64)) < 0):
+    if len(trade_time) > 1 and not np.all(trade_time[1:] >= trade_time[:-1]):
         raise ValueError(f"non-monotonic TradeTick partition {day}")
     return quotes, trades
 
