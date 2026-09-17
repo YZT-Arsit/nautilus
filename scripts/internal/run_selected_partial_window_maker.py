@@ -25,7 +25,6 @@ from scripts.internal.run_l1_maker_pilot import (  # noqa: E402
 from scripts.internal.run_l1_maker_policy_study import (  # noqa: E402
     FILL_PROBABILITY, PolicyRunner, append_path, enrich_metric, quote_tuple,
 )
-from scripts.internal.run_long_horizon_strict_reverse import reconstruct_normal_position  # noqa: E402
 from strategy_framework.backends.nautilus_maker import NativeMakerHarness  # noqa: E402
 from strategy_framework.execution.maker_policy import MakerLifecyclePolicy  # noqa: E402
 
@@ -76,6 +75,24 @@ def load_day(quote_paths: dict[str, Path], trade_paths: dict[str, Path], day: st
     return quotes, trades
 
 
+def reconstruct_interval_position(review_path: Path, event_time_ns: np.ndarray) -> np.ndarray:
+    """Expand the frozen transition sample over a strict subwindow without leakage."""
+    review = pd.read_parquet(review_path, columns=["event_time_ns", "executed_position"])
+    review = review.sort_values("event_time_ns").drop_duplicates("event_time_ns", keep="last")
+    sample_time = review.event_time_ns.to_numpy(np.int64, copy=False)
+    sample_position = review.executed_position.to_numpy(float, copy=False)
+    lookup = np.searchsorted(sample_time, event_time_ns, side="right") - 1
+    if len(sample_time) == 0 or np.any(lookup < 0):
+        raise ValueError(f"review transition sample cannot cover maker interval: {review_path}")
+    position = sample_position[lookup]
+    transition_times = sample_time[1:][sample_position[1:] != sample_position[:-1]]
+    expected = int(np.count_nonzero((transition_times > event_time_ns[0]) & (transition_times <= event_time_ns[-1])))
+    actual = int(np.count_nonzero(position[1:] != position[:-1]))
+    if expected != actual:
+        raise ValueError(f"lossy position transition sample within maker interval: {review_path}")
+    return position
+
+
 def main() -> int:  # noqa: C901
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, required=True)
@@ -124,7 +141,7 @@ def main() -> int:  # noqa: C901
     for row in physical.itertuples(index=False):
         key = case_key(str(row.semantic_group_id), str(row.timeframe))
         normal_review = Path(str(row.normal_summary_path)).parent / "review_timeseries.parquet"
-        normal_target = reconstruct_normal_position(normal_review, target_times)
+        normal_target = reconstruct_interval_position(normal_review, target_times)
         members = sorted(selected.loc[
             selected.semantic_group_id.eq(row.semantic_group_id)
             & selected.timeframe.eq(row.timeframe)
