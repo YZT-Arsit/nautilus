@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 from scripts.internal.run_boss_multitimeframe_tick_screen import load_symbol  # noqa: E402
 from scripts.internal.run_execution_review_maker_comparison import make_review_instrument  # noqa: E402
 from scripts.internal.run_l1_maker_pilot import (  # noqa: E402
-    UNIT_QTY, finalize_runner, first_tick_path, minute_snapshots,
+    UNIT_QTY, finalize_runner, first_tick_path,
 )
 from scripts.internal.run_l1_maker_policy_study import (  # noqa: E402
     FILL_PROBABILITY, PolicyRunner, enrich_metric, quote_tuple,
@@ -64,8 +64,12 @@ def partition_lookup(manifest: pd.DataFrame, data_type: str) -> dict[str, Path]:
 def load_day(quote_paths: dict[str, Path], trade_paths: dict[str, Path], day: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     if day not in quote_paths or day not in trade_paths:
         raise FileNotFoundError(f"maker partition unavailable for {day}")
-    quotes = pd.read_parquet(quote_paths[day])
-    trades = pd.read_parquet(trade_paths[day])
+    quotes = pd.read_parquet(quote_paths[day], columns=[
+        "update_id", "bid_price", "bid_size", "ask_price", "ask_size", "ts_event_ns", "ts_init_ns",
+    ])
+    trades = pd.read_parquet(trade_paths[day], columns=[
+        "trade_id", "price", "quantity", "ts_event_ns", "is_buyer_maker",
+    ])
     if quotes.empty or trades.empty:
         raise ValueError(f"empty maker partition for {day}")
     quote_time = quotes.ts_event_ns.to_numpy(np.int64, copy=False)
@@ -75,6 +79,30 @@ def load_day(quote_paths: dict[str, Path], trade_paths: dict[str, Path], day: st
     if len(trade_time) > 1 and not np.all(trade_time[1:] >= trade_time[:-1]):
         raise ValueError(f"non-monotonic TradeTick partition {day}")
     return quotes, trades
+
+
+def day_minute_snapshots(
+    quotes: pd.DataFrame, previous_quote: pd.DataFrame | None, minute_ns: np.ndarray,
+) -> tuple[np.ndarray, pd.DataFrame]:
+    """Select contemporaneous BBO without copying/concatenating the full daily quote table."""
+    qts = quotes.ts_event_ns.to_numpy(np.int64, copy=False)
+    indexes = np.searchsorted(qts, minute_ns, side="right") - 1
+    safe = np.maximum(indexes, 0)
+    bid = quotes.bid_price.to_numpy(float, copy=False)[safe].copy()
+    ask = quotes.ask_price.to_numpy(float, copy=False)[safe].copy()
+    bid_size = quotes.bid_size.to_numpy(float, copy=False)[safe].copy()
+    ask_size = quotes.ask_size.to_numpy(float, copy=False)[safe].copy()
+    if np.any(indexes < 0):
+        prior = quotes.iloc[0] if previous_quote is None else previous_quote.iloc[-1]
+        mask = indexes < 0
+        bid[mask] = float(prior.bid_price); ask[mask] = float(prior.ask_price)
+        bid_size[mask] = float(prior.bid_size); ask_size[mask] = float(prior.ask_size)
+    mid = (bid + ask) / 2
+    return indexes, pd.DataFrame({
+        "decision_time_ns": minute_ns, "bid": bid, "ask": ask,
+        "bid_size": bid_size, "ask_size": ask_size, "mid": mid,
+        "spread_bps": (ask - bid) / mid * 10_000,
+    })
 
 
 def reconstruct_interval_position(review_path: Path, event_time_ns: np.ndarray) -> np.ndarray:
@@ -224,12 +252,7 @@ def main() -> int:  # noqa: C901
         minute_ns = target_times[mask]
         if len(minute_ns) != 1440:
             raise ValueError(f"expected 1440 decision timestamps for {day_text}, got {len(minute_ns)}")
-        seed_quote = quotes.iloc[[0]].copy() if previous_quote is None else previous_quote
-        if previous_quote is None:
-            seed_quote.loc[:, "ts_event_ns"] = day_start
-            seed_quote.loc[:, "ts_init_ns"] = day_start
-        snapshots_source = pd.concat([seed_quote, quotes], ignore_index=True)
-        qindexes, snapshots = minute_snapshots(snapshots_source, minute_ns)
+        qindexes, snapshots = day_minute_snapshots(quotes, previous_quote, minute_ns)
         if initial_mid is None:
             initial_mid = float(snapshots.mid.iloc[0])
         qts = quotes.ts_event_ns.to_numpy(np.int64, copy=False)
@@ -255,7 +278,15 @@ def main() -> int:  # noqa: C901
         }))
         for local_index, timestamp in enumerate(minute_ns):
             target_index = target_lookup_index[int(timestamp)]
-            minute_quote = quote_tuple(snapshots_source, int(qindexes[local_index]))
+            quote_index = int(qindexes[local_index])
+            if quote_index >= 0:
+                minute_quote = quote_tuple(quotes, quote_index)
+            else:
+                prior = quotes.iloc[0] if previous_quote is None else previous_quote.iloc[-1]
+                minute_quote = (
+                    int(prior.update_id), float(prior.bid_price), float(prior.bid_size),
+                    float(prior.ask_price), float(prior.ask_size), int(timestamp), int(timestamp),
+                )
             funding_rate = funding_lookup.get(int(timestamp), 0.0)
             if funding_rate:
                 funding_mid = float(snapshots.mid.iloc[local_index])
