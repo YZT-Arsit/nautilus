@@ -85,9 +85,15 @@ def main() -> int:  # noqa: C901
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--start", default=START.date().isoformat())
+    parser.add_argument("--end-exclusive", default=END.date().isoformat())
     args = parser.parse_args()
     if not 0 <= args.shard_index < args.shard_count:
         raise ValueError("invalid shard")
+    start = pd.Timestamp(args.start, tz="UTC")
+    end = pd.Timestamp(args.end_exclusive, tz="UTC")
+    if start < START or end > END or start >= end:
+        raise ValueError(f"requested maker interval must be inside [{START.date()},{END.date()})")
     selected = pd.read_csv(args.research_root / "selection/long_horizon_first_tick_selected_cases.csv")
     physical = selected.sort_values(
         ["semantic_group_id", "timeframe", "symbol", "strategy_id"]
@@ -96,14 +102,14 @@ def main() -> int:  # noqa: C901
     manifest = pd.read_csv(args.acquisition_manifest)
     quote_paths = partition_lookup(manifest, "bookTicker")
     trade_paths = partition_lookup(manifest, "trades")
-    required_dates = [day.date().isoformat() for day in pd.date_range(START, END - pd.Timedelta(days=1), freq="1D")]
+    required_dates = [day.date().isoformat() for day in pd.date_range(start, end - pd.Timedelta(days=1), freq="1D")]
     missing = [day for day in required_dates if day not in quote_paths or day not in trade_paths]
     if missing:
         raise ValueError(f"partial maker window incomplete: {len(missing)} missing days, first={missing[:3]}")
 
     bars, funding, _, _, _ = load_symbol(
         args.market_root, args.research_root / "tick_execution_index", "BTCUSDT",
-        START.date().isoformat(), (END - pd.Timedelta(days=1)).date().isoformat(),
+        start.date().isoformat(), (end - pd.Timedelta(days=1)).date().isoformat(),
     )
     target_times = np.fromiter((bar.event_time_ns for bar in bars), dtype=np.int64)
     funding_lookup = dict(zip(
@@ -145,7 +151,7 @@ def main() -> int:  # noqa: C901
     previous_quote = None
     initial_mid = None
     minute_reference: list[pd.DataFrame] = []
-    for day_number, day in enumerate(pd.date_range(START, END - pd.Timedelta(days=1), freq="1D"), start=1):
+    for day_number, day in enumerate(pd.date_range(start, end - pd.Timedelta(days=1), freq="1D"), start=1):
         day_text = day.date().isoformat()
         quotes, trades = load_day(quote_paths, trade_paths, day_text)
         day_start = int(day.value)
@@ -221,8 +227,8 @@ def main() -> int:  # noqa: C901
         maker_metric = enrich_metric(maker_metric, runner, maker_path)
         maker_metric.update({
             "case_key": key, "variant": variant, "execution_model": f"L1_BBO_MAKER_{variant}",
-            "evaluation_start": START.date().isoformat(), "evaluation_end_exclusive": END.date().isoformat(),
-            "calendar_days": (END - START).days, "data_tier": "L1_BBO_MAKER",
+            "evaluation_start": start.date().isoformat(), "evaluation_end_exclusive": end.date().isoformat(),
+            "calendar_days": (end - start).days, "data_tier": "L1_BBO_MAKER",
             "post_only": True, "queue_position": False, "taker_fallback": False,
             "OrderFilled_count": len(runner.fills),
         })
@@ -232,8 +238,8 @@ def main() -> int:  # noqa: C901
         first_metric.update({
             "strategy_id": runner.strategy_id, "case_key": key, "variant": variant,
             "symbol": "BTCUSDT", "execution_model": f"SAME_WINDOW_FIRST_TICK_{variant}",
-            "evaluation_start": START.date().isoformat(), "evaluation_end_exclusive": END.date().isoformat(),
-            "calendar_days": (END - START).days, "data_tier": "RAW_TRADES_FIRST_TICK",
+            "evaluation_start": start.date().isoformat(), "evaluation_end_exclusive": end.date().isoformat(),
+            "calendar_days": (end - start).days, "data_tier": "RAW_TRADES_FIRST_TICK",
         })
         metric_rows.extend([maker_metric, first_metric])
         paths = args.output_root / "paths" / f"shard={args.shard_index}" / key
