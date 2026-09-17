@@ -186,7 +186,8 @@ def main() -> None:  # noqa: C901
             "calendar_days": 1826, "daily_observations": row.n_daily_observations,
             "Return": row.Return_FIRST_TICK, "Sharpe": row.Sharpe_FIRST_TICK,
             "Signed_BE": row.Signed_BE_FIRST_TICK, "MaxDD": row.MaxDD_FIRST_TICK,
-            "Turnover": row.Turnover_FIRST_TICK, "Persistent": int(str(normal_json.get("persistence_structure_class", "")) == "DIRECTIONALLY_PERSISTENT"),
+            "Turnover": row.Turnover_FIRST_TICK,
+            "Persistent": int(bool(normal_json.get("directionally_persistent", False))),
             "data_tier": "RAW_TRADES_FIRST_TICK", "status": "COMPLETED",
         }
         reverse_mode = {
@@ -195,7 +196,9 @@ def main() -> None:  # noqa: C901
             "calendar_days": 1826, "daily_observations": reverse_json["n_daily_observations"],
             "Return": reverse_json["Return_fee0"], "Sharpe": reverse_json["Sharpe"],
             "Signed_BE": reverse_json["BE_bps"], "MaxDD": reverse_json["MDD"],
-            "Turnover": reverse_json["Turnover_raw"], "Persistent": int(str(reverse_json.get("persistence_structure_class", "")) == "DIRECTIONALLY_PERSISTENT"),
+            "Turnover": reverse_json["Turnover_raw"],
+            # Exact sign inversion preserves nonflat/run/switch persistence structure.
+            "Persistent": int(bool(normal_json.get("directionally_persistent", False))),
             "data_tier": "RAW_TRADES_FIRST_TICK", "status": "COMPLETED",
             "reverse_evidence_class": "LONG_HORIZON_EXPLORATORY_REVERSE",
         }
