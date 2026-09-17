@@ -233,10 +233,10 @@ def main() -> int:  # noqa: C901
                 append_path(runner, int(timestamp), mid, float(snapshots.bid.iloc[local_index]),
                             float(snapshots.ask.iloc[local_index]), capital)
         previous_quote = quotes.iloc[[-1]].copy()
-        atomic_json(args.output_root / f"progress_shard_{args.shard_index}_of_{args.shard_count}.json", {
+        atomic_json({
             "status": "RUNNING", "days_completed": day_number, "days_total": len(required_dates),
             "physical_cases": len(physical), "runner_count": len(runners),
-        })
+        }, args.output_root / f"progress_shard_{args.shard_index}_of_{args.shard_count}.json")
 
     reference = pd.concat(minute_reference, ignore_index=True)
     metric_rows: list[dict] = []
@@ -267,11 +267,11 @@ def main() -> int:  # noqa: C901
         first_path.to_parquet(paths / f"{variant}__FIRST_TICK.parquet", index=False, compression="zstd")
     atomic_csv(pd.DataFrame(mapping_rows), args.output_root / f"case_mapping_shard_{args.shard_index}_of_{args.shard_count}.csv")
     atomic_csv(pd.DataFrame(metric_rows), args.output_root / f"metrics_shard_{args.shard_index}_of_{args.shard_count}.csv")
-    atomic_json(args.output_root / f"progress_shard_{args.shard_index}_of_{args.shard_count}.json", {
+    atomic_json({
         "status": "PASSED", "days_completed": len(required_dates), "days_total": len(required_dates),
         "physical_cases": len(physical), "metric_rows": len(metric_rows),
         "maker_policy": "GTC_UNTIL_SIGNAL_INVALID", "fill_probability": FILL_PROBABILITY,
-    })
+    }, args.output_root / f"progress_shard_{args.shard_index}_of_{args.shard_count}.json")
     return 0
 
 
