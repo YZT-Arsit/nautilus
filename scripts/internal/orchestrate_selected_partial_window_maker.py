@@ -19,13 +19,16 @@ def main() -> int:
     parser.add_argument("--acquisition-manifest", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--shards", type=int, default=14)
+    parser.add_argument("--shard-indices", type=int, nargs="*")
+    parser.add_argument("--status-name", default="orchestrator_status.json")
     args = parser.parse_args()
     args.output_root.mkdir(parents=True, exist_ok=True)
     log_root = args.output_root / "logs"
     log_root.mkdir(exist_ok=True)
     worker = args.repo / "scripts/internal/run_selected_partial_window_maker.py"
     processes: list[tuple[int, subprocess.Popen, object, object]] = []
-    for shard in range(args.shards):
+    shard_indices = args.shard_indices if args.shard_indices is not None else list(range(args.shards))
+    for shard in shard_indices:
         stdout = (log_root / f"shard_{shard:02d}.out.log").open("w", encoding="utf-8")
         stderr = (log_root / f"shard_{shard:02d}.err.log").open("w", encoding="utf-8")
         command = [
@@ -37,12 +40,13 @@ def main() -> int:
         ]
         process = subprocess.Popen(command, stdout=stdout, stderr=stderr)
         processes.append((shard, process, stdout, stderr))
-    status_path = args.output_root / "orchestrator_status.json"
+    status_path = args.output_root / args.status_name
     while True:
         running = sum(process.poll() is None for _, process, _, _ in processes)
         payload = {
             "status": "RUNNING" if running else "FINISHED",
             "shards": args.shards,
+            "shard_indices": shard_indices,
             "running": running,
             "return_codes": {str(shard): process.poll() for shard, process, _, _ in processes},
         }
@@ -56,6 +60,7 @@ def main() -> int:
     final = {
         "status": "PASSED" if not failures else "FAILED",
         "shards": args.shards,
+        "shard_indices": shard_indices,
         "failures": failures,
     }
     status_path.write_text(json.dumps(final, indent=2), encoding="utf-8")
