@@ -115,7 +115,9 @@ def main() -> int:  # noqa: C901
     funding_lookup = dict(zip(
         funding.event_time_ns.astype(np.int64), funding.funding_rate.astype(float), strict=True
     ))
-    exchange_info = json.loads((args.repo / "outputs/binance_exchange_info_phase6d.json").read_text())
+    exchange_info = json.loads(
+        (args.repo / "outputs/binance_exchange_info_phase6d.json").read_text(encoding="utf-8")
+    )
     instrument = make_review_instrument("BTCUSDT", exchange_info)
     runners: list[PolicyRunner] = []
     mapping_rows: list[dict] = []
