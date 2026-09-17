@@ -23,7 +23,7 @@ from scripts.internal.run_l1_maker_pilot import (  # noqa: E402
     UNIT_QTY, eligible_events, finalize_runner, first_tick_path, minute_snapshots,
 )
 from scripts.internal.run_l1_maker_policy_study import (  # noqa: E402
-    FILL_PROBABILITY, PolicyRunner, append_path, enrich_metric, quote_tuple,
+    FILL_PROBABILITY, PolicyRunner, enrich_metric, quote_tuple,
 )
 from strategy_framework.backends.nautilus_maker import NativeMakerHarness  # noqa: E402
 from strategy_framework.execution.maker_policy import MakerLifecyclePolicy  # noqa: E402
@@ -167,6 +167,13 @@ def main() -> int:  # noqa: C901
             ))
 
     target_lookup_index = {int(ts): index for index, ts in enumerate(target_times)}
+    runner_count = len(runners)
+    point_count = len(target_times)
+    actual_position = np.empty((runner_count, point_count), dtype=np.float32)
+    target_error = np.empty((runner_count, point_count), dtype=np.float32)
+    cumulative_return_gross = np.empty((runner_count, point_count), dtype=np.float64)
+    cumulative_return_fee = np.empty((runner_count, point_count), dtype=np.float64)
+    cumulative_turnover = np.empty((runner_count, point_count), dtype=np.float64)
     previous_quote = None
     initial_mid = None
     minute_reference: list[pd.DataFrame] = []
@@ -194,6 +201,7 @@ def main() -> int:  # noqa: C901
             raise ValueError(f"{day_text}: missing same-day first trade")
         minute_reference.append(pd.DataFrame({
             "timestamp_ns": minute_ns, "mid": snapshots.mid.to_numpy(float),
+            "bid": snapshots.bid.to_numpy(float), "ask": snapshots.ask.to_numpy(float),
             "first_trade_price": trades.price.to_numpy(float)[first_trade_indexes],
         }))
         for local_index, timestamp in enumerate(minute_ns):
@@ -229,9 +237,16 @@ def main() -> int:  # noqa: C901
                         break
             mid = float(snapshots.mid.iloc[local_index])
             capital = float(initial_mid) * UNIT_QTY
-            for runner in runners:
-                append_path(runner, int(timestamp), mid, float(snapshots.bid.iloc[local_index]),
-                            float(snapshots.ask.iloc[local_index]), capital)
+            for runner_index, runner in enumerate(runners):
+                actual_position[runner_index, target_index] = runner.state.actual_position
+                target_error[runner_index, target_index] = runner.state.target_error
+                cumulative_return_gross[runner_index, target_index] = (
+                    runner.cash_gross + runner.state.actual_position * UNIT_QTY * mid
+                ) / capital
+                cumulative_return_fee[runner_index, target_index] = (
+                    runner.cash_fee + runner.state.actual_position * UNIT_QTY * mid
+                ) / capital
+                cumulative_turnover[runner_index, target_index] = runner.turnover_notional / capital
         previous_quote = quotes.iloc[[-1]].copy()
         atomic_json({
             "status": "RUNNING", "days_completed": day_number, "days_total": len(required_dates),
@@ -240,8 +255,20 @@ def main() -> int:  # noqa: C901
 
     reference = pd.concat(minute_reference, ignore_index=True)
     metric_rows: list[dict] = []
-    for runner in runners:
+    for runner_index, runner in enumerate(runners):
         key, variant = runner.strategy_id.rsplit("__", 1)
+        runner.path = pd.DataFrame({
+            "timestamp_ns": target_times,
+            "mid": reference.mid.to_numpy(float),
+            "bid": reference.bid.to_numpy(float),
+            "ask": reference.ask.to_numpy(float),
+            "target_position": runner.target,
+            "actual_position": actual_position[runner_index],
+            "target_error": target_error[runner_index],
+            "cumulative_return_gross": cumulative_return_gross[runner_index],
+            "cumulative_return_standard_fee": cumulative_return_fee[runner_index],
+            "cumulative_turnover": cumulative_turnover[runner_index],
+        })
         maker_metric, maker_path = finalize_runner(runner, pd.DataFrame(), float(initial_mid))
         maker_metric = enrich_metric(maker_metric, runner, maker_path)
         maker_metric.update({
