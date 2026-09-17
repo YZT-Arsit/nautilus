@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 from scripts.internal.run_boss_multitimeframe_tick_screen import load_symbol  # noqa: E402
 from scripts.internal.run_execution_review_maker_comparison import make_review_instrument  # noqa: E402
 from scripts.internal.run_l1_maker_pilot import (  # noqa: E402
-    UNIT_QTY, eligible_events, finalize_runner, first_tick_path, minute_snapshots,
+    UNIT_QTY, finalize_runner, first_tick_path, minute_snapshots,
 )
 from scripts.internal.run_l1_maker_policy_study import (  # noqa: E402
     FILL_PROBABILITY, PolicyRunner, enrich_metric, quote_tuple,
@@ -91,6 +91,42 @@ def reconstruct_interval_position(review_path: Path, event_time_ns: np.ndarray) 
     if expected != actual:
         raise ValueError(f"lossy position transition sample within maker interval: {review_path}")
     return position
+
+
+def eligible_events_fast(
+    runner: PolicyRunner,
+    quote_arrays: tuple[np.ndarray, ...], trade_arrays: tuple[np.ndarray, ...],
+    q0: int, q1: int, t0: int, t1: int,
+):
+    """Yield exactly the eligible source events without per-runner DataFrame materialization."""
+    if runner.order is None or not runner.order.is_open:
+        return
+    qupdate, qbid, qbsize, qask, qasize, qts, qinit = quote_arrays
+    tid, tprice, tqty, tts, tbuyer_maker = trade_arrays
+    limit = float(runner.order.price)
+    if runner.order_meta["side"] == "BUY":
+        qi = np.flatnonzero(qask[q0:q1] <= limit) + q0
+        ti = np.flatnonzero(tbuyer_maker[t0:t1] & (tprice[t0:t1] <= limit)) + t0
+    else:
+        qi = np.flatnonzero(qbid[q0:q1] >= limit) + q0
+        ti = np.flatnonzero((~tbuyer_maker[t0:t1]) & (tprice[t0:t1] >= limit)) + t0
+    qpos = tpos = 0
+    while qpos < len(qi) or tpos < len(ti):
+        take_quote = tpos >= len(ti) or (
+            qpos < len(qi) and (qts[qi[qpos]], 0, qupdate[qi[qpos]]) <= (tts[ti[tpos]], 1, tid[ti[tpos]])
+        )
+        if take_quote:
+            index = int(qi[qpos]); qpos += 1
+            yield 0, (
+                int(qupdate[index]), float(qbid[index]), float(qbsize[index]),
+                float(qask[index]), float(qasize[index]), int(qts[index]), int(qinit[index]),
+            )
+        else:
+            index = int(ti[tpos]); tpos += 1
+            yield 1, (
+                int(tid[index]), float(tprice[index]), float(tqty[index]),
+                int(tts[index]), bool(tbuyer_maker[index]),
+            )
 
 
 def main() -> int:  # noqa: C901
@@ -196,6 +232,17 @@ def main() -> int:  # noqa: C901
             initial_mid = float(snapshots.mid.iloc[0])
         qts = quotes.ts_event_ns.to_numpy(np.int64, copy=False)
         tts = trades.ts_event_ns.to_numpy(np.int64, copy=False)
+        quote_arrays = (
+            quotes.update_id.to_numpy(np.int64, copy=False),
+            quotes.bid_price.to_numpy(float, copy=False), quotes.bid_size.to_numpy(float, copy=False),
+            quotes.ask_price.to_numpy(float, copy=False), quotes.ask_size.to_numpy(float, copy=False),
+            qts, quotes.ts_init_ns.to_numpy(np.int64, copy=False),
+        )
+        trade_arrays = (
+            trades.trade_id.to_numpy(np.int64, copy=False), trades.price.to_numpy(float, copy=False),
+            trades.quantity.to_numpy(float, copy=False), tts,
+            trades.is_buyer_maker.to_numpy(bool, copy=False),
+        )
         first_trade_indexes = np.searchsorted(tts, minute_ns, side="left")
         if np.any(first_trade_indexes >= len(trades)):
             raise ValueError(f"{day_text}: missing same-day first trade")
@@ -221,13 +268,13 @@ def main() -> int:  # noqa: C901
             q1 = int(np.searchsorted(qts, segment_end, side="left"))
             t0 = int(np.searchsorted(tts, timestamp, side="right"))
             t1 = int(np.searchsorted(tts, segment_end, side="left"))
-            interval_quotes = quotes.iloc[q0:q1]
-            interval_trades = trades.iloc[t0:t1]
             for runner in runners:
                 if runner.order is None or not runner.order.is_open:
                     continue
                 submit_ns = int(runner.order_meta["submit_timestamp_ns"])
-                for _, kind, event in eligible_events(runner, interval_quotes, interval_trades):
+                for kind, event in eligible_events_fast(
+                    runner, quote_arrays, trade_arrays, q0, q1, t0, t1
+                ):
                     if kind == 0:
                         runner.process_quote(event, submit_ns)
                     else:
