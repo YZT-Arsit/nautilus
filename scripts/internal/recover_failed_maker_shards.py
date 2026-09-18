@@ -25,8 +25,8 @@ def read_status(path: Path) -> dict:
 
 
 def complete(output_root: Path, shard: int, shard_count: int) -> bool:
-    metrics = output_root / f"maker_metrics_shard_{shard}_of_{shard_count}.csv"
-    mapping = output_root / f"maker_case_mapping_shard_{shard}_of_{shard_count}.csv"
+    metrics = output_root / f"metrics_shard_{shard}_of_{shard_count}.csv"
+    mapping = output_root / f"case_mapping_shard_{shard}_of_{shard_count}.csv"
     progress = output_root / f"progress_shard_{shard}_of_{shard_count}.json"
     return metrics.is_file() and mapping.is_file() and read_status(progress).get("status") == "PASSED"
 
