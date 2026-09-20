@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import os
@@ -31,6 +32,7 @@ from strategy_framework.execution.maker_policy import MakerLifecyclePolicy  # no
 
 START = pd.Timestamp("2023-05-16", tz="UTC")
 END = pd.Timestamp("2024-03-31", tz="UTC")
+EVENT_CHUNK_NS = 5_000_000_000
 
 
 def atomic_csv(frame: pd.DataFrame, path: Path) -> None:
@@ -123,23 +125,30 @@ def reconstruct_interval_position(review_path: Path, event_time_ns: np.ndarray) 
     return position
 
 
-def eligible_events_fast(
-    runner: PolicyRunner,
+def eligible_event_indexes(
+    side: str, limit: float,
     quote_arrays: tuple[np.ndarray, ...], trade_arrays: tuple[np.ndarray, ...],
     q0: int, q1: int, t0: int, t1: int,
 ):
-    """Yield exactly the eligible source events without per-runner DataFrame materialization."""
-    if runner.order is None or not runner.order.is_open:
-        return
+    """Return exact eligible event indexes for one side/limit and time slice."""
     qupdate, qbid, qbsize, qask, qasize, qts, qinit = quote_arrays
     tid, tprice, tqty, tts, tbuyer_maker = trade_arrays
-    limit = float(runner.order.price)
-    if runner.order_meta["side"] == "BUY":
+    if side == "BUY":
         qi = np.flatnonzero(qask[q0:q1] <= limit) + q0
         ti = np.flatnonzero(tbuyer_maker[t0:t1] & (tprice[t0:t1] <= limit)) + t0
     else:
         qi = np.flatnonzero(qbid[q0:q1] >= limit) + q0
         ti = np.flatnonzero((~tbuyer_maker[t0:t1]) & (tprice[t0:t1] >= limit)) + t0
+    return qi, ti
+
+
+def merged_eligible_events(
+    qi: np.ndarray, ti: np.ndarray,
+    quote_arrays: tuple[np.ndarray, ...], trade_arrays: tuple[np.ndarray, ...],
+):
+    """Merge prefiltered QuoteTick/TradeTick indexes in canonical source order."""
+    qupdate, qbid, qbsize, qask, qasize, qts, qinit = quote_arrays
+    tid, tprice, tqty, tts, tbuyer_maker = trade_arrays
     qpos = tpos = 0
     while qpos < len(qi) or tpos < len(ti):
         take_quote = tpos >= len(ti) or (
@@ -157,6 +166,46 @@ def eligible_events_fast(
                 int(tid[index]), float(tprice[index]), float(tqty[index]),
                 int(tts[index]), bool(tbuyer_maker[index]),
             )
+
+
+def process_open_order_groups(
+    runners: list[PolicyRunner],
+    quote_arrays: tuple[np.ndarray, ...], trade_arrays: tuple[np.ndarray, ...],
+    qts: np.ndarray, tts: np.ndarray,
+    q0: int, q1: int, t0: int, t1: int,
+    segment_start: int, segment_end: int,
+) -> None:
+    """Process open orders in bounded source-time chunks.
+
+    Runner order is intentionally unchanged from the reference implementation.
+    Five-second chunks preserve total event ordering while allowing source
+    scans to stop immediately after an individual order closes.
+    """
+    for runner in runners:
+        if runner.order is None or not runner.order.is_open:
+            continue
+        side = str(runner.order_meta["side"])
+        limit = float(runner.order.price)
+        qlo, tlo = q0, t0
+        chunk_start = segment_start
+        while runner.order is not None and runner.order.is_open and chunk_start < segment_end:
+            chunk_end = min(chunk_start + EVENT_CHUNK_NS, segment_end)
+            qhi = min(q1, int(np.searchsorted(qts, chunk_end, side="left")))
+            thi = min(t1, int(np.searchsorted(tts, chunk_end, side="left")))
+            qi, ti = eligible_event_indexes(
+                side, limit, quote_arrays, trade_arrays, qlo, qhi, tlo, thi,
+            )
+            for kind, event in merged_eligible_events(qi, ti, quote_arrays, trade_arrays):
+                submit_ns = int(runner.order_meta["submit_timestamp_ns"])
+                if kind == 0:
+                    runner.process_quote(event, submit_ns)
+                else:
+                    runner.process_trade(event, submit_ns)
+                runner.settle_if_closed()
+                if runner.order is None or not runner.order.is_open:
+                    break
+            qlo, tlo = qhi, thi
+            chunk_start = chunk_end
 
 
 def main() -> int:  # noqa: C901
@@ -301,20 +350,10 @@ def main() -> int:  # noqa: C901
             q1 = int(np.searchsorted(qts, segment_end, side="left"))
             t0 = int(np.searchsorted(tts, timestamp, side="right"))
             t1 = int(np.searchsorted(tts, segment_end, side="left"))
-            for runner in runners:
-                if runner.order is None or not runner.order.is_open:
-                    continue
-                submit_ns = int(runner.order_meta["submit_timestamp_ns"])
-                for kind, event in eligible_events_fast(
-                    runner, quote_arrays, trade_arrays, q0, q1, t0, t1
-                ):
-                    if kind == 0:
-                        runner.process_quote(event, submit_ns)
-                    else:
-                        runner.process_trade(event, submit_ns)
-                    runner.settle_if_closed()
-                    if runner.order is None or not runner.order.is_open:
-                        break
+            process_open_order_groups(
+                runners, quote_arrays, trade_arrays, qts, tts,
+                q0, q1, t0, t1, int(timestamp), segment_end,
+            )
             mid = float(snapshots.mid.iloc[local_index])
             capital = float(initial_mid) * UNIT_QTY
             for runner_index, runner in enumerate(runners):
@@ -332,6 +371,18 @@ def main() -> int:  # noqa: C901
             "status": "RUNNING", "days_completed": day_number, "days_total": len(required_dates),
             "physical_cases": len(physical), "runner_count": len(runners),
         }, args.output_root / f"progress_shard_{args.shard_index}_of_{args.shard_count}.json")
+        # The next parquet read must not overlap with the previous day's very
+        # large DataFrames/NumPy views. Explicit release also returns unused
+        # Arrow pool pages, preventing multi-day high-water paging on Windows.
+        del quotes, trades, quote_arrays, trade_arrays, qts, tts
+        del qindexes, snapshots, first_trade_indexes, minute_ns, mask
+        gc.collect()
+        try:
+            import pyarrow as pa
+
+            pa.default_memory_pool().release_unused()
+        except (ImportError, AttributeError):
+            pass
 
     reference = pd.concat(minute_reference, ignore_index=True)
     metric_rows: list[dict] = []
