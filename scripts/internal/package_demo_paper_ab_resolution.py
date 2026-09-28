@@ -91,6 +91,23 @@ def _prepare_layout(source: Path, output: Path) -> Path:
     }
     _write_csv(output / "source_experiment_reference.csv", [source_reference])
     engineering = output / "exchange_demo_engineering"
+    credentials_status = {
+        "credentials_present": False,
+        "required_env_vars": ["BINANCE_DEMO_API_KEY", "BINANCE_DEMO_API_SECRET"],
+        "production_credentials_not_required": True,
+        "production_credentials_forbidden": True,
+        "resume_scope": [
+            "DEMO_MARKET_ORDER_SMOKE",
+            "DEMO_POST_ONLY_RESTING_CANCEL_SMOKE",
+            "DEMO_USER_DATA_RECONCILIATION",
+        ],
+        "local_ab_rerun_required": False,
+    }
+    engineering.mkdir(parents=True, exist_ok=True)
+    (engineering / "demo_credentials_status.json").write_text(
+        json.dumps(credentials_status, indent=2) + "\n",
+        encoding="utf-8",
+    )
     demo_validation_path = engineering / "demo_environment_validation.json"
     if not demo_validation_path.exists():
         demo_status = "BLOCKED_DEMO_CREDENTIALS_UNAVAILABLE"
@@ -202,6 +219,7 @@ def _performance(
             "timestamp_utc": pd.Timestamp(ts, unit="ns", tz="UTC").isoformat(),
             "price": price,
             "target": target,
+            "target_position_qty": target * target_notional / price if price else 0.0,
             "actual_position": position,
             "equity": equity,
             "Return": equity / initial_capital - 1.0,
@@ -220,7 +238,7 @@ def _render_mode(path: Path, perf: pd.DataFrame, title: str) -> None:
     axes[0].set_ylabel("Return (%)")
     turn.set_ylabel("Turnover (raw)")
     axes[1].step(ts, perf.actual_position, where="post", color="#6A3D9A", label="Actual position")
-    axes[1].step(ts, perf.target, where="post", color="black", alpha=0.45, label="Target")
+    axes[1].step(ts, perf.target_position_qty, where="post", color="black", alpha=0.45, label="Target qty")
     axes[1].legend(loc="upper left")
     axes[1].set_ylabel("Position qty / target")
     axes[2].fill_between(ts, perf.drawdown * 100, 0, color="#C44E52", alpha=0.45)
@@ -234,7 +252,12 @@ def _render_mode(path: Path, perf: pd.DataFrame, title: str) -> None:
     plt.close(fig)
 
 
-def _render_comparison(path: Path, direct: pd.DataFrame, maker: pd.DataFrame) -> None:
+def _render_comparison(
+    path: Path,
+    direct: pd.DataFrame,
+    maker: pd.DataFrame,
+    maker_summary: dict,
+) -> None:
     joined = direct.merge(maker, on=["timestamp_ns", "timestamp_utc", "price"], suffixes=("_DIRECT", "_MAKER"))
     ts = pd.to_datetime(joined.timestamp_ns, unit="ns", utc=True)
     fig, axes = plt.subplots(4, 1, figsize=(15, 12), sharex=True, constrained_layout=True)
@@ -242,7 +265,7 @@ def _render_comparison(path: Path, direct: pd.DataFrame, maker: pd.DataFrame) ->
     axes[0].plot(ts, joined.Return_MAKER * 100, label="MAKER")
     axes[0].set_ylabel("Return (%)")
     axes[0].legend()
-    axes[1].step(ts, joined.target_DIRECT, where="post", color="black", alpha=0.5, label="Target")
+    axes[1].step(ts, joined.target_position_qty_DIRECT, where="post", color="black", alpha=0.5, label="Target qty")
     axes[1].step(ts, joined.actual_position_DIRECT, where="post", label="DIRECT")
     axes[1].step(ts, joined.actual_position_MAKER, where="post", label="MAKER")
     axes[1].set_ylabel("Position")
@@ -256,13 +279,21 @@ def _render_comparison(path: Path, direct: pd.DataFrame, maker: pd.DataFrame) ->
     axes[3].set_ylabel("Drawdown (%)")
     axes[3].set_xlabel("UTC")
     axes[3].legend()
+    metric_text = (
+        f"Maker fill={maker_summary['quantity_fill_ratio']:.2%} | "
+        f"Zero-fill={maker_summary['zero_fill_rate']:.2%} | "
+        f"Median/P95 first fill={maker_summary['median_first_fill_latency_ms']:.1f}/"
+        f"{maker_summary['P95_first_fill_latency_ms']:.1f} ms | "
+        f"Target error={maker_summary['mean_target_position_error']:.6g}"
+    )
+    fig.text(0.5, 0.005, metric_text, ha="center", va="bottom", fontsize=9)
     fig.suptitle(f"{STRATEGY} | {SYMBOL} | {TIMEFRAME} | {VARIANT} | isolated local A/B")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150)
     plt.close(fig)
 
 
-def _finalize(source: Path, output: Path) -> None:
+def _finalize(source: Path, output: Path) -> None:  # noqa: C901
     worker, _ = _source_paths(source)
     validation_path = worker / "dry_run_validation.json"
     if not validation_path.exists():
@@ -318,6 +349,7 @@ def _finalize(source: Path, output: Path) -> None:
     perfs: dict[str, pd.DataFrame] = {}
     duration_days = max(float(validation["summary"]["duration_hours"]) / 24.0, 1e-12)
     mode_summaries: dict[str, dict] = {}
+    accounting_failures: list[dict] = []
     for folder, mode in (("01_DIRECT", DIRECT), ("02_MAKER", MAKER)):
         root = case / folder
         (root / "RUNNING.csv").unlink(missing_ok=True)
@@ -346,6 +378,7 @@ def _finalize(source: Path, output: Path) -> None:
             "MaxDD": float(perf.drawdown.min()),
             "Avg_Daily_Turnover_pct": float(perf.iloc[-1].cumulative_turnover_raw / duration_days * 100.0),
             "Total_Turnover_raw": float(perf.iloc[-1].cumulative_turnover_raw),
+            "Total_Turnover_pct": float(perf.iloc[-1].cumulative_turnover_raw * 100.0),
             "Sharpe": "INSUFFICIENT_DAILY_OBSERVATIONS",
             "fee_total": float(mode_fees.fee_total.sum()),
             "funding_pnl": float(mode_funding.loc[mode_funding.execution_mode.eq(mode), "funding_pnl"].sum()),
@@ -354,10 +387,30 @@ def _finalize(source: Path, output: Path) -> None:
             "full_fill_orders": int(source_row.get("MAKER_full_fill_orders", 0)) if prefix == "MAKER" else len(mode_fills),
             "partial_fill_orders": int(source_row.get("MAKER_partial_fill_orders", 0)) if prefix == "MAKER" else 0,
             "zero_fill_orders": int(source_row.get("MAKER_zero_fill_orders", 0)) if prefix == "MAKER" else 0,
+            "zero_fill_rate": (
+                float(source_row.get("MAKER_zero_fill_orders", 0))
+                / max(float(source_row.get("MAKER_orders", 0)), 1.0)
+                if prefix == "MAKER" else 0.0
+            ),
             "quantity_fill_ratio": float(source_row.get("MAKER_quantity_fill_ratio", float("nan"))) if prefix == "MAKER" else 1.0,
             "median_first_fill_latency_ms": float(source_row.get("MAKER_median_first_fill_latency_ms", float("nan"))) if prefix == "MAKER" else float("nan"),
             "P95_first_fill_latency_ms": float(source_row.get("MAKER_P95_first_fill_latency_ms", float("nan"))) if prefix == "MAKER" else float("nan"),
+            "mean_target_position_error": float(source_row.get("MAKER_mean_target_position_error", float("nan"))) if prefix == "MAKER" else 0.0,
         }
+        expected_return = float(source_row[f"{prefix}_Return"])
+        expected_turnover = float(source_row[f"{prefix}_total_turnover_raw"])
+        for field, actual, expected in (
+            ("Return", mode_summary["Return"], expected_return),
+            ("Total_Turnover_raw", mode_summary["Total_Turnover_raw"], expected_turnover),
+            ("Daily_Turnover_sum", float(mode_daily.daily_turnover_raw.sum()), expected_turnover),
+        ):
+            if not math.isclose(actual, expected, rel_tol=1e-10, abs_tol=1e-10):
+                accounting_failures.append({
+                    "execution_mode": mode,
+                    "field": field,
+                    "actual": actual,
+                    "expected": expected,
+                })
         mode_summaries[mode] = mode_summary
         pd.DataFrame([mode_summary]).to_csv(root / "mode_summary.csv", index=False)
         _render_mode(root / "figures" / "performance.png", perf, f"{STRATEGY} | {SYMBOL} | {TIMEFRAME} | {VARIANT} | {mode}")
@@ -365,10 +418,25 @@ def _finalize(source: Path, output: Path) -> None:
     comparison = direct.merge(maker, on=["timestamp_ns", "timestamp_utc", "price"], suffixes=("_DIRECT", "_MAKER"))
     comparison.to_csv(case / "comparison" / "execution_comparison.csv", index=False)
     decisions.to_csv(case / "comparison" / "decision_alignment.csv", index=False)
-    _render_comparison(case / "comparison" / "comparison.png", direct, maker)
+    _render_comparison(
+        case / "comparison" / "comparison.png",
+        direct,
+        maker,
+        mode_summaries[MAKER],
+    )
+    pd.DataFrame(
+        accounting_failures,
+        columns=["execution_mode", "field", "actual", "expected"],
+    ).to_csv(case / "comparison" / "accounting_invariant_failures.csv", index=False)
+    if accounting_failures:
+        raise RuntimeError(f"accounting invariant failure count is {len(accounting_failures)}")
     demo_validation_path = output / "exchange_demo_engineering" / "demo_environment_validation.json"
     demo_validation = json.loads(demo_validation_path.read_text())
     demo_passed = demo_validation.get("status") == "PASSED"
+    source_summary = validation.get("summary", {})
+    worker_errors = source_summary.get("worker_errors", [])
+    reconnects = source_summary.get("reconnects", {})
+    data_gaps = len(worker_errors) if isinstance(worker_errors, list) else int(worker_errors or 0)
     final = {
         "status": "PASSED" if demo_passed else "PARTIAL",
         "independent_binance_demo_accounts_available": False,
@@ -380,6 +448,9 @@ def _finalize(source: Path, output: Path) -> None:
         "portfolio_isolation": True,
         "source_validation": validation,
         "replay_mismatches": len(replay_mismatches),
+        "data_gaps": data_gaps,
+        "reconnects": reconnects,
+        "accounting_invariant_failures": len(accounting_failures),
         "direct": mode_summaries[DIRECT],
         "maker": mode_summaries[MAKER],
         "sharpe": "INSUFFICIENT_DAILY_OBSERVATIONS",
