@@ -11,15 +11,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
 import yaml
 
-from strategy_framework.registry import get_entry
-
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from strategy_framework.registry import get_entry  # noqa: E402
 
 
 def sha256(path: Path) -> str:
