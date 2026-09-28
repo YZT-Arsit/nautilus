@@ -84,14 +84,15 @@ def main() -> int:
     second_bytes = json.dumps(second, sort_keys=True, separators=(",", ":")).encode()
     replay_match = first_bytes == second_bytes
     validation = {
-        "status": "PASSED" if replay_match else "BLOCKED",
+        "status": "PARTIAL" if replay_match else "BLOCKED",
         "production_market_data_connection_started": False,
         "live_order_submission": "DISABLED",
         "P0_architecture_config_tests": "IMPLEMENTED",
         "P0_unit_tests": "PASSED",
         "P0_unit_test_count": 14,
-        "P1_recorded_data_replay": "PASSED" if replay_match else "BLOCKED",
-        "P2_24h_dry_run": "READY_NOT_STARTED",
+        "P1_recorded_data_replay": "PASSED_FIXTURE" if replay_match else "BLOCKED",
+        "historical_paper_parity": "PENDING_SERVER_REPLAY" if replay_match else "BLOCKED",
+        "P2_24h_dry_run": "NOT_READY",
         "P3_long_running": "NOT_STARTED",
         "replay_digest_1": hashlib.sha256(first_bytes).hexdigest(),
         "replay_digest_2": hashlib.sha256(second_bytes).hexdigest(),
@@ -110,7 +111,7 @@ def main() -> int:
         "MaxDD": "", "BE": "", "Avg_Daily_Turnover": "", "total_turnover": "",
         "maker_fill_ratio": "", "zero_fill_rate": "", "target_error": "",
         "data_gaps": 0, "system_errors": 0, "funding": 0, "fees": 0,
-        "status": "P2_READY_NOT_STARTED", "human_decision_required": True,
+        "status": "P2_NOT_READY_PENDING_HISTORICAL_PARITY", "human_decision_required": True,
     }])
     evidence.to_csv(output / "live_readiness_evidence.csv", index=False)
     return 0 if replay_match else 2

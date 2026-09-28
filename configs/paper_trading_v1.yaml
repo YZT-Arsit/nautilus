@@ -51,6 +51,8 @@ latency:
 
 market_data:
   source: BINANCE_PRODUCTION_PUBLIC
+  base_url: wss://fstream.binance.com
+  market: USD_M_FUTURES
   streams:
     - aggTrade
     - bookTicker
@@ -85,5 +87,5 @@ reporting_checkpoints_days:
 release_stage:
   P0_architecture_tests: REQUIRED
   P1_recorded_data_replay: REQUIRED
-  P2_24h_production_market_data_dry_run: READY_NOT_STARTED
+  P2_24h_production_market_data_dry_run: NOT_READY_PENDING_SERVER_HISTORICAL_PARITY
   P3_7d_forward_observation: BLOCKED_PENDING_REVIEW
