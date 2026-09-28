@@ -1,0 +1,89 @@
+version: 1
+experiment_id: GENERATED_FROM_FROZEN_MANIFEST
+market_data_environment: PRODUCTION_READ_ONLY
+order_submission: DISABLED
+credentials_required: false
+
+candidate_manifest: paper_candidate_manifest.csv
+symbols:
+  - BTCUSDT
+timeframes:
+  - 1m
+  - 10m
+  - 15m
+
+execution_modes:
+  - FIRST_TICK_SHADOW
+  - MAKER_PAPER
+maker_policy: GTC_UNTIL_SIGNAL_INVALID
+maker_order:
+  type: LIMIT
+  post_only: true
+  buy_price: CURRENT_BEST_BID
+  sell_price: CURRENT_BEST_ASK
+  taker_fallback: false
+  primary_data_tier: L1_BBO_TRADES
+  queue_position_claimed: false
+
+account:
+  initial_capital: 100000.0
+  leverage: 1.0
+  target_notional: 100000.0
+  portfolio_isolation: PER_STRATEGY_CASE
+
+fees:
+  fee_config_id: GROSS_DIAGNOSTIC_V1
+  maker_rate: 0.0
+  taker_rate: 0.0
+  account_tier_claimed: false
+
+funding:
+  enabled: true
+  source: BINANCE_USDM_FUNDING_RATE
+  position_basis: ACTUAL_EXECUTED_POSITION_AT_SETTLEMENT
+  premium_index_booked_as_pnl: false
+
+latency:
+  market_data_receive_delay: MEASURED
+  strategy_processing_time: MEASURED
+  exchange_order_path: ORDER_LATENCY_UNCALIBRATED
+  configured_order_latency_ms: null
+
+market_data:
+  source: BINANCE_PRODUCTION_PUBLIC
+  streams:
+    - aggTrade
+    - bookTicker
+  l2_supported_by_adapter: true
+  l2_enabled_for_v1: false
+  persist_raw_normalized_stream: true
+  exchange_and_receive_timestamps: true
+  partition_timezone: UTC
+
+safety:
+  live_execution_adapter: NONE
+  production_order_endpoint: DISABLED
+  api_key: FORBIDDEN
+  api_secret: FORBIDDEN
+  stop_on_data_gap: true
+  stop_on_clock_drift: true
+  stop_on_accounting_invariant: true
+
+state:
+  root: D:/nautilus/paper_trading
+  atomic_checkpoints: true
+  append_only_audit_log: true
+  deterministic_ids: true
+
+reporting_checkpoints_days:
+  - 7
+  - 30
+  - 90
+  - 180
+  - SINCE_INCEPTION
+
+release_stage:
+  P0_architecture_tests: REQUIRED
+  P1_recorded_data_replay: REQUIRED
+  P2_24h_production_market_data_dry_run: READY_NOT_STARTED
+  P3_7d_forward_observation: BLOCKED_PENDING_REVIEW
