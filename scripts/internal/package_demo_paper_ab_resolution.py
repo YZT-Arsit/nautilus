@@ -12,6 +12,9 @@ import argparse
 import hashlib
 import json
 import math
+import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -65,7 +68,7 @@ def _prepare_layout(source: Path, output: Path) -> Path:
     worker, manifest = _source_paths(source)
     row = _candidate_row(manifest)
     case = output / STRATEGY / f"{SYMBOL}_{TIMEFRAME}_{VARIANT}"
-    for directory in ("01_DIRECT", "02_MAKER", "exchange_demo_engineering", "comparison"):
+    for directory in ("01_DIRECT", "02_MAKER", "comparison"):
         (case / directory).mkdir(parents=True, exist_ok=True)
     source_reference = {
         "source_experiment": str(source),
@@ -87,19 +90,31 @@ def _prepare_layout(source: Path, output: Path) -> Path:
         "portfolio_isolation": "TWO_INDEPENDENT_LOCAL_PAPER_ACCOUNTS",
     }
     _write_csv(output / "source_experiment_reference.csv", [source_reference])
-    demo_status = "BLOCKED_DEMO_CREDENTIALS_UNAVAILABLE"
-    for name in (
-        "market_order_test.csv",
-        "maker_order_test.csv",
-        "order_state_events.csv",
-        "account_reconciliation.csv",
-    ):
-        _write_csv(case / "exchange_demo_engineering" / name, [{
+    engineering = output / "exchange_demo_engineering"
+    demo_validation_path = engineering / "demo_environment_validation.json"
+    if not demo_validation_path.exists():
+        demo_status = "BLOCKED_DEMO_CREDENTIALS_UNAVAILABLE"
+        for name in (
+            "market_order_test.csv",
+            "post_only_order_test.csv",
+            "order_state_events.csv",
+            "account_reconciliation.csv",
+        ):
+            _write_csv(engineering / name, [{
+                "environment": "BINANCE_DEMO",
+                "status": demo_status,
+                "exchange_orders": 0,
+                "reason": "NO_ACCESSIBLE_DEMO_CREDENTIALS",
+            }])
+        demo_validation = {
+            "status": "BLOCKED",
+            "reason": "DEMO_CREDENTIALS_UNAVAILABLE",
             "environment": "BINANCE_DEMO",
-            "status": demo_status,
-            "exchange_orders": 0,
-            "reason": "NO_ACCESSIBLE_DEMO_CREDENTIALS; TWO_ISOLATED_DEMO_ACCOUNTS_NOT_VERIFIABLE",
-        }])
+            "production_exchange_orders": 0,
+        }
+        demo_validation_path.write_text(json.dumps(demo_validation, indent=2) + "\n")
+    else:
+        demo_validation = json.loads(demo_validation_path.read_text())
     heartbeat = worker / "health" / "heartbeat.json"
     running = json.loads(heartbeat.read_text()) if heartbeat.exists() else {}
     _write_csv(case / "01_DIRECT" / "RUNNING.csv", [{"status": "RUNNING", "source": DIRECT}])
@@ -109,8 +124,8 @@ def _prepare_layout(source: Path, output: Path) -> Path:
         "independent_binance_demo_accounts_available": False,
         "two_api_keys_same_account": False,
         "exchange_native_simultaneous_ab": "UNAVAILABLE",
-        "demo_market_engineering_test": "BLOCKED",
-        "demo_post_only_engineering_test": "BLOCKED",
+        "demo_market_engineering_test": demo_validation.get("market_test", "BLOCKED"),
+        "demo_post_only_engineering_test": demo_validation.get("post_only_test", "BLOCKED"),
         "local_isolated_simultaneous_ab": "RUNNING",
         "portfolio_isolation": True,
         "source_phase": running.get("phase"),
@@ -256,6 +271,30 @@ def _finalize(source: Path, output: Path) -> None:
     if validation.get("status") != "PASSED" or validation.get("production_exchange_orders") != 0:
         raise RuntimeError("source paper validation did not pass safely")
     case = _prepare_layout(source, output)
+    replay_csv = worker / "replay_validation.csv"
+    replay_json = worker / "replay" / "replay_validation.json"
+    if not replay_csv.exists():
+        repo = source.parents[2]
+        subprocess.run(  # noqa: S603 fixed local interpreter and repository script
+            [
+                sys.executable,
+                str(repo / "scripts" / "internal" / "replay_paper_experiment.py"),
+                "--repo",
+                str(repo),
+                "--experiment",
+                str(source),
+                "--phase-root",
+                str(worker),
+            ],
+            cwd=repo,
+            check=True,
+        )
+    replay_mismatches = pd.read_csv(replay_csv)
+    if len(replay_mismatches) != 0:
+        raise RuntimeError(f"offline replay mismatch count is {len(replay_mismatches)}")
+    shutil.copy2(replay_csv, case / "comparison" / "replay_validation.csv")
+    if replay_json.exists():
+        shutil.copy2(replay_json, case / "comparison" / "replay_validation.json")
     summary = pd.read_csv(worker / "strategy_case_summary.csv")
     summary = summary.loc[summary.experiment_candidate_id.eq(CANDIDATE_ID)]
     if len(summary) != 1:
@@ -277,6 +316,8 @@ def _finalize(source: Path, output: Path) -> None:
     initial = float(config["account"]["initial_capital"])
     notional = float(config["account"]["target_notional"])
     perfs: dict[str, pd.DataFrame] = {}
+    duration_days = max(float(validation["summary"]["duration_hours"]) / 24.0, 1e-12)
+    mode_summaries: dict[str, dict] = {}
     for folder, mode in (("01_DIRECT", DIRECT), ("02_MAKER", MAKER)):
         root = case / folder
         (root / "RUNNING.csv").unlink(missing_ok=True)
@@ -293,25 +334,56 @@ def _finalize(source: Path, output: Path) -> None:
         perf = _performance(prices, fills, funding, decisions, mode, initial, notional)
         perf.to_csv(root / "performance.csv", index=False)
         perfs[mode] = perf
-        mode_summary = summary.copy()
-        mode_summary.insert(1, "execution_mode", mode)
-        mode_summary.to_csv(root / "mode_summary.csv", index=False)
+        source_row = summary.iloc[0]
+        prefix = "FIRST_TICK" if mode == DIRECT else "MAKER"
+        mode_summary = {
+            "strategy_id": STRATEGY,
+            "symbol": SYMBOL,
+            "timeframe": TIMEFRAME,
+            "direction_variant": VARIANT,
+            "execution_mode": mode,
+            "Return": float(perf.iloc[-1].Return),
+            "MaxDD": float(perf.drawdown.min()),
+            "Avg_Daily_Turnover_pct": float(perf.iloc[-1].cumulative_turnover_raw / duration_days * 100.0),
+            "Total_Turnover_raw": float(perf.iloc[-1].cumulative_turnover_raw),
+            "Sharpe": "INSUFFICIENT_DAILY_OBSERVATIONS",
+            "fee_total": float(mode_fees.fee_total.sum()),
+            "funding_pnl": float(mode_funding.loc[mode_funding.execution_mode.eq(mode), "funding_pnl"].sum()),
+            "fill_count": len(mode_fills),
+            "order_count": int(source_row.get(f"{prefix}_orders", 0)) if prefix == "MAKER" else len(mode_fills),
+            "full_fill_orders": int(source_row.get("MAKER_full_fill_orders", 0)) if prefix == "MAKER" else len(mode_fills),
+            "partial_fill_orders": int(source_row.get("MAKER_partial_fill_orders", 0)) if prefix == "MAKER" else 0,
+            "zero_fill_orders": int(source_row.get("MAKER_zero_fill_orders", 0)) if prefix == "MAKER" else 0,
+            "quantity_fill_ratio": float(source_row.get("MAKER_quantity_fill_ratio", float("nan"))) if prefix == "MAKER" else 1.0,
+            "median_first_fill_latency_ms": float(source_row.get("MAKER_median_first_fill_latency_ms", float("nan"))) if prefix == "MAKER" else float("nan"),
+            "P95_first_fill_latency_ms": float(source_row.get("MAKER_P95_first_fill_latency_ms", float("nan"))) if prefix == "MAKER" else float("nan"),
+        }
+        mode_summaries[mode] = mode_summary
+        pd.DataFrame([mode_summary]).to_csv(root / "mode_summary.csv", index=False)
         _render_mode(root / "figures" / "performance.png", perf, f"{STRATEGY} | {SYMBOL} | {TIMEFRAME} | {VARIANT} | {mode}")
     direct, maker = perfs[DIRECT], perfs[MAKER]
     comparison = direct.merge(maker, on=["timestamp_ns", "timestamp_utc", "price"], suffixes=("_DIRECT", "_MAKER"))
     comparison.to_csv(case / "comparison" / "execution_comparison.csv", index=False)
     decisions.to_csv(case / "comparison" / "decision_alignment.csv", index=False)
     _render_comparison(case / "comparison" / "comparison.png", direct, maker)
+    demo_validation_path = output / "exchange_demo_engineering" / "demo_environment_validation.json"
+    demo_validation = json.loads(demo_validation_path.read_text())
+    demo_passed = demo_validation.get("status") == "PASSED"
     final = {
-        "status": "PASSED",
+        "status": "PASSED" if demo_passed else "PARTIAL",
         "independent_binance_demo_accounts_available": False,
         "two_api_keys_same_account": False,
         "exchange_native_simultaneous_ab": "UNAVAILABLE",
-        "demo_market_engineering_test": "BLOCKED",
-        "demo_post_only_engineering_test": "BLOCKED",
+        "demo_market_engineering_test": demo_validation.get("market_test", "BLOCKED"),
+        "demo_post_only_engineering_test": demo_validation.get("post_only_test", "BLOCKED"),
         "local_isolated_simultaneous_ab": "COMPLETED",
         "portfolio_isolation": True,
         "source_validation": validation,
+        "replay_mismatches": len(replay_mismatches),
+        "direct": mode_summaries[DIRECT],
+        "maker": mode_summaries[MAKER],
+        "sharpe": "INSUFFICIENT_DAILY_OBSERVATIONS",
+        "seven_day_run": "NOT_STARTED",
         "production_exchange_orders": 0,
         "existing_production_data_paper": "UNCHANGED_COMPLETED",
         "result": str(output),
