@@ -89,6 +89,7 @@ def daily_turnover(path: Path, expected_total: float) -> tuple[dict[str, float |
         "daily_turnover_reconciliation_mismatch": float(mismatch),
         "turnover_window_start": first_ts.date().isoformat(),
         "turnover_window_end": last_ts.date().isoformat(),
+        "turnover_window_end_exclusive": (last_ts.normalize() + pd.Timedelta(days=1)).date().isoformat(),
         "effective_years": len(values) / 365.25,
     }
     return metrics, series
@@ -146,7 +147,7 @@ def main() -> int:
         raise ValueError("daily turnover reconciliation failed")
     master["requested_start"] = "2021-07-01"
     master["effective_start"] = master.turnover_window_start
-    master["end"] = master.turnover_window_end
+    master["end"] = master.turnover_window_end_exclusive
     master["daily_observations"] = master.daily_observation_count.astype(int)
     master["Signed_BE"] = master.Signed_BE_bps
     master["MaxDD"] = master.Max_Drawdown
