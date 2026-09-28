@@ -42,8 +42,16 @@ PUBLIC_WS = "wss://fstream.binance.com"
 def get_json(path: str, params: dict | None = None):
     suffix = "?" + urllib.parse.urlencode(params) if params else ""
     request = urllib.request.Request(PUBLIC_REST + path + suffix, headers={"User-Agent": "nautilus-paper-research/1"})
-    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 public read-only endpoint
-        return json.loads(response.read())
+    last_error: Exception | None = None
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 public read-only endpoint
+                return json.loads(response.read())
+        except Exception as exc:  # public read-only transport retry
+            last_error = exc
+            if attempt < 4:
+                time.sleep(1.0 + attempt)
+    raise RuntimeError(f"public REST request failed after retries: {path}") from last_error
 
 
 def recent_warmup(symbol: str, now_ms: int) -> dict[str, list[BarEvent]]:
@@ -92,6 +100,7 @@ def main() -> int:
     parser.add_argument("--subset-count", type=int, default=18)
     parser.add_argument("--symbols", nargs="+")
     parser.add_argument("--worker-id")
+    parser.add_argument("--preflight-cache", type=Path)
     args = parser.parse_args()
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
@@ -120,7 +129,11 @@ def main() -> int:
     if config.get("order_submission") != "DISABLED" or config.get("credentials_required") is not False:
         raise RuntimeError("hard safety preflight failed")
     symbols = sorted(active.symbol.unique())
-    exchange_info = get_json("/fapi/v1/exchangeInfo")
+    cache = args.preflight_cache.resolve() if args.preflight_cache else None
+    exchange_info = (
+        json.loads((cache / "exchange_info.json").read_text(encoding="utf-8"))
+        if cache else get_json("/fapi/v1/exchangeInfo")
+    )
     metadata_bytes = json.dumps(exchange_info, sort_keys=True, separators=(",", ":")).encode()
     metadata_dir = experiment / "manifest/instrument_metadata"
     metadata_dir.mkdir(parents=True, exist_ok=True)
@@ -129,7 +142,15 @@ def main() -> int:
     now_ms = time.time_ns() // 1_000_000
     warmup: dict[tuple[str, str], list[BarEvent]] = {}
     for symbol in symbols:
-        per_tf = recent_warmup(symbol, now_ms)
+        if cache:
+            per_tf = {}
+            for timeframe in active.loc[active.symbol.eq(symbol), "timeframe"].unique():
+                source = cache / "warmup" / f"{symbol}_{timeframe}.jsonl"
+                per_tf[timeframe] = [
+                    BarEvent(**json.loads(line)) for line in source.read_text(encoding="utf-8").splitlines() if line
+                ]
+        else:
+            per_tf = recent_warmup(symbol, now_ms)
         for timeframe in active.loc[active.symbol.eq(symbol), "timeframe"].unique():
             warmup[(symbol, timeframe)] = per_tf[timeframe]
             warmup_path = run_root / "warmup" / f"{symbol}_{timeframe}.jsonl"

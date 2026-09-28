@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import os
 import subprocess
@@ -13,8 +14,11 @@ from pathlib import Path
 
 import pandas as pd
 
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.run_paper_orchestrator import get_json, recent_warmup  # noqa: E402
 
 
 def _concat_worker_csv(phase_root: Path, symbols: list[str], name: str) -> pd.DataFrame:
@@ -46,6 +50,24 @@ def main() -> int:
     phase_root = experiment / ("preflight/full_manifest_smoke" if args.phase == "full_manifest_smoke" else "")
     if args.phase == "authoritative_24h":
         phase_root = experiment
+    # Fetch public REST inputs once, serially, before starting any timed worker.
+    # This avoids nine workers contending on the read-only tunnel at startup and
+    # guarantees an identical metadata/warmup snapshot for each symbol shard.
+    cache = phase_root / "preflight_cache"
+    (cache / "warmup").mkdir(parents=True, exist_ok=True)
+    exchange_info = get_json("/fapi/v1/exchangeInfo")
+    (cache / "exchange_info.json").write_text(
+        json.dumps(exchange_info, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+    )
+    now_ms = time.time_ns() // 1_000_000
+    for symbol in symbols:
+        per_tf = recent_warmup(symbol, now_ms)
+        for timeframe in manifest.loc[manifest.symbol.eq(symbol), "timeframe"].unique():
+            (cache / "warmup" / f"{symbol}_{timeframe}.jsonl").write_text(
+                "".join(json.dumps(asdict(bar), sort_keys=True, separators=(",", ":")) + "\n" for bar in per_tf[timeframe]),
+                encoding="utf-8",
+            )
+    if args.phase == "authoritative_24h":
         freeze_path = experiment / "manifest/paper_experiment_freeze.json"
         freeze = json.loads(freeze_path.read_text())
         if freeze.get("forward_start_timestamp") is not None:
@@ -65,6 +87,7 @@ def main() -> int:
             "--repo", str(repo), "--experiment", str(experiment),
             "--phase", args.phase, "--duration-seconds", str(args.duration_seconds),
             "--symbols", symbol, "--worker-id", symbol,
+            "--preflight-cache", str(cache),
         ]
         processes.append((symbol, subprocess.Popen(command, cwd=repo, stdout=log, stderr=subprocess.STDOUT), log))
     results = {}
