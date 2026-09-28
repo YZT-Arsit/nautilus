@@ -391,6 +391,7 @@ class MakerPaperExecutor:
         self._fill_cursor = 0
         self.orders_submitted = 0
         self.cancels = 0
+        self.orders: list[Any] = []
         self.fills: list[PaperFill] = []
 
     def on_quote(self, quote: QuoteEvent) -> None:
@@ -434,6 +435,7 @@ class MakerPaperExecutor:
         self.order = self.harness.limit(
             side=side, price=price, quantity=quantity, post_only=True, client_order_id=order_id,
         )
+        self.orders.append(self.order)
         self.orders_submitted += 1
         self._sync_fills()
 
