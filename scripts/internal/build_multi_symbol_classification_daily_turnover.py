@@ -26,11 +26,18 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.internal.build_boss_persistence_v2 import directional_persistence_metrics  # noqa: E402
 from scripts.internal.build_stagea_9symbol_expanded_tick_review import add_selection  # noqa: E402
 from scripts.internal.build_stagea_9symbol_expanded_tick_review import (  # noqa: E402
     load_preworkbook,
 )
 from scripts.internal.build_stagea_9symbol_expanded_tick_review import load_workbook  # noqa: E402
+
+
+LONG_HORIZON_BTC = Path(
+    "outputs/baseline_evaluation/long_horizon_execution_reverse/selection/"
+    "long_horizon_first_tick_all_cases.csv"
+)
 
 
 def atomic_csv(frame: pd.DataFrame, path: Path) -> None:
@@ -117,6 +124,65 @@ def classify(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def overlay_authoritative_btc(
+    repo: Path,
+    master: pd.DataFrame,
+    paths: dict[tuple[str, str, str], Path],
+) -> tuple[pd.DataFrame, dict[tuple[str, str, str], Path]]:
+    """Replace the short common-window BTC rows with the completed 5Y baseline."""
+    source = repo / LONG_HORIZON_BTC
+    btc = pd.read_csv(source)
+    if len(btc) != 331 * 3 or btc.strategy_id.nunique() != 331 or set(btc.symbol) != {"BTCUSDT"}:
+        raise ValueError("authoritative BTC long-horizon population changed")
+    result = master.copy()
+    updates = {
+        "Return": "Return_FIRST_TICK",
+        "Sharpe": "Sharpe_FIRST_TICK",
+        "Signed_BE_bps": "Signed_BE_FIRST_TICK",
+        "Max_Drawdown": "MaxDD_FIRST_TICK",
+        "Turnover_raw": "Turnover_FIRST_TICK",
+        "daily_observation_count": "n_daily_observations",
+    }
+    long_paths: dict[tuple[str, str, str], Path] = {}
+    for row in btc.itertuples(index=False):
+        mask = (
+            result.strategy_id.astype(str).eq(str(row.strategy_id))
+            & result.symbol.eq("BTCUSDT")
+            & result.timeframe.eq(str(row.timeframe))
+        )
+        if int(mask.sum()) != 1:
+            raise ValueError(f"BTC row mapping failed: {row.strategy_id}/{row.timeframe}")
+        for target, source_column in updates.items():
+            result.loc[mask, target] = getattr(row, source_column)
+        result.loc[mask, "Turnover_pct"] = float(row.Turnover_FIRST_TICK) * 100.0
+        review = Path(str(row.normal_summary_path)).parent / "review_timeseries.parquet"
+        if not review.is_file():
+            raise FileNotFoundError(f"BTC_LONG_HORIZON_REVIEW_MISSING: {review}")
+        key = (str(row.semantic_group_id), "BTCUSDT", str(row.timeframe))
+        existing = long_paths.get(key)
+        if existing is None:
+            long_paths[key] = review
+    for key, review in long_paths.items():
+        timeseries = pd.read_parquet(review, columns=["event_time_ns", "executed_position"])
+        persistence = directional_persistence_metrics(timeseries)
+        mask = (
+            result.semantic_group_id.astype(str).eq(key[0])
+            & result.symbol.eq("BTCUSDT")
+            & result.timeframe.eq(key[2])
+        )
+        result.loc[mask, "Persistent"] = bool(persistence["directionally_persistent"])
+        result.loc[mask, "Nonflat_fraction"] = persistence["nonflat_fraction_v2"]
+        result.loc[mask, "Long_fraction"] = persistence["long_fraction_v2"]
+        result.loc[mask, "Short_fraction"] = persistence["short_fraction_v2"]
+        result.loc[mask, "Flat_fraction"] = persistence["flat_fraction_v2"]
+        result.loc[mask, "Median_directional_run_hours"] = persistence["median_directional_run_hours"]
+        result.loc[mask, "P90_directional_run_hours"] = persistence["P90_directional_run_hours"]
+        result.loc[mask, "Switches_per_day"] = persistence["sign_switches_per_day"]
+    paths = {key: value for key, value in paths.items() if key[1] != "BTCUSDT"}
+    paths.update(long_paths)
+    return result, paths
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=ROOT)
@@ -131,6 +197,7 @@ def main() -> int:
     preworkbook, preworkbook_paths, preworkbook_residuals = load_preworkbook(repo)
     master = pd.concat([workbook, preworkbook], ignore_index=True)
     paths = {**workbook_paths, **preworkbook_paths}
+    master, paths = overlay_authoritative_btc(repo, master, paths)
     physical = master.drop_duplicates(["semantic_group_id", "symbol", "timeframe"]).copy()
     metric_rows: list[dict[str, object]] = []
     daily_cache: dict[tuple[str, str, str], pd.DataFrame] = {}
