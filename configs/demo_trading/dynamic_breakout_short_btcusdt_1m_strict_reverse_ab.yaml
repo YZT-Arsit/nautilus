@@ -1,0 +1,43 @@
+experiment_name: demo_dynamic_breakout_short_execution_review
+environment: BINANCE_DEMO
+account_type: USDT_FUTURES
+strategy_id: dynamic_breakout_short
+symbol: BTCUSDT
+timeframe: 1m
+direction_variant: STRICT_REVERSE
+normal_target_multiplier: -1.0
+historical_reference_modes:
+  - 03_FIRST_TICK_REVERSE
+  - 04_MAKER_REVERSE
+demo_http_endpoint: https://demo-fapi.binance.com
+demo_market_ws_endpoint: wss://demo-fstream.binance.com
+production_trading_endpoints_forbidden:
+  - https://fapi.binance.com
+  - wss://ws-fapi.binance.com
+credentials:
+  direct_api_key_env: BINANCE_DEMO_DIRECT_API_KEY
+  direct_api_secret_env: BINANCE_DEMO_DIRECT_API_SECRET
+  maker_api_key_env: BINANCE_DEMO_MAKER_API_KEY
+  maker_api_secret_env: BINANCE_DEMO_MAKER_API_SECRET
+accounts:
+  independent_accounts_required: true
+  shared_account_keys_acceptable: false
+execution:
+  direct:
+    mode: 03_DEMO_DIRECT_REVERSE
+    order_type: MARKET
+  maker:
+    mode: 04_DEMO_MAKER_REVERSE
+    order_type: LIMIT
+    time_in_force: GTX
+    post_only: true
+    lifecycle: GTC_UNTIL_SIGNAL_INVALID
+    taker_fallback: false
+safety:
+  production_orders_allowed: false
+  order_submission: BLOCKED_UNTIL_TWO_ACCOUNT_PREFLIGHT
+  require_explicit_demo_order_flag: true
+  tiny_order_cycle_required: true
+  smoke_minutes: 30
+  deployment_hours: 24
+  auto_extend: false
