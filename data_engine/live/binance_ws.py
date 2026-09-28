@@ -44,7 +44,7 @@ def _unwrap(msg: Any) -> Any:
 
 
 def normalize_agg_trade(msg: dict, *, instrument_id: str | None = None,
-                        receive_time_ns: int | None = None) -> TradeEvent:
+                        receive_time_ns: int | None = None) -> TradeEvent | None:
     """Binance ``aggTrade`` message -> :class:`TradeEvent`.
 
     Trade time ``T`` (ms) is preferred for ``event_time_ns``; falls back to event
@@ -55,14 +55,21 @@ def normalize_agg_trade(msg: dict, *, instrument_id: str | None = None,
     iid = _derive_instrument_id(symbol, instrument_id)
     price = float(msg["p"])
     quantity = float(msg["q"])
+    # USD-M may emit status/heartbeat-shaped ``trade`` frames with X="NA"
+    # and zero price/quantity.  They are not executable market trades and must
+    # never enter bar construction or execution.
+    if price <= 0.0 or quantity <= 0.0:
+        return None
     is_buyer_maker = bool(msg["m"]) if "m" in msg else None
     event_time_ns = _ms_to_ns(msg.get("T", msg.get("E")))
     if event_time_ns is None:
         event_time_ns = receive_time_ns if receive_time_ns is not None else 0
     return make_trade_event(
         price=price, quantity=quantity, instrument_id=iid, event_time_ns=event_time_ns,
-        is_buyer_maker=is_buyer_maker, trade_id=msg.get("a"),
-        receive_time_ns=receive_time_ns, source="binance_ws_aggTrade", raw=msg,
+        is_buyer_maker=is_buyer_maker, trade_id=msg.get("a", msg.get("t")),
+        receive_time_ns=receive_time_ns,
+        source="binance_ws_aggTrade" if msg.get("e") == "aggTrade" else "binance_ws_trade",
+        raw=msg,
     )
 
 
@@ -127,7 +134,7 @@ def normalize_message(msg: Any, *, instrument_id: str | None = None,
     if not isinstance(msg, dict):
         return None
     etype = msg.get("e")
-    if etype == "aggTrade":
+    if etype in {"aggTrade", "trade"}:
         return normalize_agg_trade(msg, instrument_id=instrument_id, receive_time_ns=receive_time_ns)
     if etype == "bookTicker" or (etype is None and _BOOK_TICKER_KEYS <= msg.keys()):
         return normalize_book_ticker(msg, instrument_id=instrument_id, receive_time_ns=receive_time_ns)

@@ -54,7 +54,7 @@ market_data:
   base_url: wss://fstream.binance.com
   market: USD_M_FUTURES
   streams:
-    - aggTrade
+    - trade
     - bookTicker
   l2_supported_by_adapter: true
   l2_enabled_for_v1: false

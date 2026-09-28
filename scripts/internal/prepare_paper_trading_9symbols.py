@@ -51,7 +51,7 @@ def tree_hash(path: Path) -> str:
 def git_commit(repo: Path) -> str:
     override = os.environ.get("CODE_COMMIT_OVERRIDE")
     if override:
-        return override
+        return override.strip()
     executable = which("git")
     if executable is None:
         return "UNAVAILABLE"

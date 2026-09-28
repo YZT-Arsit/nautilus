@@ -17,6 +17,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from dataclasses import asdict
 from dataclasses import replace
 from pathlib import Path
 
@@ -89,6 +90,8 @@ def main() -> int:
     parser.add_argument("--phase", choices=["subset_smoke", "full_manifest_smoke", "authoritative_24h"], required=True)
     parser.add_argument("--duration-seconds", type=int, required=True)
     parser.add_argument("--subset-count", type=int, default=18)
+    parser.add_argument("--symbols", nargs="+")
+    parser.add_argument("--worker-id")
     args = parser.parse_args()
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
@@ -98,6 +101,10 @@ def main() -> int:
     if manifest_hash(manifest_path) != expected:
         raise RuntimeError("candidate manifest hash mismatch")
     manifest = pd.read_csv(manifest_path)
+    if args.symbols:
+        manifest = manifest[manifest.symbol.isin([s.upper() for s in args.symbols])].copy()
+        if manifest.empty:
+            raise RuntimeError("requested worker symbol set has no frozen candidates")
     if args.phase == "subset_smoke":
         active = deterministic_subset(manifest, args.subset_count)
         run_root = experiment / "preflight/subset_smoke"
@@ -105,6 +112,8 @@ def main() -> int:
         active, run_root = manifest, experiment / "preflight/full_manifest_smoke"
     else:
         active, run_root = manifest, experiment
+    if args.worker_id:
+        run_root = run_root / "workers" / args.worker_id
     run_root.mkdir(parents=True, exist_ok=True)
 
     config = yaml.safe_load((experiment / "manifest/paper_trading_v1.resolved.yaml").read_text())
@@ -123,6 +132,12 @@ def main() -> int:
         per_tf = recent_warmup(symbol, now_ms)
         for timeframe in active.loc[active.symbol.eq(symbol), "timeframe"].unique():
             warmup[(symbol, timeframe)] = per_tf[timeframe]
+            warmup_path = run_root / "warmup" / f"{symbol}_{timeframe}.jsonl"
+            warmup_path.parent.mkdir(parents=True, exist_ok=True)
+            warmup_path.write_text(
+                "".join(json.dumps(asdict(bar), sort_keys=True, separators=(",", ":")) + "\n" for bar in per_tf[timeframe]),
+                encoding="utf-8",
+            )
 
     orchestrator = PaperOrchestrator(
         repo=repo, experiment=run_root, manifest=active, exchange_info=exchange_info,
@@ -142,7 +157,7 @@ def main() -> int:
         while not stop.is_set() and time.monotonic() < deadline:
             remaining = max(1.0, min(60.0, deadline - time.monotonic()))
             source = BinancePublicWebSocketSource(
-                symbol, ("aggTrade", "bookTicker", "markPrice@1s"),
+                symbol, ("trade", "bookTicker", "markPrice@1s"),
                 base_url=PUBLIC_WS, instrument_id=iid,
             )
             try:
@@ -151,11 +166,13 @@ def main() -> int:
                     event_queue.put(event, timeout=5)
             except Exception as exc:  # reconnect public data only
                 reconnects[symbol] += 1
-                worker_errors.append({"symbol": symbol, "error": repr(exc), "time_ns": time.time_ns()})
+                if len(worker_errors) < 1_000:
+                    worker_errors.append({"symbol": symbol, "error": repr(exc), "time_ns": time.time_ns()})
+                time.sleep(min(5.0, max(0.1, deadline - time.monotonic())))
 
     threads = [threading.Thread(target=worker, args=(symbol,), daemon=True, name=f"feed-{symbol}") for symbol in symbols]
     started_ns = time.time_ns()
-    if args.phase == "authoritative_24h":
+    if args.phase == "authoritative_24h" and not args.worker_id:
         freeze_path = experiment / "manifest/paper_experiment_freeze.json"
         freeze = json.loads(freeze_path.read_text())
         if freeze.get("forward_start_timestamp") is not None:
@@ -188,6 +205,7 @@ def main() -> int:
                 }
                 path = run_root / "health/heartbeat.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
+                orchestrator.recorder.sync()
                 path.write_text(json.dumps(heartbeat, indent=2) + "\n")
     finally:
         stop.set()
@@ -196,6 +214,7 @@ def main() -> int:
         orchestrator.on_event(event_queue.get_nowait())
     ended_ns = time.time_ns()
     summary = orchestrator.write_outputs(started_ns, ended_ns, args.phase)
+    orchestrator.recorder.close()
     summary.update({"max_queue_backlog": max_backlog, "worker_errors": worker_errors, "reconnects": reconnects})
     status = "PASSED" if orchestrator.counts["quote_events"] and orchestrator.counts["trade_events"] else "BLOCKED"
     validation = {

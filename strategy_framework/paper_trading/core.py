@@ -148,6 +148,7 @@ class AppendOnlyMarketDataRecorder:
         self.source = source
         self._seen: set[str] = set()
         self._files: set[Path] = set()
+        self._handles: dict[Path, Any] = {}
         for path in self.root.rglob("events.jsonl") if self.root.exists() else ():
             self._files.add(path)
             with path.open(encoding="utf-8") as handle:
@@ -173,7 +174,7 @@ class AppendOnlyMarketDataRecorder:
         self._seen.add(event_id)
         ts = int(payload["event_time_ns"])
         date = datetime.fromtimestamp(ts / 1e9, tz=UTC).date().isoformat()
-        symbol = str(payload.get("instrument_id", "UNKNOWN")).split(".", 1)[0]
+        symbol = str(payload.get("instrument_id", "UNKNOWN")).split(".", 1)[0].removesuffix("-PERP")
         path = self.root / f"symbol={symbol}" / f"date={date}" / "events.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         row = {
@@ -181,14 +182,28 @@ class AppendOnlyMarketDataRecorder:
             "ts_exchange": ts, "ts_receive": payload.get("receive_time_ns"),
             "payload": payload,
         }
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(_canonical_json(row) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        handle = self._handles.get(path)
+        if handle is None:
+            handle = path.open("a", encoding="utf-8", buffering=64 * 1024)
+            self._handles[path] = handle
+        handle.write(_canonical_json(row) + "\n")
         self._files.add(path)
         return True
 
+    def sync(self) -> None:
+        """Flush buffered event partitions and force them to durable storage."""
+        for handle in self._handles.values():
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def close(self) -> None:
+        self.sync()
+        for handle in self._handles.values():
+            handle.close()
+        self._handles.clear()
+
     def manifest(self) -> list[dict[str, Any]]:
+        self.sync()
         rows = []
         for path in sorted(self._files):
             content = path.read_bytes()
@@ -391,6 +406,7 @@ class MakerPaperExecutor:
         self._fill_cursor = 0
         self.orders_submitted = 0
         self.cancels = 0
+        self.unrepresentable_trade_count = 0
         self.orders: list[Any] = []
         self.fills: list[PaperFill] = []
 
@@ -404,6 +420,13 @@ class MakerPaperExecutor:
         self._sync_fills()
 
     def on_trade(self, trade: TradeEvent) -> None:
+        minimum = float(str(self.harness.instrument.size_increment))
+        if float(trade.quantity) + 1e-15 < minimum:
+            # Never inflate a real market print merely to satisfy the native
+            # instrument precision.  Such a print cannot consume a simulated
+            # order expressed in the venue's current lot increment.
+            self.unrepresentable_trade_count += 1
+            return
         aggressor = "SELLER" if trade.is_buyer_maker else "BUYER"
         self.harness.trade(
             price=trade.price, size=trade.quantity, aggressor=aggressor,

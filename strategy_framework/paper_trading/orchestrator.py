@@ -37,6 +37,13 @@ from strategy_framework.paper_trading.core import (
 from strategy_framework.registry import get_entry
 
 
+class _NullRecorder:
+    def append(self, _event: Any) -> bool: return True
+    def sync(self) -> None: return None
+    def close(self) -> None: return None
+    def manifest(self) -> list[dict[str, Any]]: return []
+
+
 def _json_line(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -170,6 +177,7 @@ class CandidatePortfolio:
             "MAKER_zero_fill_orders": zero,
             "MAKER_quantity_fill_ratio": filled / requested if requested else float("nan"),
             "MAKER_cancels": self.maker.cancels if self.maker else 0,
+            "MAKER_unrepresentable_trade_count": self.maker.unrepresentable_trade_count if self.maker else 0,
             "MAKER_Return": (self.maker_account.equity(mark) / self.initial_capital - 1.0) if mark else 0.0,
             "MAKER_total_turnover_raw": self.maker_account.total_turnover_raw,
             "funding_events": self.funding_count,
@@ -239,12 +247,15 @@ class PaperOrchestrator:
         self, *, repo: Path, experiment: Path, manifest: pd.DataFrame,
         exchange_info: dict[str, Any], warmup_by_symbol_timeframe: dict[tuple[str, str], list[BarEvent]],
         initial_capital: float = 100_000.0, target_notional: float = 100_000.0,
-        fee_rate: float = 0.0,
+        fee_rate: float = 0.0, record_market_data: bool = True,
     ) -> None:
         self.repo = Path(repo)
         self.experiment = Path(experiment)
         self.manifest = manifest.copy()
-        self.recorder = AppendOnlyMarketDataRecorder(self.experiment / "market_data", "BINANCE_USDM_PRODUCTION_PUBLIC")
+        self.recorder = (
+            AppendOnlyMarketDataRecorder(self.experiment / "market_data", "BINANCE_USDM_PRODUCTION_PUBLIC")
+            if record_market_data else _NullRecorder()
+        )
         self.counts = defaultdict(int)
         self.latest_settled_funding: set[tuple[str, int]] = set()
         self.latest_quote: dict[str, QuoteEvent] = {}

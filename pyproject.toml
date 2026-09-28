@@ -94,6 +94,7 @@ platform = [
   "pyarrow>=15.0",
   "pyyaml>=6.0",
   "matplotlib>=3.8",
+  "websocket-client>=1.8.0,<2.0.0",
 ]
 
 [dependency-groups]

@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Coordinate one independent paper worker per frozen manifest symbol."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo", type=Path, default=ROOT)
+    parser.add_argument("--experiment", type=Path, required=True)
+    parser.add_argument("--phase", choices=["full_manifest_smoke", "authoritative_24h"], required=True)
+    parser.add_argument("--duration-seconds", type=int, required=True)
+    args = parser.parse_args()
+    repo, experiment = args.repo.resolve(), args.experiment.resolve()
+    manifest = pd.read_csv(experiment / "manifest/paper_candidate_manifest_9symbols.csv")
+    symbols = sorted(manifest.symbol.unique())
+    phase_root = experiment / ("preflight/full_manifest_smoke" if args.phase == "full_manifest_smoke" else "")
+    if args.phase == "authoritative_24h":
+        phase_root = experiment
+        freeze_path = experiment / "manifest/paper_experiment_freeze.json"
+        freeze = json.loads(freeze_path.read_text())
+        if freeze.get("forward_start_timestamp") is not None:
+            raise RuntimeError("authoritative forward start already frozen")
+        freeze["forward_start_timestamp"] = pd.Timestamp.now(tz="UTC").isoformat()
+        freeze["status"] = "RUNNING_24H"
+        temporary = freeze_path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(freeze, indent=2) + "\n")
+        os.replace(temporary, freeze_path)
+    logs = phase_root / "worker_logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    processes = []
+    for symbol in symbols:
+        log = (logs / f"{symbol}.log").open("w", encoding="utf-8")
+        command = [
+            sys.executable, str(repo / "scripts/run_paper_orchestrator.py"),
+            "--repo", str(repo), "--experiment", str(experiment),
+            "--phase", args.phase, "--duration-seconds", str(args.duration_seconds),
+            "--symbols", symbol, "--worker-id", symbol,
+        ]
+        processes.append((symbol, subprocess.Popen(command, cwd=repo, stdout=log, stderr=subprocess.STDOUT), log))
+    results = {}
+    try:
+        for symbol, process, log in processes:
+            code = process.wait()
+            log.close()
+            results[symbol] = code
+    except BaseException:
+        for _, process, log in processes:
+            if process.poll() is None: process.terminate()
+            log.close()
+        raise
+    validations = []
+    for symbol in symbols:
+        path = phase_root / "workers" / symbol / "dry_run_validation.json"
+        if path.exists(): validations.append(json.loads(path.read_text()))
+    aggregate = {
+        "status": "PASSED" if len(validations) == len(symbols) and all(v["status"] == "PASSED" for v in validations) else "BLOCKED",
+        "phase": args.phase, "worker_exit_codes": results, "symbols": symbols,
+        "candidate_count": int(sum(v["candidate_count"] for v in validations)),
+        "production_exchange_orders": int(sum(v["production_exchange_orders"] for v in validations)),
+        "quote_events": int(sum(v["summary"].get("quote_events", 0) for v in validations)),
+        "trade_events": int(sum(v["summary"].get("trade_events", 0) for v in validations)),
+        "first_tick_fills": int(sum(v["summary"].get("first_tick_fills", 0) for v in validations)),
+        "maker_orders": int(sum(v["summary"].get("maker_orders", 0) for v in validations)),
+        "maker_fills": int(sum(v["summary"].get("maker_fills", 0) for v in validations)),
+        "worker_errors": int(sum(len(v["summary"].get("worker_errors", [])) for v in validations)),
+        "reconnects": int(sum(sum(v["summary"].get("reconnects", {}).values()) for v in validations)),
+    }
+    (phase_root / "stage_validation.json").write_text(json.dumps(aggregate, indent=2) + "\n")
+    print(json.dumps(aggregate, indent=2))
+    return 0 if aggregate["status"] == "PASSED" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
