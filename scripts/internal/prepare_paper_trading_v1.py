@@ -149,6 +149,8 @@ def main() -> int:
     shutil.copy2(manifest_dir / "paper_candidate_manifest.sha256", design / "paper_candidate_manifest.sha256")
     shutil.copy2(config_path, design / "paper_trading_v1.resolved.yaml")
     shutil.copy2(manifest_dir / "paper_experiment_freeze.json", design / "paper_experiment_freeze.json")
+    shutil.copy2(repo / "docs/paper_trading_protocol.md", design / "paper_trading_protocol.md")
+    shutil.copy2(repo / "docs/paper_trading_protocol.md", manifest_dir / "paper_trading_protocol.md")
     print(json.dumps({"experiment_id": experiment_id, "manifest": str(manifest_path), "hash": manifest_hash, "candidates": len(manifest)}))
     return 0
 
