@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -89,7 +90,7 @@ def daily_turnover(path: Path, expected_total: float) -> tuple[dict[str, float |
         "daily_turnover_reconciliation_mismatch": float(mismatch),
         "turnover_window_start": first_ts.date().isoformat(),
         "turnover_window_end": last_ts.date().isoformat(),
-        "turnover_window_end_exclusive": (last_ts.normalize() + pd.Timedelta(days=1)).date().isoformat(),
+        "turnover_window_end_exclusive": (last_ts.date() + timedelta(days=1)).isoformat(),
         "effective_years": len(values) / 365.25,
     }
     return metrics, series
