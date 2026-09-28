@@ -89,6 +89,7 @@ def daily_turnover(path: Path, expected_total: float) -> tuple[dict[str, float |
         "daily_turnover_reconciliation_mismatch": float(mismatch),
         "turnover_window_start": first_ts.date().isoformat(),
         "turnover_window_end": last_ts.date().isoformat(),
+        "effective_years": len(values) / 365.25,
     }
     return metrics, series
 
@@ -143,6 +144,21 @@ def main() -> int:
         raise ValueError(f"classification population changed: rows={len(master)} strategies={master.strategy_id.nunique()}")
     if master.daily_turnover_reconciliation_mismatch.abs().max() > 1e-6:
         raise ValueError("daily turnover reconciliation failed")
+    master["requested_start"] = "2021-07-01"
+    master["effective_start"] = master.turnover_window_start
+    master["end"] = master.turnover_window_end
+    master["daily_observations"] = master.daily_observation_count.astype(int)
+    master["Signed_BE"] = master.Signed_BE_bps
+    master["MaxDD"] = master.Max_Drawdown
+    master["Avg_Daily_Turnover_pct"] = master.mean_daily_turnover_pct
+    master["Median_Daily_Turnover_pct"] = master.median_daily_turnover_pct
+    master["P90_Daily_Turnover_pct"] = master.P90_daily_turnover_pct
+    master["P95_Daily_Turnover_pct"] = master.P95_daily_turnover_pct
+    master["Max_Daily_Turnover_pct"] = master.max_daily_turnover_pct
+    master["Total_Turnover_raw"] = master.total_turnover_raw
+    master["Total_Turnover_pct"] = master.total_turnover_pct
+    master["selected"] = master.CASE_QUALIFIES.astype(bool)
+    master["reverse_candidate"] = master.negative_reverse_candidate.astype(bool)
 
     if research.exists():
         shutil.rmtree(research)
@@ -153,8 +169,12 @@ def main() -> int:
 
     detail_columns = [
         "strategy_id", "semantic_group_id", "source_origin", "representative_strategy_id",
-        "symbol", "timeframe", "Return", "Sharpe", "Signed_BE_bps", "Max_Drawdown",
-        "Persistent", "classification", "positive_case", "negative_reverse_candidate",
+        "symbol", "timeframe", "requested_start", "effective_start", "end",
+        "daily_observations", "effective_years", "Return", "Sharpe", "Signed_BE", "MaxDD",
+        "Avg_Daily_Turnover_pct", "Median_Daily_Turnover_pct",
+        "P90_Daily_Turnover_pct", "P95_Daily_Turnover_pct", "Max_Daily_Turnover_pct",
+        "Total_Turnover_raw", "Total_Turnover_pct", "Persistent", "classification",
+        "selected", "reverse_candidate", "positive_case", "negative_reverse_candidate",
         "total_turnover_raw", "total_turnover_pct", "mean_daily_turnover_raw",
         "mean_daily_turnover_pct", "median_daily_turnover_raw", "median_daily_turnover_pct",
         "P90_daily_turnover_pct", "P95_daily_turnover_pct", "max_daily_turnover_pct",
@@ -164,17 +184,24 @@ def main() -> int:
     ]
     atomic_csv(master[detail_columns], research / "multi_symbol_classification_master.csv")
 
-    symbol_summary = master.groupby(["symbol", "timeframe"], as_index=False).agg(
-        strategy_cases=("strategy_id", "size"),
-        strategy_ids=("strategy_id", "nunique"),
-        positive_cases=("positive_case", "sum"),
-        negative_reverse_candidates=("negative_reverse_candidate", "sum"),
+    symbol_summary = master.groupby("symbol", as_index=False).agg(
+        effective_start=("effective_start", "min"), end=("end", "max"),
+        min_daily_observations=("daily_observations", "min"),
+        max_effective_years=("effective_years", "max"),
+        eligible_strategies=("strategy_id", "nunique"), logical_cases=("strategy_id", "size"),
+        selected_cases=("selected", "sum"),
+        reverse_candidate_cases=("reverse_candidate", "sum"),
         median_Return=("Return", "median"), median_Sharpe=("Sharpe", "median"),
-        median_Signed_BE_bps=("Signed_BE_bps", "median"),
-        mean_Avg_Daily_Turnover_pct=("mean_daily_turnover_pct", "mean"),
-        median_Avg_Daily_Turnover_pct=("mean_daily_turnover_pct", "median"),
-        median_Total_Turnover_pct=("total_turnover_pct", "median"),
+        median_Signed_BE=("Signed_BE", "median"),
+        median_Avg_Daily_Turnover_pct=("Avg_Daily_Turnover_pct", "median"),
+        median_MaxDD=("MaxDD", "median"),
     )
+    selected_counts = (
+        master.loc[master.selected].groupby("symbol").strategy_id.nunique()
+        .rename("selected_strategy_ids")
+    )
+    symbol_summary = symbol_summary.merge(selected_counts, on="symbol", how="left")
+    symbol_summary["selected_strategy_ids"] = symbol_summary.selected_strategy_ids.fillna(0).astype(int)
     atomic_csv(symbol_summary, research / "symbol_summary.csv")
 
     cross = master.groupby(["strategy_id", "semantic_group_id", "source_origin", "timeframe"], as_index=False).agg(
@@ -187,6 +214,18 @@ def main() -> int:
         median_Total_Turnover_pct=("total_turnover_pct", "median"),
     )
     atomic_csv(cross, research / "cross_symbol_strategy_summary.csv")
+
+    repeatability = master.groupby(
+        ["strategy_id", "semantic_group_id", "source_origin", "timeframe"], as_index=False,
+    ).agg(
+        available_symbols=("symbol", "nunique"), selected_symbols=("selected", "sum"),
+        positive_Return_symbols=("Return", lambda value: int(value.gt(0).sum())),
+        positive_Sharpe_symbols=("Sharpe", lambda value: int(value.gt(0).sum())),
+        positive_BE_symbols=("Signed_BE", lambda value: int(value.gt(0).sum())),
+        reverse_candidate_symbols=("reverse_candidate", "sum"),
+        median_Avg_Daily_Turnover_pct=("Avg_Daily_Turnover_pct", "median"),
+    )
+    atomic_csv(repeatability, research / "multi_symbol_repeatability.csv")
 
     positives = master[master.positive_case].sort_values(
         ["Sharpe", "Signed_BE_bps", "mean_daily_turnover_pct"], ascending=[False, False, True]
@@ -235,7 +274,8 @@ def main() -> int:
     for name in [
         "multi_symbol_classification_master.csv", "symbol_summary.csv",
         "cross_symbol_strategy_summary.csv", "top_positive_cases.csv",
-        "strongest_negative_reverse_candidates.csv", "key_results.csv", "validation_summary.json",
+        "multi_symbol_repeatability.csv", "strongest_negative_reverse_candidates.csv",
+        "key_results.csv", "validation_summary.json",
     ]:
         shutil.copy2(research / name, delivery / name)
     if (research / "daily_turnover").exists():

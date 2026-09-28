@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -61,6 +62,9 @@ def avg_daily_turnover(review: Path, expected_total: float) -> tuple[float, int,
 
 
 def git_commit(repo: Path) -> str:
+    override = os.environ.get("CODE_COMMIT_OVERRIDE")
+    if override:
+        return override
     executable = which("git")
     if executable is None:
         raise RuntimeError("git executable unavailable")
