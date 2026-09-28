@@ -63,14 +63,17 @@ def main() -> int:
         target_notional=float(config["account"]["target_notional"]),
         fee_rate=float(config["fees"]["maker_rate"]), record_market_data=False,
     )
-    rows = []
+    replayed_events = 0
     for symbol_dir in sorted((live_root / "market_data").glob("symbol=*")):
         for path in sorted(symbol_dir.rglob("events.jsonl")):
-            rows.extend(json.loads(line) for line in path.read_text().splitlines() if line)
-    # Per-symbol append order is authoritative; symbols are isolated portfolios.
-    for symbol in sorted({str(row["payload"]["instrument_id"]).split("-PERP", 1)[0] for row in rows}):
-        for row in (item for item in rows if str(item["payload"]["instrument_id"]).startswith(symbol)):
-            orchestrator.on_event(load_event(row))
+            # Stream rather than materializing a full day of quotes/trades in
+            # RAM.  A worker records exactly one symbol in authoritative
+            # append order, and date partitions are lexically chronological.
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        orchestrator.on_event(load_event(json.loads(line)))
+                        replayed_events += 1
     live_summary = pd.read_csv(live_root / "experiment_summary.csv").iloc[0]
     orchestrator.flush(int(live_summary.ended_ns))
     orchestrator.write_outputs(int(live_summary.started_ns), int(live_summary.ended_ns), "replay")
@@ -90,7 +93,11 @@ def main() -> int:
     pd.DataFrame(mismatches, columns=["experiment_candidate_id", "field"]).to_csv(
         live_root / "replay_validation.csv", index=False
     )
-    result = {"status": "PASSED" if not mismatches else "BLOCKED", "mismatch_count": len(mismatches)}
+    result = {
+        "status": "PASSED" if not mismatches else "BLOCKED",
+        "mismatch_count": len(mismatches),
+        "replayed_events": replayed_events,
+    }
     (replay_root / "replay_validation.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
     return 0 if not mismatches else 2

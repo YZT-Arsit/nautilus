@@ -194,7 +194,6 @@ def main() -> int:
                 pass
             now = time.monotonic()
             max_backlog = max(max_backlog, event_queue.qsize())
-            orchestrator.flush(time.time_ns())
             if now - last_heartbeat >= 10:
                 last_heartbeat = now
                 heartbeat = {
@@ -213,6 +212,7 @@ def main() -> int:
     while not event_queue.empty():
         orchestrator.on_event(event_queue.get_nowait())
     ended_ns = time.time_ns()
+    orchestrator.flush(ended_ns)
     summary = orchestrator.write_outputs(started_ns, ended_ns, args.phase)
     orchestrator.recorder.close()
     summary.update({"max_queue_backlog": max_backlog, "worker_errors": worker_errors, "reconnects": reconnects})

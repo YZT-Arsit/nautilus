@@ -96,6 +96,7 @@ class CausalBarAggregator:
         self._prices: list[float] = []
         self._volume = 0.0
         self._count = 0
+        self._last_emitted_start_ns: int | None = None
 
     def _completed(self) -> BarEvent:
         assert self._start_ns is not None
@@ -112,10 +113,13 @@ class CausalBarAggregator:
             return []
         bucket = event.event_time_ns // self.interval_ns * self.interval_ns
         completed: list[BarEvent] = []
+        if self._last_emitted_start_ns is not None and bucket <= self._last_emitted_start_ns:
+            return completed
         if self._start_ns is None:
             self._start_ns = bucket
         elif bucket > self._start_ns:
             completed.append(self._completed())
+            self._last_emitted_start_ns = self._start_ns
             self._start_ns = bucket
             self._prices = []
             self._volume = 0.0
@@ -133,6 +137,7 @@ class CausalBarAggregator:
         if watermark_ns < self._start_ns + self.interval_ns:
             return []
         bar = self._completed()
+        self._last_emitted_start_ns = self._start_ns
         self._start_ns = None
         self._prices = []
         self._volume = 0.0
@@ -279,6 +284,7 @@ class PaperFill:
     quantity: float
     price: float
     fee: float
+    order_id: str = ""
 
 
 class PaperAccount:
@@ -409,6 +415,8 @@ class MakerPaperExecutor:
         self.unrepresentable_trade_count = 0
         self.orders: list[Any] = []
         self.fills: list[PaperFill] = []
+        self.order_submitted_ns: dict[str, int] = {}
+        self.first_fill_latency_ns: dict[str, int] = {}
 
     def on_quote(self, quote: QuoteEvent) -> None:
         self.latest_quote = quote
@@ -459,6 +467,7 @@ class MakerPaperExecutor:
             side=side, price=price, quantity=quantity, post_only=True, client_order_id=order_id,
         )
         self.orders.append(self.order)
+        self.order_submitted_ns[str(self.order.client_order_id)] = int(decision_time_ns)
         self.orders_submitted += 1
         self._sync_fills()
 
@@ -467,16 +476,20 @@ class MakerPaperExecutor:
 
         native = self.harness.events(OrderFilled)
         for event in native[self._fill_cursor :]:
+            order_id = str(event.client_order_id)
             side = str(event.order_side.name)
             quantity = float(str(event.last_qty))
             price = float(str(event.last_px))
             fill = PaperFill(
                 fill_id=deterministic_event_id("fill", str(event.trade_id), str(event.client_order_id)),
                 event_time_ns=int(event.ts_event), side=side,
-                quantity=quantity, price=price, fee=0.0,
+                quantity=quantity, price=price, fee=0.0, order_id=order_id,
             )
             if self.account.apply_fill(fill):
                 self.fills.append(fill)
+                submitted = self.order_submitted_ns.get(order_id)
+                if submitted is not None and order_id not in self.first_fill_latency_ns:
+                    self.first_fill_latency_ns[order_id] = max(0, int(event.ts_event) - submitted)
         self._fill_cursor = len(native)
 
 

@@ -15,6 +15,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--experiment", type=Path, required=True)
+    parser.add_argument("--code-commit")
     args = parser.parse_args()
     freeze_path = args.experiment / "manifest/paper_experiment_freeze.json"
     freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
@@ -29,7 +30,7 @@ def main() -> None:
     path = args.experiment / "manifest/paper_trading_v1.resolved.yaml"
     path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     freeze["paper_config_hash"] = hashlib.sha256(path.read_bytes()).hexdigest()
-    freeze["code_commit"] = str(freeze.get("code_commit", "")).strip()
+    freeze["code_commit"] = str(args.code_commit or freeze.get("code_commit", "")).strip()
     freeze_path.write_text(json.dumps(freeze, indent=2) + "\n", encoding="utf-8")
 
 

@@ -17,6 +17,22 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _concat_worker_csv(phase_root: Path, symbols: list[str], name: str) -> pd.DataFrame:
+    frames = []
+    for symbol in symbols:
+        path = phase_root / "workers" / symbol / name
+        if path.exists():
+            try:
+                frames.append(pd.read_csv(path))
+            except pd.errors.EmptyDataError:
+                pass
+    frame = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    destination = phase_root / name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(destination, index=False)
+    return frame
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=ROOT)
@@ -76,10 +92,40 @@ def main() -> int:
         "first_tick_fills": int(sum(v["summary"].get("first_tick_fills", 0) for v in validations)),
         "maker_orders": int(sum(v["summary"].get("maker_orders", 0) for v in validations)),
         "maker_fills": int(sum(v["summary"].get("maker_fills", 0) for v in validations)),
+        "maker_full_fill_orders": int(sum(v["summary"].get("maker_full_fill_orders", 0) for v in validations)),
+        "maker_partial_fill_orders": int(sum(v["summary"].get("maker_partial_fill_orders", 0) for v in validations)),
+        "maker_zero_fill_orders": int(sum(v["summary"].get("maker_zero_fill_orders", 0) for v in validations)),
+        "maker_requested_quantity": float(sum(v["summary"].get("maker_requested_quantity", 0.0) for v in validations)),
+        "maker_filled_quantity": float(sum(v["summary"].get("maker_filled_quantity", 0.0) for v in validations)),
         "worker_errors": int(sum(len(v["summary"].get("worker_errors", [])) for v in validations)),
         "reconnects": int(sum(sum(v["summary"].get("reconnects", {}).values()) for v in validations)),
     }
+    cases = _concat_worker_csv(phase_root, symbols, "strategy_case_summary.csv")
+    daily = _concat_worker_csv(phase_root, symbols, "daily_turnover.csv")
+    quality = _concat_worker_csv(phase_root, symbols, "data_quality_summary.csv")
+    orders = _concat_worker_csv(phase_root, symbols, "orders/simulated_orders.csv")
+    fills = _concat_worker_csv(phase_root, symbols, "fills/simulated_fills.csv")
+    _concat_worker_csv(phase_root, symbols, "funding/funding_summary.csv")
+    _concat_worker_csv(phase_root, symbols, "fees/fee_summary.csv")
+    aggregate["strategy_case_rows"] = int(len(cases))
+    aggregate["daily_turnover_rows"] = int(len(daily))
+    aggregate["simulated_order_rows"] = int(len(orders))
+    aggregate["simulated_fill_rows"] = int(len(fills))
+    aggregate["data_quality_rows"] = int(len(quality))
+    aggregate["maker_quantity_fill_ratio"] = (
+        aggregate["maker_filled_quantity"] / aggregate["maker_requested_quantity"]
+        if aggregate["maker_requested_quantity"] else None
+    )
+    complete_daily = daily.loc[daily.complete_utc_day.astype(bool)] if "complete_utc_day" in daily else pd.DataFrame()
+    aggregate["avg_daily_turnover_pct"] = (
+        float(complete_daily.daily_turnover_pct.mean()) if len(complete_daily) else None
+    )
+    pd.DataFrame([aggregate]).to_csv(phase_root / "experiment_summary.csv", index=False)
+    pd.DataFrame([{key: value for key, value in aggregate.items() if not isinstance(value, (dict, list))}]).to_csv(
+        phase_root / "execution_summary.csv", index=False
+    )
     (phase_root / "stage_validation.json").write_text(json.dumps(aggregate, indent=2) + "\n")
+    (phase_root / "dry_run_validation.json").write_text(json.dumps(aggregate, indent=2) + "\n")
     print(json.dumps(aggregate, indent=2))
     return 0 if aggregate["status"] == "PASSED" else 2
 

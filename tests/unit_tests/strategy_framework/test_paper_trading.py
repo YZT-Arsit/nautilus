@@ -59,6 +59,15 @@ def test_causal_bar_aggregation_uses_only_completed_intervals(minutes: int) -> N
     assert bars[0].close == 100.0
 
 
+def test_causal_bar_aggregation_never_reopens_an_emitted_bucket() -> None:
+    builder = CausalBarAggregator(IID, 1)
+    builder.on_trade(trade(5 * NS, 100.0, tid=1))
+    assert len(builder.flush(60 * NS)) == 1
+    assert builder.on_trade(trade(30 * NS, 101.0, tid=2)) == []
+    assert builder.flush(60 * NS) == []
+    assert builder.on_trade(trade(65 * NS, 102.0, tid=3)) == []
+
+
 def test_first_tick_does_not_fill_before_decision() -> None:
     account = PaperAccount(100_000, 100_000, 0.0)
     executor = FirstTickShadowExecutor(account, IID)

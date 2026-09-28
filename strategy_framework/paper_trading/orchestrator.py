@@ -118,6 +118,11 @@ class CandidatePortfolio:
         self.last_price = float("nan")
         self.decision_count = 0
         self.funding_count = 0
+        self.effective_target = 0.0
+        self.maker_target_error_sum = 0.0
+        self.maker_target_samples = 0
+        self.maker_at_target_samples = 0
+        self.funding_records: list[dict[str, Any]] = []
 
     def on_quote(self, event: QuoteEvent) -> None:
         self.latest_quote = event
@@ -132,11 +137,20 @@ class CandidatePortfolio:
         before_maker = len(self.maker.fills) if self.maker else 0
         if self.maker is not None:
             self.maker.on_trade(event)
+        intended_notional = self.effective_target * self.target_notional
+        actual_notional = self.maker_account.position_qty * float(event.price)
+        error = abs(actual_notional - intended_notional) / self.target_notional
+        self.maker_target_error_sum += error
+        self.maker_target_samples += 1
+        tolerance = max(self.instrument_filter.step_size * float(event.price) / self.target_notional, 1e-12)
+        if error <= tolerance:
+            self.maker_at_target_samples += 1
         return len(self.first.fills) - before_first, (len(self.maker.fills) - before_maker if self.maker else 0)
 
     def on_target(self, ts: int, target: float) -> None:
         self.decision_count += 1
         effective = -target if self.variant == "STRICT_REVERSE" else target
+        self.effective_target = effective
         self.first.on_target(ts, effective)
         if self.maker is None and self.latest_quote is not None and not math.isclose(effective, 0.0):
             from strategy_framework.backends.nautilus_maker import NativeMakerHarness
@@ -153,8 +167,19 @@ class CandidatePortfolio:
     def on_funding(self, event: FundingRateEvent) -> None:
         mark = float(event.mark_price if event.mark_price is not None else self.last_price)
         if not math.isnan(mark):
-            self.first_account.apply_funding(event, mark)
-            self.maker_account.apply_funding(event, mark)
+            first_position = self.first_account.position_qty
+            maker_position = self.maker_account.position_qty
+            first_payment = self.first_account.apply_funding(event, mark)
+            maker_payment = self.maker_account.apply_funding(event, mark)
+            self.funding_records.append({
+                "event_time_ns": int(event.event_time_ns),
+                "funding_rate": float(event.funding_rate),
+                "mark_price": mark,
+                "FIRST_TICK_position_qty": first_position,
+                "FIRST_TICK_funding_payment": first_payment,
+                "MAKER_position_qty": maker_position,
+                "MAKER_funding_payment": maker_payment,
+            })
             self.funding_count += 1
 
     def summary(self) -> dict[str, Any]:
@@ -165,6 +190,7 @@ class CandidatePortfolio:
         zero = sum(float(str(getattr(o, "filled_qty", 0))) == 0 for o in maker_orders)
         requested = sum(float(str(getattr(o, "quantity", 0))) for o in maker_orders)
         filled = sum(float(str(getattr(o, "filled_qty", 0))) for o in maker_orders)
+        latencies = list(self.maker.first_fill_latency_ns.values()) if self.maker else []
         return {
             "experiment_candidate_id": self.candidate_id,
             "symbol": self.symbol, "direction_variant": self.variant,
@@ -175,7 +201,17 @@ class CandidatePortfolio:
             "MAKER_orders": len(maker_orders), "MAKER_fills": len(self.maker.fills) if self.maker else 0,
             "MAKER_full_fill_orders": full, "MAKER_partial_fill_orders": partial,
             "MAKER_zero_fill_orders": zero,
+            "MAKER_requested_quantity": requested,
+            "MAKER_filled_quantity": filled,
             "MAKER_quantity_fill_ratio": filled / requested if requested else float("nan"),
+            "MAKER_median_first_fill_latency_ms": float(pd.Series(latencies).median() / 1e6) if latencies else float("nan"),
+            "MAKER_P95_first_fill_latency_ms": float(pd.Series(latencies).quantile(0.95) / 1e6) if latencies else float("nan"),
+            "MAKER_mean_target_position_error": (
+                self.maker_target_error_sum / self.maker_target_samples if self.maker_target_samples else float("nan")
+            ),
+            "MAKER_percent_time_at_target": (
+                self.maker_at_target_samples / self.maker_target_samples if self.maker_target_samples else float("nan")
+            ),
             "MAKER_cancels": self.maker.cancels if self.maker else 0,
             "MAKER_unrepresentable_trade_count": self.maker.unrepresentable_trade_count if self.maker else 0,
             "MAKER_Return": (self.maker_account.equity(mark) / self.initial_capital - 1.0) if mark else 0.0,
@@ -292,15 +328,18 @@ class PaperOrchestrator:
                 portfolio.on_quote(event)
         elif isinstance(event, TradeEvent):
             self.counts["trade_events"] += 1
-            for portfolio in self.by_symbol.get(symbol, ()):
-                first, maker = portfolio.on_trade(event)
-                self.counts["first_tick_fills"] += first
-                self.counts["maker_fills"] += maker
+            # Close prior buckets and freeze decisions before applying this
+            # first trade of the new bucket.  The same trade is then eligible
+            # for FIRST_TICK_SHADOW, matching the historical boundary rule.
             for (builder_symbol, timeframe), builder in self.builders.items():
                 if builder_symbol != symbol:
                     continue
                 for bar in builder.on_trade(event):
                     self._on_bar(symbol, timeframe, bar)
+            for portfolio in self.by_symbol.get(symbol, ()):
+                first, maker = portfolio.on_trade(event)
+                self.counts["first_tick_fills"] += first
+                self.counts["maker_fills"] += maker
         elif isinstance(event, FundingRateEvent):
             key = (symbol, int(event.event_time_ns))
             if event.event_time_ns <= time.time_ns() and key not in self.latest_settled_funding:
@@ -331,18 +370,131 @@ class PaperOrchestrator:
                 self.counts["strategy_decisions"] += 1
 
     def write_outputs(self, started_ns: int, ended_ns: int, phase: str) -> dict[str, Any]:
+        self.experiment.mkdir(parents=True, exist_ok=True)
+        (self.experiment / "health").mkdir(parents=True, exist_ok=True)
         rows = [portfolio.summary() for portfolio in self.portfolios.values()]
         frame = pd.DataFrame(rows)
         frame.to_csv(self.experiment / "strategy_case_summary.csv", index=False)
+        daily_rows: list[dict[str, Any]] = []
+        order_rows: list[dict[str, Any]] = []
+        fill_rows: list[dict[str, Any]] = []
+        funding_rows: list[dict[str, Any]] = []
+        fee_rows: list[dict[str, Any]] = []
+        state_rows: dict[str, Any] = {}
+        start_day = pd.Timestamp(started_ns, unit="ns", tz="UTC").normalize()
+        end_day = pd.Timestamp(ended_ns, unit="ns", tz="UTC").normalize()
+        days = [day.date().isoformat() for day in pd.date_range(start_day, end_day, freq="D")]
+        for portfolio in self.portfolios.values():
+            for mode, account in (
+                ("FIRST_TICK_SHADOW", portfolio.first_account),
+                ("L1_BBO_PAPER_MAKER", portfolio.maker_account),
+            ):
+                for day in days:
+                    raw = float(account.daily_turnover.get(day, 0.0))
+                    daily_rows.append({
+                        "experiment_candidate_id": portfolio.candidate_id,
+                        "symbol": portfolio.symbol,
+                        "direction_variant": portfolio.variant,
+                        "execution_mode": mode,
+                        "utc_date": day,
+                        "complete_utc_day": bool(
+                            pd.Timestamp(day, tz="UTC").value >= started_ns
+                            and (pd.Timestamp(day, tz="UTC") + pd.Timedelta(days=1)).value <= ended_ns
+                        ),
+                        "daily_turnover_raw": raw,
+                        "daily_turnover_pct": raw * 100.0,
+                    })
+                funding_rows.append({
+                    "experiment_candidate_id": portfolio.candidate_id,
+                    "execution_mode": mode,
+                    "funding_event_count": portfolio.funding_count,
+                    "funding_pnl": account.funding_pnl,
+                })
+                fee_rows.append({
+                    "experiment_candidate_id": portfolio.candidate_id,
+                    "execution_mode": mode,
+                    "configured_fee_rate": account.fee_rate,
+                    "fee_total": account.fees,
+                })
+            for record in portfolio.funding_records:
+                funding_rows.append({
+                    "experiment_candidate_id": portfolio.candidate_id,
+                    "execution_mode": "EVENT_DETAIL",
+                    "funding_event_count": 1,
+                    "funding_pnl": (
+                        record["FIRST_TICK_funding_payment"] + record["MAKER_funding_payment"]
+                    ),
+                    **record,
+                })
+            for mode, fills in (
+                ("FIRST_TICK_SHADOW", portfolio.first.fills),
+                ("L1_BBO_PAPER_MAKER", portfolio.maker.fills if portfolio.maker else []),
+            ):
+                for fill in fills:
+                    fill_rows.append({
+                        "experiment_candidate_id": portfolio.candidate_id,
+                        "symbol": portfolio.symbol,
+                        "direction_variant": portfolio.variant,
+                        "execution_mode": mode,
+                        "fee_rate": (
+                            portfolio.first_account.fee_rate
+                            if mode == "FIRST_TICK_SHADOW" else portfolio.maker_account.fee_rate
+                        ),
+                        "fee_config_id": "GROSS_ZERO_FEE_V1",
+                        **asdict(fill),
+                    })
+            if portfolio.maker is not None:
+                for index, order in enumerate(portfolio.maker.orders):
+                    order_rows.append({
+                        "experiment_candidate_id": portfolio.candidate_id,
+                        "symbol": portfolio.symbol,
+                        "direction_variant": portfolio.variant,
+                        "order_index": index,
+                        "client_order_id": str(getattr(order, "client_order_id", "")),
+                        "side": str(getattr(getattr(order, "side", None), "name", getattr(order, "side", ""))),
+                        "quantity": float(str(getattr(order, "quantity", 0))),
+                        "filled_quantity": float(str(getattr(order, "filled_qty", 0))),
+                        "price": float(str(getattr(order, "price", 0))),
+                        "status": str(getattr(getattr(order, "status", None), "name", getattr(order, "status", ""))),
+                        "post_only": True,
+                        "local_simulated": True,
+                    })
+            state_rows[portfolio.candidate_id] = {
+                "FIRST_TICK_SHADOW": portfolio.first_account.snapshot(),
+                "L1_BBO_PAPER_MAKER": portfolio.maker_account.snapshot(),
+            }
+        for directory in ("orders", "fills", "funding", "fees"):
+            (self.experiment / directory).mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(daily_rows).to_csv(self.experiment / "daily_turnover.csv", index=False)
+        pd.DataFrame(order_rows).to_csv(self.experiment / "orders" / "simulated_orders.csv", index=False)
+        pd.DataFrame(fill_rows).to_csv(self.experiment / "fills" / "simulated_fills.csv", index=False)
+        pd.DataFrame(funding_rows).to_csv(self.experiment / "funding" / "funding_summary.csv", index=False)
+        pd.DataFrame(fee_rows).to_csv(self.experiment / "fees" / "fee_summary.csv", index=False)
+        (self.experiment / "strategy_state").mkdir(parents=True, exist_ok=True)
+        (self.experiment / "strategy_state" / "final_account_state.json").write_text(
+            json.dumps(state_rows, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
         execution = {
             **dict(self.counts),
             "maker_orders": int(frame.MAKER_orders.sum()),
             "maker_full_fill_orders": int(frame.MAKER_full_fill_orders.sum()),
             "maker_partial_fill_orders": int(frame.MAKER_partial_fill_orders.sum()),
             "maker_zero_fill_orders": int(frame.MAKER_zero_fill_orders.sum()),
-            "maker_quantity_fill_ratio": float(
-                frame.MAKER_quantity_fill_ratio.dropna().mean()
-            ) if frame.MAKER_quantity_fill_ratio.notna().any() else None,
+            "maker_requested_quantity": float(frame.MAKER_requested_quantity.sum()),
+            "maker_filled_quantity": float(frame.MAKER_filled_quantity.sum()),
+            "maker_quantity_fill_ratio": (
+                float(frame.MAKER_filled_quantity.sum() / frame.MAKER_requested_quantity.sum())
+                if frame.MAKER_requested_quantity.sum() else None
+            ),
+            "maker_median_first_fill_latency_ms": (
+                float(frame.MAKER_median_first_fill_latency_ms.dropna().median())
+                if frame.MAKER_median_first_fill_latency_ms.notna().any() else None
+            ),
+            "maker_P95_first_fill_latency_ms": (
+                float(frame.MAKER_P95_first_fill_latency_ms.dropna().quantile(0.95))
+                if frame.MAKER_P95_first_fill_latency_ms.notna().any() else None
+            ),
         }
         pd.DataFrame([execution]).to_csv(self.experiment / "execution_summary.csv", index=False)
         data_rows = self.recorder.manifest()
