@@ -189,8 +189,11 @@ def _performance(
 ) -> pd.DataFrame:
     ff = fills.loc[fills.execution_mode.eq(mode)].sort_values("event_time_ns").reset_index(drop=True)
     funding_column = "FIRST_TICK_funding_payment" if mode == DIRECT else "MAKER_funding_payment"
-    fund = funding.loc[funding.execution_mode.eq("EVENT_DETAIL")].copy()
-    fund = fund.loc[fund[funding_column].notna()].sort_values("event_time_ns").reset_index(drop=True)
+    if funding_column in funding.columns and "event_time_ns" in funding.columns:
+        fund = funding.loc[funding.execution_mode.eq("EVENT_DETAIL")].copy()
+        fund = fund.loc[fund[funding_column].notna()].sort_values("event_time_ns").reset_index(drop=True)
+    else:
+        fund = pd.DataFrame(columns=["event_time_ns", funding_column])
     decisions = decisions.sort_values("event_time_ns").reset_index(drop=True)
     cash, position, turnover, target = initial_capital, 0.0, 0.0, 0.0
     fi = fu = di = 0
@@ -316,6 +319,8 @@ def _finalize(source: Path, output: Path) -> None:  # noqa: C901
                 str(source),
                 "--phase-root",
                 str(worker),
+                "--candidate-id",
+                CANDIDATE_ID,
             ],
             cwd=repo,
             check=True,
@@ -436,9 +441,13 @@ def _finalize(source: Path, output: Path) -> None:  # noqa: C901
     source_summary = validation.get("summary", {})
     worker_errors = source_summary.get("worker_errors", [])
     reconnects = source_summary.get("reconnects", {})
-    data_gaps = len(worker_errors) if isinstance(worker_errors, list) else int(worker_errors or 0)
+    duration_hours = float(source_summary.get("duration_hours", 0.0))
+    expected_1m_bars = max(math.floor(duration_hours * 60.0), 0)
+    observed_1m_bars = int(source_summary.get("bars_1m", 0))
+    data_gaps = max(expected_1m_bars - observed_1m_bars, 0)
+    data_continuity_passed = data_gaps == 0
     final = {
-        "status": "PASSED" if demo_passed else "PARTIAL",
+        "status": "PASSED" if data_continuity_passed else "BLOCKED",
         "independent_binance_demo_accounts_available": False,
         "two_api_keys_same_account": False,
         "exchange_native_simultaneous_ab": "UNAVAILABLE",
@@ -449,6 +458,10 @@ def _finalize(source: Path, output: Path) -> None:  # noqa: C901
         "source_validation": validation,
         "replay_mismatches": len(replay_mismatches),
         "data_gaps": data_gaps,
+        "data_continuity_passed": data_continuity_passed,
+        "expected_1m_bars": expected_1m_bars,
+        "observed_1m_bars": observed_1m_bars,
+        "worker_error_records": len(worker_errors) if isinstance(worker_errors, list) else int(worker_errors or 0),
         "reconnects": reconnects,
         "accounting_invariant_failures": len(accounting_failures),
         "direct": mode_summaries[DIRECT],
@@ -457,6 +470,7 @@ def _finalize(source: Path, output: Path) -> None:  # noqa: C901
         "seven_day_run": "NOT_STARTED",
         "production_exchange_orders": 0,
         "existing_production_data_paper": "UNCHANGED_COMPLETED",
+        "demo_engineering": "WAITING_FOR_CREDENTIALS" if not demo_passed else "PASSED",
         "result": str(output),
     }
     (output / "isolation_resolution_status.json").write_text(json.dumps(final, indent=2) + "\n")

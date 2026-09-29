@@ -38,6 +38,7 @@ def _compare_csv(
     replay_path: Path,
     artifact: str,
     mismatches: list[dict[str, str]],
+    candidate_ids: set[str],
 ) -> None:
     """Compare deterministic CSV artifacts with tight numeric tolerance."""
     if not live_path.exists() or not replay_path.exists():
@@ -50,6 +51,10 @@ def _compare_csv(
         return
     live = pd.read_csv(live_path)
     replay = pd.read_csv(replay_path)
+    if "experiment_candidate_id" in live.columns:
+        live = live[live.experiment_candidate_id.astype(str).isin(candidate_ids)].reset_index(drop=True)
+    if "experiment_candidate_id" in replay.columns:
+        replay = replay[replay.experiment_candidate_id.astype(str).isin(candidate_ids)].reset_index(drop=True)
     if list(live.columns) != list(replay.columns):
         mismatches.append({
             "artifact": artifact,
@@ -111,6 +116,31 @@ def _compare_bytes(
         })
 
 
+def _compare_account_state(
+    live_path: Path,
+    replay_path: Path,
+    candidate_ids: set[str],
+    mismatches: list[dict[str, str]],
+) -> None:
+    artifact = "positions_and_account_state"
+    if not live_path.exists() or not replay_path.exists():
+        mismatches.append({
+            "artifact": artifact,
+            "candidate_id": "",
+            "field": "FILE_EXISTS",
+            "detail": f"live={live_path.exists()},replay={replay_path.exists()}",
+        })
+        return
+    live = json.loads(live_path.read_text())
+    replay = json.loads(replay_path.read_text())
+    for candidate in sorted(candidate_ids):
+        if live.get(candidate) != replay.get(candidate):
+            mismatches.append({
+                "artifact": artifact,
+                "candidate_id": candidate,
+                "field": "ACCOUNT_STATE",
+                "detail": "canonical JSON values differ",
+            })
 def load_event(row: dict):
     payload = dict(row["payload"])
     cls = EVENT_TYPES[payload.pop("event_class")]
@@ -118,11 +148,12 @@ def load_event(row: dict):
     return cls(**payload)
 
 
-def main() -> int:
+def main() -> int:  # noqa: C901
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=ROOT)
     parser.add_argument("--experiment", type=Path, required=True)
     parser.add_argument("--phase-root", type=Path)
+    parser.add_argument("--candidate-id", action="append", default=[])
     args = parser.parse_args()
     repo, experiment = args.repo.resolve(), args.experiment.resolve()
     live_root = (args.phase_root or experiment).resolve()
@@ -133,7 +164,14 @@ def main() -> int:
     manifest_path = experiment / "manifest/paper_candidate_manifest_9symbols.csv"
     manifest = pd.read_csv(manifest_path)
     live_cases = pd.read_csv(live_root / "strategy_case_summary.csv")
+    if args.candidate_id:
+        live_cases = live_cases[
+            live_cases.experiment_candidate_id.astype(str).isin(set(args.candidate_id))
+        ].copy()
+        if live_cases.empty:
+            raise RuntimeError("requested replay candidate was not present in live results")
     manifest = manifest[manifest.experiment_candidate_id.isin(live_cases.experiment_candidate_id)].copy()
+    candidate_ids = set(manifest.experiment_candidate_id.astype(str))
     exchange_info = json.loads((experiment / "manifest/instrument_metadata/binance_usdm_exchange_info.json").read_text())
     warmup = {}
     for path in (live_root / "warmup").glob("*.jsonl"):
@@ -174,11 +212,17 @@ def main() -> int:
         "fees": "fees/fee_summary.csv",
     }
     for artifact, relative in csv_artifacts.items():
-        _compare_csv(live_root / relative, replay_root / relative, artifact, mismatches)
-    _compare_bytes(
+        _compare_csv(
+            live_root / relative,
+            replay_root / relative,
+            artifact,
+            mismatches,
+            candidate_ids,
+        )
+    _compare_account_state(
         live_root / "strategy_state/final_account_state.json",
         replay_root / "strategy_state/final_account_state.json",
-        "positions_and_account_state",
+        candidate_ids,
         mismatches,
     )
     for candidate in manifest.experiment_candidate_id.astype(str):
