@@ -127,18 +127,29 @@ class BinancePublicWebSocketSource:
     def url(self) -> str:
         return self._url
 
-    def _recv_loop(self, *, max_messages: int, timeout_seconds: float):
+    def _recv_loop(
+        self,
+        *,
+        max_messages: int,
+        timeout_seconds: float,
+        receive_timeout_seconds: float | None = None,
+        stop_event: Any | None = None,
+    ):
         """Yield raw message strings, bounded by count + timeout; always closes.
 
         Returns (via ``StopIteration.value``) the disconnect reason.
         """
         start = self._clock()
         deadline = start + int(timeout_seconds * 1_000_000_000)
-        transport = self._transport_factory(self._url, timeout_seconds=timeout_seconds)
+        receive_timeout = timeout_seconds if receive_timeout_seconds is None else receive_timeout_seconds
+        transport = self._transport_factory(self._url, timeout_seconds=receive_timeout)
         reason = "max_messages"
         raw = 0
         try:
             while raw < max_messages:
+                if stop_event is not None and stop_event.is_set():
+                    reason = "stop_requested"
+                    return reason
                 if self._clock() >= deadline:
                     reason = "timeout"
                     return reason
@@ -160,13 +171,32 @@ class BinancePublicWebSocketSource:
         finally:
             transport.close()
 
-    def iter_messages(self, *, max_messages: int, timeout_seconds: float) -> Iterator[dict]:
+    def iter_messages(
+        self,
+        *,
+        max_messages: int,
+        timeout_seconds: float,
+        receive_timeout_seconds: float | None = None,
+        stop_event: Any | None = None,
+    ) -> Iterator[dict]:
         """Yield raw parsed message dicts (bounded)."""
-        gen = self._recv_loop(max_messages=max_messages, timeout_seconds=timeout_seconds)
+        gen = self._recv_loop(
+            max_messages=max_messages,
+            timeout_seconds=timeout_seconds,
+            receive_timeout_seconds=receive_timeout_seconds,
+            stop_event=stop_event,
+        )
         for raw in gen:
             yield json.loads(raw)
 
-    def iter_events(self, *, max_messages: int, timeout_seconds: float) -> Iterator[Any]:
+    def iter_events(
+        self,
+        *,
+        max_messages: int,
+        timeout_seconds: float,
+        receive_timeout_seconds: float | None = None,
+        stop_event: Any | None = None,
+    ) -> Iterator[Any]:
         """Yield normalized :class:`TradeEvent`/:class:`QuoteEvent` (bounded).
 
         This is the streaming counterpart to :meth:`run_until` and the shape the
@@ -174,7 +204,12 @@ class BinancePublicWebSocketSource:
         connect, normalize each message, drop unrecognised frames, and always
         close the transport (via ``_recv_loop``'s ``finally``).
         """
-        gen = self._recv_loop(max_messages=max_messages, timeout_seconds=timeout_seconds)
+        gen = self._recv_loop(
+            max_messages=max_messages,
+            timeout_seconds=timeout_seconds,
+            receive_timeout_seconds=receive_timeout_seconds,
+            stop_event=stop_event,
+        )
         try:
             for raw in gen:
                 ev = self._normalizer.normalize(json.loads(raw), receive_time_ns=self._clock())

@@ -95,12 +95,22 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, default=ROOT)
     parser.add_argument("--experiment", type=Path, required=True)
-    parser.add_argument("--phase", choices=["subset_smoke", "full_manifest_smoke", "authoritative_24h"], required=True)
+    parser.add_argument(
+        "--phase",
+        choices=["subset_smoke", "full_manifest_smoke", "continuity_test", "authoritative_24h"],
+        required=True,
+    )
     parser.add_argument("--duration-seconds", type=int, required=True)
     parser.add_argument("--subset-count", type=int, default=18)
     parser.add_argument("--symbols", nargs="+")
     parser.add_argument("--worker-id")
     parser.add_argument("--preflight-cache", type=Path)
+    parser.add_argument("--candidate-id")
+    parser.add_argument("--align-minute", action="store_true")
+    parser.add_argument("--expected-bars", type=int)
+    parser.add_argument("--quote-stale-seconds", type=float, default=10.0)
+    parser.add_argument("--trade-stale-seconds", type=float, default=10.0)
+    parser.add_argument("--freeze-start", action="store_true")
     args = parser.parse_args()
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
@@ -110,6 +120,10 @@ def main() -> int:
     if manifest_hash(manifest_path) != expected:
         raise RuntimeError("candidate manifest hash mismatch")
     manifest = pd.read_csv(manifest_path)
+    if args.candidate_id:
+        manifest = manifest.loc[manifest.experiment_candidate_id.eq(args.candidate_id)].copy()
+        if len(manifest) != 1:
+            raise RuntimeError(f"candidate-id must resolve to exactly one frozen row (got {len(manifest)})")
     if args.symbols:
         manifest = manifest[manifest.symbol.isin([s.upper() for s in args.symbols])].copy()
         if manifest.empty:
@@ -119,6 +133,8 @@ def main() -> int:
         run_root = experiment / "preflight/subset_smoke"
     elif args.phase == "full_manifest_smoke":
         active, run_root = manifest, experiment / "preflight/full_manifest_smoke"
+    elif args.phase == "authoritative_24h":
+        active, run_root = manifest, experiment
     else:
         active, run_root = manifest, experiment
     if args.worker_id:
@@ -169,31 +185,83 @@ def main() -> int:
     )
     event_queue: queue.Queue = queue.Queue(maxsize=250_000)
     stop = threading.Event()
+    reconnect_request = {symbol: threading.Event() for symbol in symbols}
+    feed_ready = threading.Event()
+    event_seen = {symbol: {"quote": False, "trade": False} for symbol in symbols}
+    last_receive_mono = {symbol: {"quote": None, "trade": None} for symbol in symbols}
+    worker_running = {symbol: False for symbol in symbols}
+    dropped_events = {symbol: 0 for symbol in symbols}
     worker_errors: list[dict] = []
     reconnects = {symbol: 0 for symbol in symbols}
-    deadline = time.monotonic() + args.duration_seconds
+    run_end_wall_ns = 0
 
     def worker(symbol: str) -> None:
         iid = f"{symbol}-PERP.BINANCE"
-        while not stop.is_set() and time.monotonic() < deadline:
-            remaining = max(1.0, min(60.0, deadline - time.monotonic()))
+        worker_running[symbol] = True
+        while not stop.is_set():
             source = BinancePublicWebSocketSource(
                 symbol, ("trade", "bookTicker", "markPrice@1s"),
                 base_url=PUBLIC_WS, instrument_id=iid,
             )
             try:
-                for event in source.iter_events(max_messages=1_000_000_000, timeout_seconds=remaining):
+                reconnect_request[symbol].clear()
+                for event in source.iter_events(
+                    max_messages=1_000_000_000,
+                    timeout_seconds=3_600.0,
+                    receive_timeout_seconds=5.0,
+                    stop_event=reconnect_request[symbol],
+                ):
                     if stop.is_set(): break
-                    event_queue.put(event, timeout=5)
+                    kind = str(event.event_type)
+                    if kind in {"quote", "trade"}:
+                        event_seen[symbol][kind] = True
+                        last_receive_mono[symbol][kind] = time.monotonic()
+                        if all(event_seen[symbol].values() for symbol in symbols):
+                            feed_ready.set()
+                    try:
+                        event_queue.put(event, timeout=5)
+                    except queue.Full:
+                        dropped_events[symbol] += 1
             except Exception as exc:  # reconnect public data only
-                reconnects[symbol] += 1
                 if len(worker_errors) < 1_000:
                     worker_errors.append({"symbol": symbol, "error": repr(exc), "time_ns": time.time_ns()})
-                time.sleep(min(5.0, max(0.1, deadline - time.monotonic())))
+                time.sleep(1.0)
+            finally:
+                reconnects[symbol] += 1
+        worker_running[symbol] = False
 
     threads = [threading.Thread(target=worker, args=(symbol,), daemon=True, name=f"feed-{symbol}") for symbol in symbols]
-    started_ns = time.time_ns()
-    if args.phase == "authoritative_24h" and not args.worker_id:
+    for thread in threads: thread.start()
+    preflight_deadline = time.monotonic() + 120.0
+    latest_preflight_event_ns = 0
+    while not feed_ready.is_set() and time.monotonic() < preflight_deadline:
+        try:
+            event = event_queue.get(timeout=1.0)
+            latest_preflight_event_ns = max(latest_preflight_event_ns, int(event.event_time_ns))
+        except queue.Empty:
+            pass
+    if not feed_ready.is_set():
+        stop.set()
+        raise RuntimeError("market-data preflight did not receive both quote and trade within 120 seconds")
+    if args.align_minute:
+        boundary_ns = ((latest_preflight_event_ns // 60_000_000_000) + 1) * 60_000_000_000
+        first_active_event = None
+        while first_active_event is None and time.monotonic() < preflight_deadline + 120.0:
+            try:
+                event = event_queue.get(timeout=1.0)
+                if int(event.event_time_ns) >= boundary_ns:
+                    first_active_event = event
+            except queue.Empty:
+                pass
+        if first_active_event is None:
+            stop.set()
+            raise RuntimeError("market-data stream did not cross the frozen UTC minute boundary")
+        started_ns = boundary_ns
+    else:
+        started_ns = time.time_ns()
+        first_active_event = None
+    run_end_wall_ns = started_ns + args.duration_seconds * 1_000_000_000
+    if args.phase == "authoritative_24h" and (not args.worker_id or args.freeze_start):
         freeze_path = experiment / "manifest/paper_experiment_freeze.json"
         freeze = json.loads(freeze_path.read_text())
         if freeze.get("forward_start_timestamp") is not None:
@@ -203,17 +271,48 @@ def main() -> int:
         temp = freeze_path.with_suffix(".json.tmp")
         temp.write_text(json.dumps(freeze, indent=2) + "\n")
         os.replace(temp, freeze_path)
-    for thread in threads: thread.start()
     max_backlog = 0
     last_heartbeat = 0.0
+    stale_incidents: list[dict] = []
+    unexpected_worker_deaths: list[dict] = []
+    minute_coverage: dict[int, dict[str, int]] = {}
+    reached_end_boundary = False
+    wall_safety_deadline = time.monotonic() + args.duration_seconds + 120.0
+
+    def process_event(event) -> None:
+        if event.event_time_ns < started_ns or event.event_time_ns >= run_end_wall_ns:
+            return
+        orchestrator.on_event(event)
+        minute = int(event.event_time_ns // 60_000_000_000 * 60_000_000_000)
+        row = minute_coverage.setdefault(minute, {"quote_count": 0, "trade_count": 0})
+        if event.event_type == "quote": row["quote_count"] += 1
+        elif event.event_type == "trade": row["trade_count"] += 1
+
     try:
-        while time.monotonic() < deadline:
+        if first_active_event is not None:
+            process_event(first_active_event)
+        while not reached_end_boundary and time.monotonic() < wall_safety_deadline:
             try:
                 event = event_queue.get(timeout=1.0)
-                orchestrator.on_event(event)
+                if event.event_time_ns >= run_end_wall_ns:
+                    reached_end_boundary = True
+                else:
+                    process_event(event)
             except queue.Empty:
                 pass
             now = time.monotonic()
+            for thread in threads:
+                if not thread.is_alive() and not any(row["worker"] == thread.name for row in unexpected_worker_deaths):
+                    unexpected_worker_deaths.append({"worker": thread.name, "time_ns": time.time_ns()})
+            for symbol in symbols:
+                for kind, threshold in (("quote", args.quote_stale_seconds), ("trade", args.trade_stale_seconds)):
+                    last = last_receive_mono[symbol][kind]
+                    if last is not None and now - last > threshold and not reconnect_request[symbol].is_set():
+                        stale_incidents.append({
+                            "time_ns": time.time_ns(), "symbol": symbol, "stream": kind,
+                            "age_seconds": now - last, "threshold_seconds": threshold,
+                        })
+                        reconnect_request[symbol].set()
             max_backlog = max(max_backlog, event_queue.qsize())
             if now - last_heartbeat >= 10:
                 last_heartbeat = now
@@ -221,7 +320,8 @@ def main() -> int:
                     "phase": args.phase, "alive": True, "time_ns": time.time_ns(),
                     "queue_backlog": event_queue.qsize(), "max_queue_backlog": max_backlog,
                     "worker_errors": len(worker_errors), "reconnects": sum(reconnects.values()),
-                    "counts": dict(orchestrator.counts),
+                    "counts": dict(orchestrator.counts), "stale_incidents": len(stale_incidents),
+                    "dropped_events": sum(dropped_events.values()), "workers_running": dict(worker_running),
                 }
                 path = run_root / "health/heartbeat.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -229,15 +329,47 @@ def main() -> int:
                 path.write_text(json.dumps(heartbeat, indent=2) + "\n")
     finally:
         stop.set()
+        for event in reconnect_request.values():
+            event.set()
         for thread in threads: thread.join(timeout=65)
     while not event_queue.empty():
-        orchestrator.on_event(event_queue.get_nowait())
-    ended_ns = time.time_ns()
+        event = event_queue.get_nowait()
+        if event.event_time_ns < run_end_wall_ns:
+            process_event(event)
+    process_ended_ns = time.time_ns()
+    ended_ns = run_end_wall_ns
     orchestrator.flush(ended_ns)
     summary = orchestrator.write_outputs(started_ns, ended_ns, args.phase)
     orchestrator.recorder.close()
-    summary.update({"max_queue_backlog": max_backlog, "worker_errors": worker_errors, "reconnects": reconnects})
-    status = "PASSED" if orchestrator.counts["quote_events"] and orchestrator.counts["trade_events"] else "BLOCKED"
+    expected_bars = args.expected_bars
+    observed_bars = int(orchestrator.counts.get("bars_1m", 0))
+    expected_minutes = args.duration_seconds // 60
+    coverage_rows = []
+    for minute in range(started_ns, run_end_wall_ns, 60_000_000_000):
+        counts = minute_coverage.get(minute, {"quote_count": 0, "trade_count": 0})
+        coverage_rows.append({
+            "minute": pd.Timestamp(minute, unit="ns", tz="UTC").isoformat(), **counts,
+            "quote_received": counts["quote_count"] > 0, "trade_received": counts["trade_count"] > 0,
+        })
+    pd.DataFrame(coverage_rows).to_csv(run_root / "market_data_continuity_monitor.csv", index=False)
+    summary.update({
+        "max_queue_backlog": max_backlog, "worker_errors": worker_errors, "reconnects": reconnects,
+        "stale_incidents": stale_incidents, "dropped_events": dropped_events,
+        "unexpected_worker_deaths": unexpected_worker_deaths,
+        "reached_end_boundary": reached_end_boundary, "process_ended_ns": process_ended_ns,
+        "expected_minutes": expected_minutes, "expected_bars": expected_bars,
+        "observed_bars": observed_bars,
+        "unexplained_missing_bars": max(0, (expected_bars or 0) - observed_bars) if expected_bars else None,
+    })
+    continuity_ok = (
+        orchestrator.counts["quote_events"] > 0
+        and orchestrator.counts["trade_events"] > 0
+        and sum(dropped_events.values()) == 0
+        and not unexpected_worker_deaths
+        and reached_end_boundary
+        and (expected_bars is None or observed_bars == expected_bars)
+    )
+    status = "PASSED" if continuity_ok else "BLOCKED"
     validation = {
         "status": status, "phase": args.phase, "manifest_hash": expected,
         "candidate_count": len(active), "manifest_symbols": symbols,
