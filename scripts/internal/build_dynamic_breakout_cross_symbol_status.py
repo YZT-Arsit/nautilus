@@ -310,6 +310,70 @@ def paired_rows(
     return result
 
 
+def wide_paired_rows(paired: pd.DataFrame) -> pd.DataFrame:
+    """Return one auditable NORMAL-vs-STRICT_REVERSE row per symbol."""
+    rows: list[dict[str, object]] = []
+    metrics = (
+        ("Return", "Return"),
+        ("Sharpe", "Sharpe"),
+        ("Signed_BE", "BE"),
+        ("MaxDD", "MaxDD"),
+        ("Avg_Daily_Turnover_pct", "Avg_Daily_Turnover_pct"),
+    )
+    for symbol in SYMBOLS:
+        item = paired[paired.symbol.eq(symbol)].set_index("direction_variant")
+        normal = item.loc["NORMAL"].copy()
+        reverse = item.loc["STRICT_REVERSE"].copy()
+        normal["Avg_Daily_Turnover_pct"] = (
+            float(normal.Total_Turnover_raw) / int(normal.n_daily_observations) * 100.0
+        )
+        reverse["Avg_Daily_Turnover_pct"] = (
+            float(reverse.Total_Turnover_raw) / int(reverse.n_daily_observations) * 100.0
+        )
+        row: dict[str, object] = {
+            "strategy_id": STRATEGY,
+            "symbol": symbol,
+            "timeframe": TIMEFRAME,
+            "evidence_class": EVIDENCE,
+            "n_daily_observations": int(normal.n_daily_observations),
+            "NORMAL_source_path": normal.source_path,
+            "STRICT_REVERSE_source_path": reverse.source_path,
+            "STRICT_REVERSE_metric_coverage": reverse.metric_coverage,
+        }
+        for source_metric, output_metric in metrics:
+            normal_value, reverse_value = normal[source_metric], reverse[source_metric]
+            comparable = bool(pd.notna(normal_value) and pd.notna(reverse_value))
+            row[f"NORMAL_{output_metric}"] = normal_value
+            row[f"STRICT_REVERSE_{output_metric}"] = reverse_value
+            row[f"Delta_{output_metric}"] = (
+                float(reverse_value) - float(normal_value) if comparable else pd.NA
+            )
+            row[f"Delta_{output_metric}_status"] = (
+                "COMPARABLE_EXACT" if comparable else "UNAVAILABLE_SOURCE_METRIC"
+            )
+        rows.append(row)
+    result = pd.DataFrame(rows)
+    if len(result) != 8 or result.symbol.nunique() != 8:
+        raise ValueError("wide paired table is not one row per requested symbol")
+    return result
+
+
+def comparison_counts(wide: pd.DataFrame) -> tuple[dict[str, int], dict[str, int]]:
+    metrics = ("Return", "Sharpe", "BE", "MaxDD", "Avg_Daily_Turnover_pct")
+    comparable: dict[str, int] = {}
+    improves: dict[str, int] = {}
+    for metric in metrics:
+        mask = wide[[f"NORMAL_{metric}", f"STRICT_REVERSE_{metric}"]].notna().all(axis=1)
+        comparable[metric] = int(mask.sum())
+        if metric in {"Return", "Sharpe", "BE"}:
+            improves[metric] = int(
+                (
+                    wide.loc[mask, f"STRICT_REVERSE_{metric}"] > wide.loc[mask, f"NORMAL_{metric}"]
+                ).sum()
+            )
+    return comparable, improves
+
+
 def candidate_rows(paired: pd.DataFrame, yearly: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for symbol in SYMBOLS:
@@ -399,9 +463,12 @@ def build(repo: Path, research: Path, delivery: Path) -> dict[str, object]:
     source_research = repo / "outputs/baseline_evaluation/dynamic_breakout_short_cross_symbol"
     yearly = yearly_rows(repo, source_research, old.set_index("symbol"))
     paired = paired_rows(repo, source_research, normal, yearly)
+    wide = wide_paired_rows(paired)
+    comparable, improves = comparison_counts(wide)
     candidates = candidate_rows(paired, yearly)
     for root in (research, delivery):
         atomic_csv(paired, root / "dynamic_breakout_short_cross_symbol.csv")
+        atomic_csv(wide, root / "normal_vs_reverse_paired.csv")
         atomic_csv(yearly, root / "yearly_robustness.csv")
         atomic_csv(candidates, root / "next_forward_symbol_candidates.csv")
         render(paired, yearly, root / "cross_symbol_normal_vs_strict_reverse.png")
@@ -410,6 +477,7 @@ def build(repo: Path, research: Path, delivery: Path) -> dict[str, object]:
             stale.unlink()
         names = (
             "dynamic_breakout_short_cross_symbol.csv",
+            "normal_vs_reverse_paired.csv",
             "yearly_robustness.csv",
             "next_forward_symbol_candidates.csv",
             "cross_symbol_normal_vs_strict_reverse.png",
@@ -424,12 +492,19 @@ def build(repo: Path, research: Path, delivery: Path) -> dict[str, object]:
             "strict_reverse_cases_reusable": 8,
             "complete_symbol_pairs": 8,
             "paired_rows": 16,
+            "wide_paired_rows": 8,
             "yearly_rows": 32,
             "forward_candidate_rows": 8,
             "new_full_window_reruns_reused": 4,
             "existing_split_reruns_reused": 4,
             "full_window_reverse_metrics_complete_cases": 4,
             "full_window_reverse_metrics_partial_cases": 4,
+            "full_window_comparable_pairs": comparable,
+            "strict_reverse_improves_metric": improves,
+            "positive_full_window_return": {
+                "NORMAL": int(wide.NORMAL_Return.gt(0).sum()),
+                "STRICT_REVERSE": int(wide.STRICT_REVERSE_Return.gt(0).sum()),
+            },
             "partial_metric_limitation": "SOL/XRP/DOGE/SUI full-window Sharpe and MaxDD are unavailable from actual split summaries and remain blank",
             "backtests_rerun_during_packaging": 0,
             "market_data_downloads": 0,

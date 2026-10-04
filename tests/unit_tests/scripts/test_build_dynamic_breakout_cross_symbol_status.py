@@ -39,6 +39,16 @@ def test_existing_repository_builds_complete_replication_when_artifacts_present(
     assert summary["normal_cases_reusable"] == 8
     assert summary["strict_reverse_cases_reusable"] == 8
     assert summary["complete_symbol_pairs"] == 8
+    assert summary["wide_paired_rows"] == 8
+    assert summary["full_window_comparable_pairs"] == {
+        "Return": 8,
+        "Sharpe": 4,
+        "BE": 8,
+        "MaxDD": 4,
+        "Avg_Daily_Turnover_pct": 8,
+    }
+    assert summary["strict_reverse_improves_metric"] == {"Return": 7, "Sharpe": 3, "BE": 7}
+    assert summary["positive_full_window_return"] == {"NORMAL": 1, "STRICT_REVERSE": 7}
     assert summary["backtests_rerun_during_packaging"] == 0
     assert summary["market_data_downloads"] == 0
     assert summary["forward_launches"] == 0
@@ -52,6 +62,23 @@ def test_existing_repository_builds_complete_replication_when_artifacts_present(
         & cases.direction_variant.eq("STRICT_REVERSE")
     ]
     assert old_reverse[["Sharpe", "MaxDD"]].isna().all().all()
+
+    wide = pd.read_csv(delivery / "normal_vs_reverse_paired.csv")
+    assert len(wide) == 8
+    assert wide.symbol.nunique() == 8
+    old_wide = wide[wide.symbol.isin({"SOLUSDT", "XRPUSDT", "DOGEUSDT", "SUIUSDT"})]
+    assert old_wide[["Delta_Sharpe", "Delta_MaxDD"]].isna().all().all()
+    assert old_wide.Delta_Sharpe_status.eq("UNAVAILABLE_SOURCE_METRIC").all()
+    assert old_wide.Delta_MaxDD_status.eq("UNAVAILABLE_SOURCE_METRIC").all()
+    expected_turnover = (
+        cases[cases.direction_variant.eq("NORMAL")]
+        .set_index("symbol")
+        .loc[wide.symbol, "Total_Turnover_raw"]
+        .to_numpy()
+        / wide.n_daily_observations
+        * 100.0
+    )
+    assert wide.NORMAL_Avg_Daily_Turnover_pct.to_numpy() == pytest.approx(expected_turnover)
 
     candidates = pd.read_csv(delivery / "next_forward_symbol_candidates.csv")
     assert set(candidates.symbol) == set(MODULE.SYMBOLS)
