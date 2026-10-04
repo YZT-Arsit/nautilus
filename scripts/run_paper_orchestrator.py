@@ -42,6 +42,41 @@ PUBLIC_REST = "https://fapi.binance.com"
 PUBLIC_WS = "wss://fstream.binance.com"
 
 
+class ReconnectBudget:
+    """One global reconnect-rate limiter shared by all feed workers."""
+
+    def __init__(self, *, max_attempts: int, window_seconds: float, degraded_wait_seconds: float) -> None:
+        if max_attempts < 1 or window_seconds <= 0 or degraded_wait_seconds < 0:
+            raise ValueError("invalid reconnect budget")
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self.degraded_wait_seconds = degraded_wait_seconds
+        self.attempts: deque[float] = deque()
+        self.lock = threading.Lock()
+        self.suppressed = 0
+        self.degraded_waits = 0
+
+    def delay_before_attempt(self, now: float) -> float:
+        with self.lock:
+            while self.attempts and now - self.attempts[0] >= self.window_seconds:
+                self.attempts.popleft()
+            if len(self.attempts) >= self.max_attempts:
+                self.suppressed += 1
+                self.degraded_waits += 1
+                return max(
+                    self.degraded_wait_seconds,
+                    self.window_seconds - (now - self.attempts[0]),
+                )
+            self.attempts.append(now)
+            return 0.0
+
+    def record_after_wait(self, now: float) -> None:
+        with self.lock:
+            while self.attempts and now - self.attempts[0] >= self.window_seconds:
+                self.attempts.popleft()
+            self.attempts.append(now)
+
+
 def get_json(path: str, params: dict | None = None):
     suffix = "?" + urllib.parse.urlencode(params) if params else ""
     request = urllib.request.Request(PUBLIC_REST + path + suffix, headers={"User-Agent": "nautilus-paper-research/1"})
@@ -115,6 +150,9 @@ def main() -> int:
     parser.add_argument("--trade-stale-seconds", type=float, default=10.0)
     parser.add_argument("--freeze-start", action="store_true")
     parser.add_argument("--route-label", default="LOCAL_FAILOVER_PROXY")
+    parser.add_argument("--reconnect-max-attempts", type=int, default=3)
+    parser.add_argument("--reconnect-window-seconds", type=float, default=60.0)
+    parser.add_argument("--reconnect-degraded-wait-seconds", type=float, default=30.0)
     args = parser.parse_args()
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
@@ -217,6 +255,11 @@ def main() -> int:
     with lifecycle_path.open("w", newline="", encoding="utf-8") as handle:
         csv.DictWriter(handle, fieldnames=lifecycle_fields).writeheader()
     run_end_wall_ns = 0
+    reconnect_budget = ReconnectBudget(
+        max_attempts=args.reconnect_max_attempts,
+        window_seconds=args.reconnect_window_seconds,
+        degraded_wait_seconds=args.reconnect_degraded_wait_seconds,
+    )
 
     def log_connection(symbol: str, connection_id: str, stage: str, result: str, **extra) -> None:
         row = {
@@ -272,8 +315,20 @@ def main() -> int:
         iid = f"{symbol}-PERP.BINANCE"
         worker_running[symbol] = True
         failure_streak = 0
+        first_attempt = True
         rng = random.Random(f"{symbol}:paper-feed")  # noqa: S311 - deterministic retry jitter
         while not stop.is_set():
+            if not first_attempt:
+                budget_delay = reconnect_budget.delay_before_attempt(time.monotonic())
+                if budget_delay > 0:
+                    log_connection(
+                        symbol, f"{symbol}-BUDGET", "DEGRADED_WAIT", "WAIT",
+                        latency_ms=budget_delay * 1_000,
+                    )
+                    if stop.wait(budget_delay):
+                        break
+                    reconnect_budget.record_after_wait(time.monotonic())
+            first_attempt = False
             connection_ids[symbol] += 1
             connection_id = f"{symbol}-{connection_ids[symbol]:06d}"
             with state_lock:
@@ -448,6 +503,8 @@ def main() -> int:
                     "dropped_events": sum(dropped_events.values()), "workers_running": dict(worker_running),
                     "feed_state": dict(feed_state),
                     "duplicate_events_dropped": sum(v["dropped"] for v in duplicate_events.values()),
+                    "reconnect_suppressed_by_backoff": reconnect_budget.suppressed,
+                    "reconnect_degraded_waits": reconnect_budget.degraded_waits,
                 }
                 path = run_root / "health/heartbeat.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -513,6 +570,8 @@ def main() -> int:
         "duplicate_events": duplicate_events,
         "duplicate_events_affecting_bars": 0,
         "max_reconnects_in_60s": max_reconnects_in_60s,
+        "reconnect_suppressed_by_backoff": reconnect_budget.suppressed,
+        "reconnect_degraded_waits": reconnect_budget.degraded_waits,
     })
     continuity_ok = (
         orchestrator.counts["quote_events"] > 0

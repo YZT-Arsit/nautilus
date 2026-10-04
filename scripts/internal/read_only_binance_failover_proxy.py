@@ -31,7 +31,11 @@ class RouteState:
     endpoint: tuple[str, int]
     consecutive_failures: int = 0
     cooldown_until: float = 0.0
-    half_open: bool = False
+    state: str = "CLOSED"
+    half_open_probe_in_flight: bool = False
+    last_failure_at: float | None = None
+    half_open_probe_at: float | None = None
+    successful_probe_count: int = 0
 
 
 class RouteHealthManager:
@@ -60,24 +64,34 @@ class RouteHealthManager:
         self._cursor = 0
         self._lock = threading.Lock()
 
-    def candidates(self) -> tuple[list[tuple[str, int]], float, set[tuple[str, int]]]:
-        """Return ordered eligible routes, wait time, and half-open routes."""
+    def acquire(self) -> tuple[tuple[str, int] | None, float, bool]:
+        """Reserve one eligible route.
+
+        An expired OPEN circuit may have only one HALF_OPEN probe in flight.
+        Callers never sleep inside the proxy; when every route is unavailable
+        the caller gets a wait hint and fails fast.  This prevents timed-out
+        client connections from accumulating and waking as a probe stampede.
+        """
         with self._lock:
             now = self._clock()
-            eligible = []
-            half_open = set()
             for offset in range(len(self._routes)):
                 index = (self._cursor + offset) % len(self._routes)
                 route = self._routes[index]
-                if route.cooldown_until <= now:
-                    if route.consecutive_failures:
-                        route.half_open = True
-                        half_open.add(route.endpoint)
-                    eligible.append(route.endpoint)
-            if eligible:
-                return eligible, 0.0, half_open
+                if route.state == "CLOSED":
+                    self._cursor = (index + 1) % len(self._routes)
+                    return route.endpoint, 0.0, False
+                if (
+                    route.state == "OPEN"
+                    and route.cooldown_until <= now
+                    and not route.half_open_probe_in_flight
+                ):
+                    route.state = "HALF_OPEN"
+                    route.half_open_probe_in_flight = True
+                    route.half_open_probe_at = now
+                    self._cursor = (index + 1) % len(self._routes)
+                    return route.endpoint, 0.0, True
             wait = max(0.0, min(route.cooldown_until for route in self._routes) - now)
-            return [], wait, set()
+            return None, wait, False
 
     def record_failure(self, endpoint: tuple[str, int]) -> float:
         with self._lock:
@@ -90,7 +104,9 @@ class RouteHealthManager:
                 self._max_cooldown_seconds,
             )
             route.cooldown_until = now + delay
-            route.half_open = False
+            route.state = "OPEN"
+            route.half_open_probe_in_flight = False
+            route.last_failure_at = now
             self._cursor = (index + 1) % len(self._routes)
             return delay
 
@@ -99,12 +115,31 @@ class RouteHealthManager:
         with self._lock:
             index = next(i for i, route in enumerate(self._routes) if route.endpoint == endpoint)
             route = self._routes[index]
-            recovered = route.consecutive_failures > 0 or route.half_open
+            recovered = route.consecutive_failures > 0 or route.state == "HALF_OPEN"
+            if route.state == "HALF_OPEN":
+                route.successful_probe_count += 1
             route.consecutive_failures = 0
             route.cooldown_until = 0.0
-            route.half_open = False
+            route.state = "CLOSED"
+            route.half_open_probe_in_flight = False
             self._cursor = index
             return recovered
+
+    def snapshot(self) -> list[dict]:
+        with self._lock:
+            return [
+                {
+                    "route_id": f"{route.endpoint[0]}:{route.endpoint[1]}",
+                    "state": route.state,
+                    "failure_count": route.consecutive_failures,
+                    "last_failure_timestamp_monotonic": route.last_failure_at,
+                    "open_until_monotonic": route.cooldown_until,
+                    "half_open_probe_timestamp_monotonic": route.half_open_probe_at,
+                    "successful_probe_count": route.successful_probe_count,
+                    "half_open_probe_in_flight": route.half_open_probe_in_flight,
+                }
+                for route in self._routes
+            ]
 
 
 def _write_log(path: Path | None, row: dict) -> None:
@@ -170,20 +205,25 @@ def relay(  # noqa: C901
             return
         target = authority
         errors = []
-        routes, wait_seconds, half_open_routes = route_manager.candidates()
-        if not routes and wait_seconds > 0:
-            _write_log(log_path, {
-                "event": "ROUTES_COOLING_DOWN", "connection_id": connection_id,
-                "target": authority, "wait_seconds": wait_seconds,
-            })
-            time.sleep(wait_seconds)
-            routes, _, half_open_routes = route_manager.candidates()
-        for proxy in routes:
+        attempted: set[tuple[str, int]] = set()
+        while len(attempted) < len(route_manager.snapshot()):
+            proxy, wait_seconds, half_open = route_manager.acquire()
+            if proxy is None:
+                if wait_seconds > 0:
+                    _write_log(log_path, {
+                        "event": "DEGRADED_WAIT", "connection_id": connection_id,
+                        "target": authority, "wait_seconds": wait_seconds,
+                        "route_states": route_manager.snapshot(),
+                    })
+                break
+            if proxy in attempted:
+                break
+            attempted.add(proxy)
             attempt_started = time.monotonic()
             _write_log(log_path, {
                 "event": "CONNECT_ATTEMPT", "connection_id": connection_id,
                 "target": authority, "upstream": f"{proxy[0]}:{proxy[1]}",
-                "half_open": proxy in half_open_routes,
+                "half_open": half_open, "route_states": route_manager.snapshot(),
             })
             try:
                 upstream = _open_via_proxy(proxy, host, port)
@@ -193,7 +233,7 @@ def relay(  # noqa: C901
                     "target": authority,
                     "upstream": f"{proxy[0]}:{proxy[1]}",
                     "connect_latency_ms": (time.monotonic() - attempt_started) * 1_000,
-                    "half_open": proxy in half_open_routes,
+                    "half_open": half_open,
                 })
                 break
             except Exception as exc:
@@ -204,10 +244,14 @@ def relay(  # noqa: C901
                     "target": authority,
                     "upstream": f"{proxy[0]}:{proxy[1]}", "error": repr(exc),
                     "connect_latency_ms": (time.monotonic() - attempt_started) * 1_000,
-                    "cooldown_seconds": cooldown,
+                    "cooldown_seconds": cooldown, "route_states": route_manager.snapshot(),
                 })
         if upstream is None:
-            raise ConnectionError("; ".join(errors))
+            if errors:
+                raise ConnectionError("; ".join(errors))
+            client.sendall(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 30\r\nConnection: close\r\n\r\n")
+            end_reason = "degraded_wait"
+            return
         client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         relay_started = time.monotonic()
         end_reason = "unknown"
@@ -248,8 +292,7 @@ def relay(  # noqa: C901
             # upgraded stream died.  REST tunnels are expected to be brief.
             unhealthy = (
                 target.lower().startswith("fstream.binance.com:")
-                and (end_reason in {"relay_exception", "socket_exception", "upstream_eof"}
-                     or lifetime < short_lived_seconds)
+                and end_reason in {"relay_exception", "socket_exception", "upstream_eof"}
             )
             if unhealthy:
                 cooldown = route_manager.record_failure(selected_route)
@@ -257,14 +300,16 @@ def relay(  # noqa: C901
                     "event": "ROUTE_PENALIZED", "connection_id": connection_id,
                     "target": target, "upstream": f"{selected_route[0]}:{selected_route[1]}",
                     "reason": end_reason, "cooldown_seconds": cooldown,
+                    "route_states": route_manager.snapshot(),
                 })
             elif lifetime >= short_lived_seconds:
                 recovered = route_manager.record_success(selected_route)
                 if recovered:
                     _write_log(log_path, {
-                        "event": "ROUTE_RECOVERED", "connection_id": connection_id,
+                        "event": "TRANSPORT_ROUTE_RECOVERED", "connection_id": connection_id,
                         "target": target,
                         "upstream": f"{selected_route[0]}:{selected_route[1]}",
+                        "route_states": route_manager.snapshot(),
                     })
             _write_log(log_path, {
                 "event": "RELAY_ENDED", "connection_id": connection_id,
