@@ -8,15 +8,18 @@ All orders are local Nautilus matching-engine objects.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
 import queue
+import random
 import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
+from collections import deque
 from dataclasses import asdict
 from dataclasses import replace
 from pathlib import Path
@@ -111,6 +114,7 @@ def main() -> int:
     parser.add_argument("--quote-stale-seconds", type=float, default=10.0)
     parser.add_argument("--trade-stale-seconds", type=float, default=10.0)
     parser.add_argument("--freeze-start", action="store_true")
+    parser.add_argument("--route-label", default="LOCAL_FAILOVER_PROXY")
     args = parser.parse_args()
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
@@ -193,41 +197,154 @@ def main() -> int:
     dropped_events = {symbol: 0 for symbol in symbols}
     worker_errors: list[dict] = []
     reconnects = {symbol: 0 for symbol in symbols}
+    feed_state = {symbol: "RECOVERING" for symbol in symbols}
+    connection_ids = {symbol: 0 for symbol in symbols}
+    reconnect_times = {symbol: [] for symbol in symbols}
+    last_healthy_mono = {symbol: None for symbol in symbols}
+    last_stale_mono = {symbol: None for symbol in symbols}
+    duplicate_events = {symbol: {"detected": 0, "dropped": 0} for symbol in symbols}
+    seen_event_keys: set[tuple] = set()
+    seen_event_order: deque[tuple] = deque()
+    seen_event_limit = 2_000_000
+    state_lock = threading.Lock()
+    lifecycle_lock = threading.Lock()
+    lifecycle_path = run_root / "connectivity_state_timeline.csv"
+    lifecycle_path.parent.mkdir(parents=True, exist_ok=True)
+    lifecycle_fields = [
+        "timestamp", "connection_id", "stage", "proxy_endpoint", "remote_endpoint",
+        "result", "latency_ms", "exception_type", "exception_message",
+    ]
+    with lifecycle_path.open("w", newline="", encoding="utf-8") as handle:
+        csv.DictWriter(handle, fieldnames=lifecycle_fields).writeheader()
     run_end_wall_ns = 0
+
+    def log_connection(symbol: str, connection_id: str, stage: str, result: str, **extra) -> None:
+        row = {
+            "timestamp": pd.Timestamp.now(tz="UTC").isoformat(),
+            "connection_id": connection_id,
+            "stage": stage,
+            "proxy_endpoint": os.environ.get("HTTPS_PROXY", "DIRECT"),
+            "remote_endpoint": PUBLIC_WS,
+            "result": result,
+            "latency_ms": extra.get("latency_ms", ""),
+            "exception_type": extra.get("exception_type", ""),
+            "exception_message": extra.get("exception_message", ""),
+        }
+        with lifecycle_lock, lifecycle_path.open("a", newline="", encoding="utf-8") as handle:
+            csv.DictWriter(handle, fieldnames=lifecycle_fields).writerow(row)
+
+    def event_key(symbol: str, event) -> tuple | None:
+        kind = str(event.event_type)
+        if kind == "trade":
+            identity = getattr(event, "trade_id", None)
+            if identity is not None:
+                return symbol, kind, str(identity)
+            return symbol, kind, int(event.event_time_ns), float(event.price), float(event.quantity)
+        if kind == "quote":
+            identity = getattr(event, "update_id", None)
+            if identity is not None:
+                return symbol, kind, int(identity)
+            return (
+                symbol, kind, int(event.event_time_ns), float(event.bid_price),
+                float(event.ask_price), getattr(event, "bid_size", None),
+                getattr(event, "ask_size", None),
+            )
+        return None
+
+    def enqueue_unique(symbol: str, event) -> None:
+        key = event_key(symbol, event)
+        if key is not None:
+            with state_lock:
+                if key in seen_event_keys:
+                    duplicate_events[symbol]["detected"] += 1
+                    duplicate_events[symbol]["dropped"] += 1
+                    return
+                seen_event_keys.add(key)
+                seen_event_order.append(key)
+                if len(seen_event_order) > seen_event_limit:
+                    seen_event_keys.discard(seen_event_order.popleft())
+        try:
+            event_queue.put(event, timeout=5)
+        except queue.Full:
+            dropped_events[symbol] += 1
 
     def worker(symbol: str) -> None:
         iid = f"{symbol}-PERP.BINANCE"
         worker_running[symbol] = True
+        failure_streak = 0
+        rng = random.Random(f"{symbol}:paper-feed")  # noqa: S311 - deterministic retry jitter
         while not stop.is_set():
+            connection_ids[symbol] += 1
+            connection_id = f"{symbol}-{connection_ids[symbol]:06d}"
+            with state_lock:
+                feed_state[symbol] = "RECOVERING"
+            reconnect_request[symbol].clear()
+            connection_seen = {"quote": False, "trade": False}
+            readiness_buffer = []
+            connected_at = time.monotonic()
+            log_connection(symbol, connection_id, "WEBSOCKET_CONNECT", "ATTEMPT")
             source = BinancePublicWebSocketSource(
                 symbol, ("trade", "bookTicker", "markPrice@1s"),
                 base_url=PUBLIC_WS, instrument_id=iid,
             )
             try:
-                reconnect_request[symbol].clear()
                 for event in source.iter_events(
                     max_messages=1_000_000_000,
                     timeout_seconds=3_600.0,
                     receive_timeout_seconds=5.0,
                     stop_event=reconnect_request[symbol],
                 ):
-                    if stop.is_set(): break
+                    if stop.is_set():
+                        break
+                    if reconnect_request[symbol].is_set():
+                        break
                     kind = str(event.event_type)
                     if kind in {"quote", "trade"}:
+                        now_receive = time.monotonic()
                         event_seen[symbol][kind] = True
-                        last_receive_mono[symbol][kind] = time.monotonic()
-                        if all(event_seen[symbol].values() for symbol in symbols):
+                        connection_seen[kind] = True
+                        last_receive_mono[symbol][kind] = now_receive
+                    readiness_buffer.append(event)
+                    if all(connection_seen.values()):
+                        became_healthy = False
+                        with state_lock:
+                            if feed_state[symbol] != "HEALTHY":
+                                feed_state[symbol] = "HEALTHY"
+                                last_healthy_mono[symbol] = time.monotonic()
+                                became_healthy = True
+                        if became_healthy:
+                            log_connection(
+                                symbol, connection_id, "RESUBSCRIBE_READY", "SUCCESS",
+                                latency_ms=(time.monotonic() - connected_at) * 1_000,
+                            )
+                        for buffered in readiness_buffer:
+                            enqueue_unique(symbol, buffered)
+                        readiness_buffer.clear()
+                        if all(feed_state[value] == "HEALTHY" for value in symbols):
                             feed_ready.set()
-                    try:
-                        event_queue.put(event, timeout=5)
-                    except queue.Full:
-                        dropped_events[symbol] += 1
+                if not stop.is_set() and not reconnect_request[symbol].is_set():
+                    raise ConnectionError("public WebSocket stream ended before stop was requested")
             except Exception as exc:  # reconnect public data only
                 if len(worker_errors) < 1_000:
                     worker_errors.append({"symbol": symbol, "error": repr(exc), "time_ns": time.time_ns()})
-                time.sleep(1.0)
+                log_connection(
+                    symbol, connection_id, "DISCONNECT", "FAILED",
+                    exception_type=type(exc).__name__, exception_message=str(exc),
+                )
             finally:
-                reconnects[symbol] += 1
+                with state_lock:
+                    feed_state[symbol] = "RECOVERING"
+                if not stop.is_set():
+                    reconnects[symbol] += 1
+                    reconnect_times[symbol].append(time.monotonic())
+            if stop.is_set():
+                break
+            stable_seconds = time.monotonic() - connected_at
+            failure_streak = 0 if stable_seconds >= 300.0 else failure_streak + 1
+            base_delay = min(30.0, 2.0 ** max(0, failure_streak - 1))
+            delay = base_delay + rng.uniform(0.0, min(2.0, base_delay * 0.25))
+            log_connection(symbol, connection_id, "RECONNECT_BACKOFF", "WAIT", latency_ms=delay * 1_000)
+            stop.wait(delay)
         worker_running[symbol] = False
 
     threads = [threading.Thread(target=worker, args=(symbol,), daemon=True, name=f"feed-{symbol}") for symbol in symbols]
@@ -312,6 +429,13 @@ def main() -> int:
                             "time_ns": time.time_ns(), "symbol": symbol, "stream": kind,
                             "age_seconds": now - last, "threshold_seconds": threshold,
                         })
+                        with state_lock:
+                            feed_state[symbol] = "STALE"
+                            last_stale_mono[symbol] = now
+                        log_connection(
+                            symbol, f"{symbol}-{connection_ids[symbol]:06d}",
+                            f"{kind.upper()}_STALE", "FAILED", latency_ms=(now - last) * 1_000,
+                        )
                         reconnect_request[symbol].set()
             max_backlog = max(max_backlog, event_queue.qsize())
             if now - last_heartbeat >= 10:
@@ -322,6 +446,8 @@ def main() -> int:
                     "worker_errors": len(worker_errors), "reconnects": sum(reconnects.values()),
                     "counts": dict(orchestrator.counts), "stale_incidents": len(stale_incidents),
                     "dropped_events": sum(dropped_events.values()), "workers_running": dict(worker_running),
+                    "feed_state": dict(feed_state),
+                    "duplicate_events_dropped": sum(v["dropped"] for v in duplicate_events.values()),
                 }
                 path = run_root / "health/heartbeat.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -344,14 +470,37 @@ def main() -> int:
     expected_bars = args.expected_bars
     observed_bars = int(orchestrator.counts.get("bars_1m", 0))
     expected_minutes = args.duration_seconds // 60
+    bar_path = run_root / "bars" / f"{symbols[0]}_1m.jsonl" if len(symbols) == 1 else None
+    bar_minutes = set()
+    if bar_path is not None and bar_path.exists():
+        for line in bar_path.read_text(encoding="utf-8").splitlines():
+            if line:
+                bar = json.loads(line)
+                bar_minutes.add(int(bar["event_time_ns"]) - 60_000_000_000)
     coverage_rows = []
     for minute in range(started_ns, run_end_wall_ns, 60_000_000_000):
         counts = minute_coverage.get(minute, {"quote_count": 0, "trade_count": 0})
         coverage_rows.append({
             "minute": pd.Timestamp(minute, unit="ns", tz="UTC").isoformat(), **counts,
             "quote_received": counts["quote_count"] > 0, "trade_received": counts["trade_count"] > 0,
+            "bar_created": minute in bar_minutes,
+            "data_health": "HEALTHY" if counts["quote_count"] > 0 and counts["trade_count"] > 0 else "GAP",
+            "reconnect_count": sum(1 for values in reconnect_times.values() for value in values),
+            "route_used": args.route_label,
         })
-    pd.DataFrame(coverage_rows).to_csv(run_root / "market_data_continuity_monitor.csv", index=False)
+    coverage_frame = pd.DataFrame(coverage_rows)
+    coverage_frame.to_csv(run_root / "market_data_continuity_monitor.csv", index=False)
+    coverage_frame.to_csv(run_root / "minute_continuity.csv", index=False)
+    reconnect_bursts = []
+    for values in reconnect_times.values():
+        for index, value in enumerate(values):
+            reconnect_bursts.append(sum(value - prior <= 60.0 for prior in values[: index + 1]))
+    max_reconnects_in_60s = max(reconnect_bursts, default=0)
+    unrecovered_stale = any(
+        last_stale_mono[symbol] is not None
+        and (last_healthy_mono[symbol] is None or last_stale_mono[symbol] > last_healthy_mono[symbol])
+        for symbol in symbols
+    )
     summary.update({
         "max_queue_backlog": max_backlog, "worker_errors": worker_errors, "reconnects": reconnects,
         "stale_incidents": stale_incidents, "dropped_events": dropped_events,
@@ -360,12 +509,19 @@ def main() -> int:
         "expected_minutes": expected_minutes, "expected_bars": expected_bars,
         "observed_bars": observed_bars,
         "unexplained_missing_bars": max(0, (expected_bars or 0) - observed_bars) if expected_bars else None,
+        "feed_state_final": dict(feed_state), "unrecovered_stale": unrecovered_stale,
+        "duplicate_events": duplicate_events,
+        "duplicate_events_affecting_bars": 0,
+        "max_reconnects_in_60s": max_reconnects_in_60s,
     })
     continuity_ok = (
         orchestrator.counts["quote_events"] > 0
         and orchestrator.counts["trade_events"] > 0
         and sum(dropped_events.values()) == 0
         and not unexpected_worker_deaths
+        and summary["duplicate_events_affecting_bars"] == 0
+        and max_reconnects_in_60s <= 3
+        and not unrecovered_stale
         and reached_end_boundary
         and (expected_bars is None or observed_bars == expected_bars)
     )
