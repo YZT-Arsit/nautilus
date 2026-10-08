@@ -170,6 +170,39 @@ def test_only_one_half_open_probe_is_reserved() -> None:
     assert half_open is False
 
 
+def test_short_half_open_client_close_releases_probe(monkeypatch, tmp_path) -> None:
+    clock = FakeClock()
+    route = ("100.64.0.5", 7890)
+    manager = proxy.RouteHealthManager([route], cooldown_seconds=10.0, clock=clock)
+    manager.record_failure(route)
+    clock.value += 11.0
+
+    client_side, caller_side = socket.socketpair()
+    upstream_side, remote_side = socket.socketpair()
+    monkeypatch.setattr(proxy, "_open_via_proxy", lambda selected, host, port: upstream_side)
+    log_path = tmp_path / "proxy.jsonl"
+    thread = threading.Thread(
+        target=proxy.relay,
+        args=(client_side, manager, log_path),
+        kwargs={"short_lived_seconds": 30.0},
+    )
+    thread.start()
+    caller_side.sendall(
+        b"CONNECT fstream.binance.com:443 HTTP/1.1\r\n"
+        b"Host: fstream.binance.com:443\r\n\r\n"
+    )
+    assert b"200 Connection Established" in caller_side.recv(4096)
+    caller_side.close()
+    thread.join(timeout=5.0)
+    remote_side.close()
+
+    snapshot = manager.snapshot()[0]
+    assert snapshot["state"] == "OPEN"
+    assert snapshot["half_open_probe_in_flight"] is False
+    rows = [json.loads(line) for line in log_path.read_text().splitlines()]
+    assert any(row["event"] == "HALF_OPEN_PROBE_FAILED" for row in rows)
+
+
 def test_all_routes_cooling_fails_fast_without_sleep(monkeypatch, tmp_path) -> None:
     route = ("100.64.0.5", 7890)
     manager = proxy.RouteHealthManager([route], cooldown_seconds=60.0)

@@ -32,3 +32,26 @@ def test_reconnect_budget_validates_configuration() -> None:
         assert "invalid reconnect budget" in str(exc)
     else:
         raise AssertionError("invalid budget was accepted")
+
+
+def test_stale_detection_only_owns_healthy_state() -> None:
+    assert MODULE.should_trigger_stale(
+        state="HEALTHY", last_receive=10.0, now=21.0, threshold=10.0,
+        reconnect_requested=False,
+    )
+    for state in ("STALE_DETECTED", "RECOVERING", "VALIDATING"):
+        assert not MODULE.should_trigger_stale(
+            state=state, last_receive=10.0, now=100.0, threshold=10.0,
+            reconnect_requested=False,
+        )
+
+
+def test_validation_timeout_is_single_bounded_request() -> None:
+    assert MODULE.should_timeout_validation(
+        state="VALIDATING", validation_started=10.0, now=31.0,
+        validation_timeout=20.0, reconnect_requested=False,
+    )
+    assert not MODULE.should_timeout_validation(
+        state="VALIDATING", validation_started=10.0, now=31.0,
+        validation_timeout=20.0, reconnect_requested=True,
+    )

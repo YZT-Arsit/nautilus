@@ -67,6 +67,15 @@ def main() -> int:
                 repo / "scripts/internal/read_only_binance_failover_proxy.py",
                 repo / "scripts/internal/run_focused_continuity.ps1",
                 repo / "scripts/internal/run_continuity_gate_and_clean_ab.ps1",
+                repo / "scripts/internal/run_p0_long_horizon_gate.ps1",
+                repo / "scripts/run_active_active_collector.py",
+                repo / "scripts/run_durable_remote_collector.py",
+                repo / "scripts/run_canonical_paper_consumer.py",
+                repo / "strategy_framework/paper_trading/active_active.py",
+                repo / "scripts/internal/launch_active_active_phase.py",
+                repo / "scripts/internal/run_active_active_delivery_pipeline.py",
+                repo / "scripts/internal/probe_active_active_routes.py",
+                repo / "scripts/internal/read_only_connect_proxy.py",
             )
         },
     })

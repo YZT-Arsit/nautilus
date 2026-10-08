@@ -29,6 +29,7 @@ Set-Location $repo
     --expected-bars $ExpectedBars `
     --quote-stale-seconds 10 `
     --trade-stale-seconds 10 `
+    --proxy-lifecycle-log D:\nautilus\outputs\baseline_evaluation\paper_market_data_continuity_repair\proxy_lifecycle_long_horizon_fix.jsonl `
     $(if ($Phase -eq "authoritative_24h") { "--freeze-start" }) 2>&1 | Tee-Object -FilePath $log
 $code = $LASTEXITCODE
 exit $code

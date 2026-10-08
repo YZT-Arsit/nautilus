@@ -89,6 +89,26 @@ def default_transport_factory(url: str, *, timeout_seconds: float):
     return _WebsocketClientTransport(ws)
 
 
+def proxy_transport_factory(host: str, port: int):
+    """Build an explicit-route public WebSocket transport factory.
+
+    The proxy is bound to this factory instead of process-global environment
+    variables, allowing two independent active connections in one collector.
+    """
+    def factory(url: str, *, timeout_seconds: float):
+        try:
+            from websocket import create_connection
+        except ImportError as exc:
+            raise RuntimeError("websocket-client is required for public market data") from exc
+        ws = create_connection(
+            url, timeout=timeout_seconds, http_proxy_host=host,
+            http_proxy_port=int(port), proxy_type="http",
+        )
+        return _WebsocketClientTransport(ws)
+
+    return factory
+
+
 @dataclass
 class LiveSmokeResult:
     connected_url: str

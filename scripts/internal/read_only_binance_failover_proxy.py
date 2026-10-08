@@ -181,6 +181,7 @@ def relay(  # noqa: C901
     connection_id = uuid.uuid4().hex
     upstream: socket.socket | None = None
     selected_route: tuple[str, int] | None = None
+    selected_half_open = False
     target = ""
     relay_started = 0.0
     bytes_client_to_upstream = 0
@@ -228,6 +229,7 @@ def relay(  # noqa: C901
             try:
                 upstream = _open_via_proxy(proxy, host, port)
                 selected_route = proxy
+                selected_half_open = half_open
                 _write_log(log_path, {
                     "event": "UPSTREAM_CONNECTED", "connection_id": connection_id,
                     "target": authority,
@@ -292,13 +294,31 @@ def relay(  # noqa: C901
             # upgraded stream died.  REST tunnels are expected to be brief.
             unhealthy = (
                 target.lower().startswith("fstream.binance.com:")
-                and end_reason in {"relay_exception", "socket_exception", "upstream_eof"}
+                and end_reason in {
+                    "relay_exception",
+                    "socket_exception",
+                    "upstream_eof",
+                    "idle_timeout",
+                }
             )
             if unhealthy:
                 cooldown = route_manager.record_failure(selected_route)
                 _write_log(log_path, {
                     "event": "ROUTE_PENALIZED", "connection_id": connection_id,
                     "target": target, "upstream": f"{selected_route[0]}:{selected_route[1]}",
+                    "reason": end_reason, "cooldown_seconds": cooldown,
+                    "route_states": route_manager.snapshot(),
+                })
+            elif selected_half_open and lifetime < short_lived_seconds:
+                # A HALF_OPEN reservation must be resolved on every exit path.
+                # Previously, a short client-side close left
+                # half_open_probe_in_flight=True forever.  Once both routes
+                # reached that state the proxy could only return HTTP 503.
+                cooldown = route_manager.record_failure(selected_route)
+                _write_log(log_path, {
+                    "event": "HALF_OPEN_PROBE_FAILED", "connection_id": connection_id,
+                    "target": target,
+                    "upstream": f"{selected_route[0]}:{selected_route[1]}",
                     "reason": end_reason, "cooldown_seconds": cooldown,
                     "route_states": route_manager.snapshot(),
                 })

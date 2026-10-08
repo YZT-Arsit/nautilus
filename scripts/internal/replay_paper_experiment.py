@@ -23,6 +23,7 @@ from data_engine.events import BarEvent  # noqa: E402
 from data_engine.events import FundingRateEvent  # noqa: E402
 from data_engine.events import QuoteEvent  # noqa: E402
 from data_engine.events import TradeEvent  # noqa: E402
+from data_engine.live.binance_ws import normalize_agg_trade  # noqa: E402
 from strategy_framework.paper_trading.orchestrator import PaperOrchestrator  # noqa: E402
 
 
@@ -154,10 +155,18 @@ def main() -> int:  # noqa: C901
     parser.add_argument("--experiment", type=Path, required=True)
     parser.add_argument("--phase-root", type=Path)
     parser.add_argument("--candidate-id", action="append", default=[])
+    parser.add_argument("--replay-subdir", default="replay")
+    parser.add_argument("--replay-output-root", type=Path)
+    parser.add_argument("--insert-aggtrades-json", type=Path)
+    parser.add_argument("--diagnostic-output-only", action="store_true")
     args = parser.parse_args()
     repo, experiment = args.repo.resolve(), args.experiment.resolve()
     live_root = (args.phase_root or experiment).resolve()
-    replay_root = live_root / "replay"
+    replay_root = (
+        args.replay_output_root.resolve()
+        if args.replay_output_root
+        else live_root / args.replay_subdir
+    )
     if replay_root.exists():
         shutil.rmtree(replay_root)
     replay_root.mkdir(parents=True)
@@ -189,6 +198,43 @@ def main() -> int:  # noqa: C901
         fee_rate=float(config["fees"]["maker_rate"]), record_market_data=False,
     )
     replayed_events = 0
+    inserted_events = 0
+    live_summary = pd.read_csv(live_root / "experiment_summary.csv").iloc[0]
+    extra_events = []
+    if args.insert_aggtrades_json:
+        raw_trades = json.loads(args.insert_aggtrades_json.read_text(encoding="utf-8"))
+        for raw in raw_trades:
+            event = normalize_agg_trade(
+                {**raw, "e": "aggTrade", "s": "BTCUSDT"},
+                instrument_id="BTCUSDT-PERP.BINANCE",
+                receive_time_ns=int(raw["T"]) * 1_000_000,
+            )
+            if event is not None:
+                event.source = "POST_HOC_BACKFILL_FOR_SENSITIVITY_ONLY"
+                extra_events.append(event)
+        extra_events.sort(key=lambda event: (int(event.event_time_ns), str(event.trade_id)))
+    extra_index = 0
+
+    def emit_extra_before(timestamp_ns: int) -> None:
+        nonlocal extra_index, replayed_events, inserted_events
+        while extra_index < len(extra_events) and int(extra_events[extra_index].event_time_ns) <= timestamp_ns:
+            event = extra_events[extra_index]
+            if int(live_summary.started_ns) <= int(event.event_time_ns) < int(live_summary.ended_ns):
+                orchestrator.on_event(event)
+                replayed_events += 1
+                inserted_events += 1
+            extra_index += 1
+
+    canonical_wal = experiment / "active_active" / "canonical_wal" / "events.jsonl"
+    if canonical_wal.exists():
+        with canonical_wal.open(encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    event = load_event(json.loads(line))
+                    emit_extra_before(int(event.event_time_ns))
+                    if int(live_summary.started_ns) <= int(event.event_time_ns) < int(live_summary.ended_ns):
+                        orchestrator.on_event(event)
+                        replayed_events += 1
     for symbol_dir in sorted((live_root / "market_data").glob("symbol=*")):
         for path in sorted(symbol_dir.rglob("events.jsonl")):
             # Stream rather than materializing a full day of quotes/trades in
@@ -197,11 +243,25 @@ def main() -> int:  # noqa: C901
             with path.open(encoding="utf-8") as handle:
                 for line in handle:
                     if line.strip():
-                        orchestrator.on_event(load_event(json.loads(line)))
+                        event = load_event(json.loads(line))
+                        emit_extra_before(int(event.event_time_ns))
+                        orchestrator.on_event(event)
                         replayed_events += 1
-    live_summary = pd.read_csv(live_root / "experiment_summary.csv").iloc[0]
+    emit_extra_before(int(live_summary.ended_ns))
     orchestrator.flush(int(live_summary.ended_ns))
     orchestrator.write_outputs(int(live_summary.started_ns), int(live_summary.ended_ns), "replay")
+    if args.diagnostic_output_only:
+        result = {
+            "status": "PASSED_DIAGNOSTIC_REPLAY",
+            "evidence_label": "BACKFILLED_DIAGNOSTIC_REPLAY",
+            "replayed_events": replayed_events,
+            "inserted_events": inserted_events,
+            "source_experiment_modified": False,
+            "production_exchange_orders": 0,
+        }
+        (replay_root / "replay_validation.json").write_text(json.dumps(result, indent=2) + "\n")
+        print(json.dumps(result, indent=2))
+        return 0
     mismatches: list[dict[str, str]] = []
     csv_artifacts = {
         "strategy_summary": "strategy_case_summary.csv",

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hoshino.nautilus-collector-c</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-dimsu</string>
+    <string>/Users/Hoshino/miniconda3/bin/python3</string>
+    <string>/Users/Hoshino/Documents/nautilus/scripts/run_durable_remote_collector.py</string>
+    <string>--output</string>
+    <string>/Users/Hoshino/Documents/nautilus/outputs/collector_c/durable</string>
+    <string>--collector-id</string>
+    <string>COLLECTOR_C_MAC_DIRECT</string>
+    <string>--bind</string>
+    <string>100.64.0.22</string>
+    <string>--port</string>
+    <string>7892</string>
+    <string>--allow-client</string>
+    <string>100.64.0.17</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/Hoshino/Library/Logs/nautilus-collector-c.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/Hoshino/Library/Logs/nautilus-collector-c.err.log</string>
+</dict>
+</plist>

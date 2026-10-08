@@ -162,6 +162,12 @@ def _round_down(value: float, increment: float) -> float:
     return float((Decimal(str(value)) / unit).to_integral_value(rounding=ROUND_DOWN) * unit)
 
 
+def _format_increment(value: float, increment: float) -> str:
+    """Format an exchange-filtered value without binary-float precision tails."""
+    unit = Decimal(str(increment))
+    return format(Decimal(str(value)).quantize(unit), "f")
+
+
 def _instrument(client: DemoClient) -> tuple[dict[str, Any], dict[str, Any]]:
     exchange = client.request("GET", "/fapi/v1/exchangeInfo")
     symbol = next((row for row in exchange["symbols"] if row["symbol"] == SYMBOL), None)
@@ -253,6 +259,7 @@ def _blocked(output: Path, reason: str, credential_presence: dict[str, bool]) ->
     common = [{"status": "BLOCKED", "reason": reason, "production_exchange_orders": 0}]
     _write_csv(output / "market_order_test.csv", common)
     _write_csv(output / "post_only_order_test.csv", common)
+    _write_csv(output / "maker_fill_observation.csv", common)
     _write_csv(output / "order_state_events.csv", [], ["event_type", "status"])
     _write_csv(output / "account_reconciliation.csv", common)
     validation = {
@@ -284,10 +291,14 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
     client = DemoClient(api_key, api_secret)
     fingerprint = hashlib.sha256(api_key.encode()).hexdigest()[:16]
     state_events: list[dict[str, Any]] = []
+    user_event_batches: list[dict[str, Any]] = []
     snapshots: list[dict[str, Any]] = []
     market_rows: list[dict[str, Any]] = []
     maker_rows: list[dict[str, Any]] = []
+    maker_observation_rows: list[dict[str, Any]] = []
     collector: UserDataCollector | None = None
+    listen_key: str | None = None
+    user_data_reconnect_passed = False
     demo_orders = 0
     precheck_passed = False
     try:
@@ -302,18 +313,20 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
             raise DemoAPIError("ACCOUNT_NOT_FLAT_OR_HAS_OPEN_ORDERS")
         precheck_passed = True
         listen = client.request("POST", "/fapi/v1/listenKey", api_key_only=True)
-        collector = UserDataCollector(str(listen["listenKey"]))
+        listen_key = str(listen["listenKey"])
+        collector = UserDataCollector(listen_key)
         collector.start()
         bbo = client.request("GET", "/fapi/v1/ticker/bookTicker", {"symbol": SYMBOL})
         ask, bid = float(bbo["askPrice"]), float(bbo["bidPrice"])
         market_qty = _minimum_quantity(filters, ask, market=True)
+        market_step = float(filters.get("MARKET_LOT_SIZE", filters["LOT_SIZE"])["stepSize"])
         market_client_id = f"NDEMOMKT{int(time.time())}"
         submitted_ms = int(time.time() * 1_000)
         opened = client.request("POST", "/fapi/v1/order", {
             "symbol": SYMBOL,
             "side": "BUY",
             "type": "MARKET",
-            "quantity": f"{market_qty:.12f}".rstrip("0").rstrip("."),
+            "quantity": _format_increment(market_qty, market_step),
             "newClientOrderId": market_client_id,
             "newOrderRespType": "RESULT",
         }, signed=True)
@@ -328,7 +341,7 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
             "symbol": SYMBOL,
             "side": "SELL",
             "type": "MARKET",
-            "quantity": f"{flatten_qty:.12f}".rstrip("0").rstrip("."),
+            "quantity": _format_increment(flatten_qty, market_step),
             "reduceOnly": "true",
             "newClientOrderId": flatten_client_id,
             "newOrderRespType": "RESULT",
@@ -354,9 +367,32 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
             "commission_asset": ";".join(sorted({str(row.get("commissionAsset")) for row in relevant_trades})),
             "production_exchange_orders": 0,
         })
+
+        # Exercise user-data reconnect without touching account state.  The
+        # first collector must receive the MARKET fill/account events; the
+        # replacement collector then observes the post-only lifecycle.
+        time.sleep(2)
+        first_batch = _sanitized_user_events(collector.events)
+        user_event_batches.extend(first_batch)
+        first_order_events = [row for row in first_batch if row["event_type"] == "ORDER_TRADE_UPDATE"]
+        first_trade_order_ids = {
+            int(row["order_id"])
+            for row in first_order_events
+            if row["execution_type"] == "TRADE" and row.get("order_id") is not None
+        }
+        if not {int(opened["orderId"]), int(flattened["orderId"])}.issubset(first_trade_order_ids):
+            raise DemoAPIError("MARKET_USER_DATA_FILL_EVENTS_MISSING")
+        if not any(row["event_type"] == "ACCOUNT_UPDATE" for row in first_batch):
+            raise DemoAPIError("MARKET_USER_DATA_ACCOUNT_UPDATE_MISSING")
+        collector.close()
+        collector = UserDataCollector(listen_key)
+        collector.start()
+        user_data_reconnect_passed = True
+
         bbo = client.request("GET", "/fapi/v1/ticker/bookTicker", {"symbol": SYMBOL})
         bid = float(bbo["bidPrice"])
         tick = float(filters["PRICE_FILTER"]["tickSize"])
+        lot_step = float(filters["LOT_SIZE"]["stepSize"])
         passive_price = _round_down(bid * 0.99, tick)
         maker_qty = _minimum_quantity(filters, passive_price, market=False)
         maker_client_id = f"NDEMOGTX{int(time.time())}"
@@ -365,8 +401,8 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
             "side": "BUY",
             "type": "LIMIT",
             "timeInForce": "GTX",
-            "quantity": f"{maker_qty:.12f}".rstrip("0").rstrip("."),
-            "price": f"{passive_price:.12f}".rstrip("0").rstrip("."),
+            "quantity": _format_increment(maker_qty, lot_step),
+            "price": _format_increment(passive_price, tick),
             "newClientOrderId": maker_client_id,
             "newOrderRespType": "ACK",
         }, signed=True)
@@ -391,20 +427,103 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
             "final_status": canceled_state.get("status"),
             "production_exchange_orders": 0,
         })
+
+        # Bounded maker-fill observation at the passive best bid.  Any
+        # remainder is canceled and any fill is flattened immediately.
+        bbo = client.request("GET", "/fapi/v1/ticker/bookTicker", {"symbol": SYMBOL})
+        bid, ask = float(bbo["bidPrice"]), float(bbo["askPrice"])
+        observation_price = _round_down(min(bid, ask - tick), tick)
+        observation_qty = _minimum_quantity(filters, observation_price, market=False)
+        observation_client_id = f"NDEMOOBS{int(time.time())}"
+        observed_order = client.request("POST", "/fapi/v1/order", {
+            "symbol": SYMBOL,
+            "side": "BUY",
+            "type": "LIMIT",
+            "timeInForce": "GTX",
+            "quantity": _format_increment(observation_qty, lot_step),
+            "price": _format_increment(observation_price, tick),
+            "newClientOrderId": observation_client_id,
+            "newOrderRespType": "ACK",
+        }, signed=True)
+        demo_orders += 1
+        observation_deadline = time.monotonic() + 15
+        observation_state: dict[str, Any] = {}
+        while time.monotonic() < observation_deadline:
+            observation_state = client.request(
+                "GET", "/fapi/v1/order",
+                {"symbol": SYMBOL, "orderId": observed_order["orderId"]},
+                signed=True,
+            )
+            if observation_state.get("status") in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+                break
+            time.sleep(0.25)
+        pre_cancel_status = str(observation_state.get("status"))
+        if pre_cancel_status in {"NEW", "PARTIALLY_FILLED"}:
+            client.request(
+                "DELETE", "/fapi/v1/order",
+                {"symbol": SYMBOL, "orderId": observed_order["orderId"]},
+                signed=True,
+            )
+            observation_state = _wait_order(
+                client, int(observed_order["orderId"]), {"CANCELED", "FILLED"}, timeout=10,
+            )
+        executed_qty = float(observation_state.get("executedQty", 0.0))
+        outcome = "NO_FILL"
+        if executed_qty >= observation_qty - 1e-12:
+            outcome = "FULL_FILL"
+        elif executed_qty > 0:
+            outcome = "PARTIAL_FILL"
+        observation_flatten_order_id = None
+        residual = _position(client)
+        if abs(residual) > 1e-12:
+            cleanup = client.request("POST", "/fapi/v1/order", {
+                "symbol": SYMBOL,
+                "side": "SELL" if residual > 0 else "BUY",
+                "type": "MARKET",
+                "quantity": _format_increment(abs(residual), market_step),
+                "reduceOnly": "true",
+                "newClientOrderId": f"NDEMOOBF{int(time.time())}",
+                "newOrderRespType": "RESULT",
+            }, signed=True)
+            demo_orders += 1
+            observation_flatten_order_id = cleanup["orderId"]
+            _wait_order(client, int(cleanup["orderId"]), {"FILLED"})
+        maker_observation_rows.append({
+            "test": "DEMO_MAKER_FILL_OBSERVATION",
+            "status": "PASSED",
+            "order_id": observed_order["orderId"],
+            "requested_quantity": observation_qty,
+            "executed_quantity": executed_qty,
+            "price": observation_price,
+            "outcome": outcome,
+            "status_before_cancel": pre_cancel_status,
+            "final_status": observation_state.get("status"),
+            "flatten_order_id": observation_flatten_order_id,
+            "observation_timeout_seconds": 15,
+            "production_exchange_orders": 0,
+        })
         time.sleep(2)
         final_snapshot = _account_snapshot(client, fingerprint)
         snapshots.append({"stage": "FINAL", **final_snapshot})
         if abs(float(final_snapshot["btc_position"])) > 1e-12 or int(final_snapshot["btc_open_order_count"]) != 0:
             raise DemoAPIError("FINAL_ACCOUNT_NOT_FLAT_OR_HAS_OPEN_ORDERS")
-        event_rows = _sanitized_user_events(collector.events)
+        event_rows = user_event_batches + _sanitized_user_events(collector.events)
         event_types = {row["event_type"] for row in event_rows}
         order_events = [row for row in event_rows if row["event_type"] == "ORDER_TRADE_UPDATE"]
         trade_updates = [row for row in order_events if row["execution_type"] == "TRADE"]
+        post_reconnect_order_ids = {
+            int(row["order_id"])
+            for row in _sanitized_user_events(collector.events)
+            if row["event_type"] == "ORDER_TRADE_UPDATE" and row.get("order_id") is not None
+        }
+        if int(resting["orderId"]) not in post_reconnect_order_ids:
+            raise DemoAPIError("POST_ONLY_USER_DATA_RECONNECT_EVENTS_MISSING")
         if not order_events or not trade_updates or "ACCOUNT_UPDATE" not in event_types:
             raise DemoAPIError("USER_DATA_STREAM_RECONCILIATION_EVENTS_MISSING")
         state_events.extend(event_rows)
         _write_csv(output / "market_order_test.csv", market_rows)
         _write_csv(output / "post_only_order_test.csv", maker_rows)
+        _write_csv(output / "maker_fill_observation.csv", maker_observation_rows)
         _write_csv(output / "order_state_events.csv", state_events)
         _write_csv(output / "account_reconciliation.csv", snapshots)
         validation = {
@@ -424,12 +543,19 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
             "market_test": "PASSED",
             "post_only_test": "PASSED",
             "user_data_reconciliation": "PASSED",
+            "user_data_reconnect": "PASSED" if user_data_reconnect_passed else "BLOCKED",
+            "rest_user_data_reconciliation": "PASSED",
+            "maker_fill_observation": maker_observation_rows[0]["outcome"],
             "final_account_flat": True,
             "final_open_orders": 0,
             "demo_exchange_orders": demo_orders,
             "production_trading_endpoint_initialized": False,
             "production_exchange_orders": 0,
             "funding": "DEMO_FUNDING_NOT_OBSERVED",
+            "second_demo_credentials_present": False,
+            "second_independent_demo_account": "UNAVAILABLE",
+            "second_account_reason": "NO_SECOND_DEMO_CREDENTIAL_CONFIGURED",
+            "exchange_native_simultaneous_isolated_ab": "NOT_READY",
         }
         (output / "demo_environment_validation.json").write_text(json.dumps(validation, indent=2) + "\n")
         print(json.dumps(validation, indent=2))
@@ -449,7 +575,10 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
                         "symbol": SYMBOL,
                         "side": "SELL" if residual > 0 else "BUY",
                         "type": "MARKET",
-                        "quantity": f"{abs(residual):.12f}".rstrip("0").rstrip("."),
+                        "quantity": _format_increment(
+                            abs(residual),
+                            float(filters.get("MARKET_LOT_SIZE", filters["LOT_SIZE"])["stepSize"]),
+                        ),
                         "reduceOnly": "true",
                         "newClientOrderId": f"NDEMOEMG{int(time.time())}",
                         "newOrderRespType": "RESULT",
@@ -464,7 +593,11 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
             snapshots.append({"stage": "ERROR_FINAL", "status": "SNAPSHOT_FAILED", "reason": _safe_error(snapshot_exc)})
         _write_csv(output / "market_order_test.csv", market_rows or [{"status": "BLOCKED", "reason": reason}])
         _write_csv(output / "post_only_order_test.csv", maker_rows or [{"status": "BLOCKED", "reason": reason}])
-        _write_csv(output / "order_state_events.csv", _sanitized_user_events(collector.events if collector else []))
+        _write_csv(output / "maker_fill_observation.csv", maker_observation_rows or [{"status": "BLOCKED", "reason": reason}])
+        _write_csv(
+            output / "order_state_events.csv",
+            user_event_batches + _sanitized_user_events(collector.events if collector else []),
+        )
         _write_csv(output / "account_reconciliation.csv", snapshots)
         validation = {
             "status": "BLOCKED",
@@ -477,7 +610,14 @@ def run(output: Path, execute: bool) -> int:  # noqa: C901 sequential safety sta
             "emergency_cleanup_errors": cleanup_errors,
             "production_trading_endpoint_initialized": False,
             "production_exchange_orders": 0,
-            "final_account_flat": snapshots[-1].get("btc_position") == 0 if snapshots else None,
+            "final_account_flat": (
+                abs(float(snapshots[-1].get("btc_position", "nan"))) <= 1e-12
+                and int(snapshots[-1].get("btc_open_order_count", -1)) == 0
+            ) if snapshots else None,
+            "second_demo_credentials_present": False,
+            "second_independent_demo_account": "UNAVAILABLE",
+            "second_account_reason": "NO_SECOND_DEMO_CREDENTIAL_CONFIGURED",
+            "exchange_native_simultaneous_isolated_ab": "NOT_READY",
         }
         (output / "demo_environment_validation.json").write_text(json.dumps(validation, indent=2) + "\n")
         print(json.dumps(validation, indent=2))

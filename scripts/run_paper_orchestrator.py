@@ -8,12 +8,14 @@ All orders are local Nautilus matching-engine objects.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import csv
 import hashlib
 import json
 import os
 import queue
 import random
+import subprocess
 import sys
 import threading
 import time
@@ -40,6 +42,71 @@ from strategy_framework.paper_trading.orchestrator import PaperOrchestrator, man
 
 PUBLIC_REST = "https://fapi.binance.com"
 PUBLIC_WS = "wss://fstream.binance.com"
+
+
+def process_resources() -> dict[str, float | int | str]:
+    """Return bounded-process observability without an optional psutil dependency."""
+    result: dict[str, float | int | str] = {
+        "memory_mb": "", "handle_count": "", "tcp_established": "",
+        "tcp_time_wait": "", "tcp_close_wait": "",
+    }
+    if os.name != "nt":
+        return result
+    try:
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        psapi = ctypes.windll.psapi  # type: ignore[attr-defined]
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.GetProcessHandleCount.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong),
+        ]
+        kernel32.GetProcessHandleCount.restype = ctypes.c_int
+        psapi.GetProcessMemoryInfo.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ProcessMemoryCounters), ctypes.c_ulong,
+        ]
+        psapi.GetProcessMemoryInfo.restype = ctypes.c_int
+        handle = kernel32.GetCurrentProcess()
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        if psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            result["memory_mb"] = round(counters.WorkingSetSize / (1024 * 1024), 3)
+        handle_count = ctypes.c_ulong()
+        if kernel32.GetProcessHandleCount(handle, ctypes.byref(handle_count)):
+            result["handle_count"] = int(handle_count.value)
+    except (AttributeError, OSError, ValueError):
+        pass
+    try:
+        netstat = subprocess.run(
+            ["netstat", "-ano", "-p", "tcp"], capture_output=True, text=True,
+            timeout=2, check=False,
+        )
+        pid = str(os.getpid())
+        states = {"ESTABLISHED": 0, "TIME_WAIT": 0, "CLOSE_WAIT": 0}
+        for line in netstat.stdout.splitlines():
+            fields = line.split()
+            if len(fields) >= 5 and fields[-1] == pid and fields[-2] in states:
+                states[fields[-2]] += 1
+        result.update({
+            "tcp_established": states["ESTABLISHED"],
+            "tcp_time_wait": states["TIME_WAIT"],
+            "tcp_close_wait": states["CLOSE_WAIT"],
+        })
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return result
 
 
 class ReconnectBudget:
@@ -75,6 +142,37 @@ class ReconnectBudget:
             while self.attempts and now - self.attempts[0] >= self.window_seconds:
                 self.attempts.popleft()
             self.attempts.append(now)
+
+
+def should_trigger_stale(
+    *, state: str, last_receive: float | None, now: float, threshold: float,
+    reconnect_requested: bool,
+) -> bool:
+    """Return whether a healthy feed should enter recovery.
+
+    Old receive timestamps must never cancel a connection which is already
+    RECOVERING/VALIDATING.  This was the feedback loop behind the failed
+    long-duration run.
+    """
+    return (
+        state == "HEALTHY"
+        and last_receive is not None
+        and now - last_receive > threshold
+        and not reconnect_requested
+    )
+
+
+def should_timeout_validation(
+    *, state: str, validation_started: float | None, now: float,
+    validation_timeout: float, reconnect_requested: bool,
+) -> bool:
+    """Allow exactly one bounded reconnect request for a validating socket."""
+    return (
+        state == "VALIDATING"
+        and validation_started is not None
+        and now - validation_started > validation_timeout
+        and not reconnect_requested
+    )
 
 
 def get_json(path: str, params: dict | None = None):
@@ -150,9 +248,11 @@ def main() -> int:
     parser.add_argument("--trade-stale-seconds", type=float, default=10.0)
     parser.add_argument("--freeze-start", action="store_true")
     parser.add_argument("--route-label", default="LOCAL_FAILOVER_PROXY")
+    parser.add_argument("--proxy-lifecycle-log", type=Path)
     parser.add_argument("--reconnect-max-attempts", type=int, default=3)
     parser.add_argument("--reconnect-window-seconds", type=float, default=60.0)
     parser.add_argument("--reconnect-degraded-wait-seconds", type=float, default=30.0)
+    parser.add_argument("--recovery-validation-seconds", type=float, default=20.0)
     args = parser.parse_args()
     if args.duration_seconds <= 0:
         parser.error("duration must be positive")
@@ -240,6 +340,8 @@ def main() -> int:
     reconnect_times = {symbol: [] for symbol in symbols}
     last_healthy_mono = {symbol: None for symbol in symbols}
     last_stale_mono = {symbol: None for symbol in symbols}
+    validation_started_mono = {symbol: None for symbol in symbols}
+    connection_started_mono = {symbol: None for symbol in symbols}
     duplicate_events = {symbol: {"detected": 0, "dropped": 0} for symbol in symbols}
     seen_event_keys: set[tuple] = set()
     seen_event_order: deque[tuple] = deque()
@@ -332,7 +434,11 @@ def main() -> int:
             connection_ids[symbol] += 1
             connection_id = f"{symbol}-{connection_ids[symbol]:06d}"
             with state_lock:
-                feed_state[symbol] = "RECOVERING"
+                feed_state[symbol] = "VALIDATING"
+                validation_started_mono[symbol] = time.monotonic()
+                connection_started_mono[symbol] = validation_started_mono[symbol]
+                last_receive_mono[symbol]["quote"] = None
+                last_receive_mono[symbol]["trade"] = None
             reconnect_request[symbol].clear()
             connection_seen = {"quote": False, "trade": False}
             readiness_buffer = []
@@ -363,9 +469,10 @@ def main() -> int:
                     if all(connection_seen.values()):
                         became_healthy = False
                         with state_lock:
-                            if feed_state[symbol] != "HEALTHY":
+                            if feed_state[symbol] == "VALIDATING":
                                 feed_state[symbol] = "HEALTHY"
                                 last_healthy_mono[symbol] = time.monotonic()
+                                validation_started_mono[symbol] = None
                                 became_healthy = True
                         if became_healthy:
                             log_connection(
@@ -388,7 +495,8 @@ def main() -> int:
                 )
             finally:
                 with state_lock:
-                    feed_state[symbol] = "RECOVERING"
+                    if not stop.is_set():
+                        feed_state[symbol] = "RECOVERING"
                 if not stop.is_set():
                     reconnects[symbol] += 1
                     reconnect_times[symbol].append(time.monotonic())
@@ -445,6 +553,16 @@ def main() -> int:
         os.replace(temp, freeze_path)
     max_backlog = 0
     last_heartbeat = 0.0
+    last_runtime_sample = 0.0
+    last_loop_mono = time.monotonic()
+    max_loop_lag_ms_since_sample = 0.0
+    runtime_rows: list[dict] = []
+    proxy_log_offset = 0
+    proxy_route_states: dict[str, dict] = {}
+    proxy_active_route = args.route_label
+    proxy_route_switches = 0
+    if args.proxy_lifecycle_log and args.proxy_lifecycle_log.exists():
+        proxy_log_offset = args.proxy_lifecycle_log.stat().st_size
     stale_incidents: list[dict] = []
     unexpected_worker_deaths: list[dict] = []
     minute_coverage: dict[int, dict[str, int]] = {}
@@ -473,26 +591,115 @@ def main() -> int:
             except queue.Empty:
                 pass
             now = time.monotonic()
+            loop_interval = now - last_loop_mono
+            last_loop_mono = now
+            max_loop_lag_ms_since_sample = max(
+                max_loop_lag_ms_since_sample, max(0.0, loop_interval - 1.0) * 1_000,
+            )
             for thread in threads:
                 if not thread.is_alive() and not any(row["worker"] == thread.name for row in unexpected_worker_deaths):
                     unexpected_worker_deaths.append({"worker": thread.name, "time_ns": time.time_ns()})
             for symbol in symbols:
+                state = feed_state[symbol]
                 for kind, threshold in (("quote", args.quote_stale_seconds), ("trade", args.trade_stale_seconds)):
                     last = last_receive_mono[symbol][kind]
-                    if last is not None and now - last > threshold and not reconnect_request[symbol].is_set():
+                    if should_trigger_stale(
+                        state=state, last_receive=last, now=now, threshold=threshold,
+                        reconnect_requested=reconnect_request[symbol].is_set(),
+                    ):
                         stale_incidents.append({
                             "time_ns": time.time_ns(), "symbol": symbol, "stream": kind,
                             "age_seconds": now - last, "threshold_seconds": threshold,
                         })
                         with state_lock:
-                            feed_state[symbol] = "STALE"
+                            feed_state[symbol] = "STALE_DETECTED"
                             last_stale_mono[symbol] = now
                         log_connection(
                             symbol, f"{symbol}-{connection_ids[symbol]:06d}",
                             f"{kind.upper()}_STALE", "FAILED", latency_ms=(now - last) * 1_000,
                         )
                         reconnect_request[symbol].set()
+                        break
+                if should_timeout_validation(
+                    state=feed_state[symbol],
+                    validation_started=validation_started_mono[symbol],
+                    now=now,
+                    validation_timeout=args.recovery_validation_seconds,
+                    reconnect_requested=reconnect_request[symbol].is_set(),
+                ):
+                    stale_incidents.append({
+                        "time_ns": time.time_ns(), "symbol": symbol,
+                        "stream": "recovery_validation",
+                        "age_seconds": now - validation_started_mono[symbol],
+                        "threshold_seconds": args.recovery_validation_seconds,
+                    })
+                    with state_lock:
+                        feed_state[symbol] = "RECOVERING"
+                        last_stale_mono[symbol] = now
+                    log_connection(
+                        symbol, f"{symbol}-{connection_ids[symbol]:06d}",
+                        "RECOVERY_VALIDATION_TIMEOUT", "FAILED",
+                        latency_ms=(now - validation_started_mono[symbol]) * 1_000,
+                    )
+                    reconnect_request[symbol].set()
             max_backlog = max(max_backlog, event_queue.qsize())
+            if now - last_runtime_sample >= 60:
+                last_runtime_sample = now
+                resources = process_resources()
+                if args.proxy_lifecycle_log and args.proxy_lifecycle_log.exists():
+                    with args.proxy_lifecycle_log.open("r", encoding="utf-8") as proxy_handle:
+                        proxy_handle.seek(proxy_log_offset)
+                        for line in proxy_handle:
+                            try:
+                                proxy_row = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            for route in proxy_row.get("route_states", []):
+                                proxy_route_states[route["route_id"]] = route
+                            if (
+                                proxy_row.get("event") == "UPSTREAM_CONNECTED"
+                                and proxy_row.get("target") == "fstream.binance.com:443"
+                            ):
+                                selected_route = proxy_row.get("upstream", proxy_active_route)
+                                if proxy_active_route != args.route_label and selected_route != proxy_active_route:
+                                    proxy_route_switches += 1
+                                proxy_active_route = selected_route
+                        proxy_log_offset = proxy_handle.tell()
+                connection_ages = [
+                    now - value for value in connection_started_mono.values() if value is not None
+                ]
+                runtime_rows.append({
+                    "timestamp": pd.Timestamp.now(tz="UTC").isoformat(),
+                    "thread_count": threading.active_count(),
+                    "asyncio_task_count": 0,
+                    "websocket_reader_count": sum(
+                        1 for thread in threading.enumerate() if thread.name.startswith("feed-")
+                    ),
+                    "reconnect_task_count": 0,
+                    "cooldown_probe_task_count": 0,
+                    "queue_depth": event_queue.qsize(),
+                    "max_queue_depth": max_backlog,
+                    "event_loop_lag_ms": round(max_loop_lag_ms_since_sample, 3),
+                    "connection_age_seconds": round(max(connection_ages, default=0.0), 3),
+                    "reconnect_state": ";".join(
+                        f"{symbol}:{feed_state[symbol]}" for symbol in symbols
+                    ),
+                    "active_route": proxy_active_route,
+                    "route_switch_count": proxy_route_switches,
+                    "active_recovery_owners": sum(
+                        state in {"STALE_DETECTED", "RECOVERING", "VALIDATING"}
+                        for state in feed_state.values()
+                    ),
+                    "active_VALIDATING_owners": sum(
+                        state == "VALIDATING" for state in feed_state.values()
+                    ),
+                    "active_HALF_OPEN_owners": sum(
+                        bool(route.get("half_open_probe_in_flight"))
+                        for route in proxy_route_states.values()
+                    ),
+                    **resources,
+                })
+                max_loop_lag_ms_since_sample = 0.0
             if now - last_heartbeat >= 10:
                 last_heartbeat = now
                 heartbeat = {
@@ -508,7 +715,11 @@ def main() -> int:
                 }
                 path = run_root / "health/heartbeat.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
+                writer_started = time.monotonic()
                 orchestrator.recorder.sync()
+                writer_lag_ms = (time.monotonic() - writer_started) * 1_000
+                if runtime_rows:
+                    runtime_rows[-1]["writer_lag_ms"] = round(writer_lag_ms, 3)
                 path.write_text(json.dumps(heartbeat, indent=2) + "\n")
     finally:
         stop.set()
@@ -548,6 +759,8 @@ def main() -> int:
     coverage_frame = pd.DataFrame(coverage_rows)
     coverage_frame.to_csv(run_root / "market_data_continuity_monitor.csv", index=False)
     coverage_frame.to_csv(run_root / "minute_continuity.csv", index=False)
+    runtime_frame = pd.DataFrame(runtime_rows)
+    runtime_frame.to_csv(run_root / "runtime_observability.csv", index=False)
     reconnect_bursts = []
     for values in reconnect_times.values():
         for index, value in enumerate(values):
@@ -572,6 +785,28 @@ def main() -> int:
         "max_reconnects_in_60s": max_reconnects_in_60s,
         "reconnect_suppressed_by_backoff": reconnect_budget.suppressed,
         "reconnect_degraded_waits": reconnect_budget.degraded_waits,
+        "runtime_observability": {
+            "samples": len(runtime_rows),
+            "thread_count_min": int(runtime_frame.thread_count.min()) if not runtime_frame.empty else None,
+            "thread_count_max": int(runtime_frame.thread_count.max()) if not runtime_frame.empty else None,
+            "thread_count_growth": int(runtime_frame.thread_count.iloc[-1] - runtime_frame.thread_count.iloc[0]) if len(runtime_frame) >= 2 else 0,
+            "memory_mb_min": float(runtime_frame.memory_mb.replace("", pd.NA).dropna().min()) if not runtime_frame.empty and runtime_frame.memory_mb.replace("", pd.NA).notna().any() else None,
+            "memory_mb_max": float(runtime_frame.memory_mb.replace("", pd.NA).dropna().max()) if not runtime_frame.empty and runtime_frame.memory_mb.replace("", pd.NA).notna().any() else None,
+            "memory_mb_growth": float(runtime_frame.memory_mb.replace("", pd.NA).dropna().iloc[-1] - runtime_frame.memory_mb.replace("", pd.NA).dropna().iloc[0]) if not runtime_frame.empty and len(runtime_frame.memory_mb.replace("", pd.NA).dropna()) >= 2 else 0.0,
+            "handle_count_min": int(runtime_frame.handle_count.replace("", pd.NA).dropna().min()) if not runtime_frame.empty and runtime_frame.handle_count.replace("", pd.NA).notna().any() else None,
+            "handle_count_max": int(runtime_frame.handle_count.replace("", pd.NA).dropna().max()) if not runtime_frame.empty and runtime_frame.handle_count.replace("", pd.NA).notna().any() else None,
+            "handle_count_growth": int(runtime_frame.handle_count.replace("", pd.NA).dropna().iloc[-1] - runtime_frame.handle_count.replace("", pd.NA).dropna().iloc[0]) if not runtime_frame.empty and len(runtime_frame.handle_count.replace("", pd.NA).dropna()) >= 2 else 0,
+            "max_event_loop_lag_ms": float(runtime_frame.event_loop_lag_ms.max()) if not runtime_frame.empty else None,
+            "max_writer_lag_ms": float(runtime_frame.get("writer_lag_ms", pd.Series(dtype=float)).fillna(0).max()) if not runtime_frame.empty else None,
+            "max_queue_depth": int(runtime_frame.queue_depth.max()) if not runtime_frame.empty else 0,
+            "max_tcp_established": int(runtime_frame.tcp_established.replace("", pd.NA).dropna().max()) if not runtime_frame.empty and runtime_frame.tcp_established.replace("", pd.NA).notna().any() else None,
+            "max_tcp_time_wait": int(runtime_frame.tcp_time_wait.replace("", pd.NA).dropna().max()) if not runtime_frame.empty and runtime_frame.tcp_time_wait.replace("", pd.NA).notna().any() else None,
+            "max_tcp_close_wait": int(runtime_frame.tcp_close_wait.replace("", pd.NA).dropna().max()) if not runtime_frame.empty and runtime_frame.tcp_close_wait.replace("", pd.NA).notna().any() else None,
+            "route_switches": int(runtime_frame.route_switch_count.max()) if not runtime_frame.empty else 0,
+            "max_active_recovery_owners": int(runtime_frame.active_recovery_owners.max()) if not runtime_frame.empty else 0,
+            "max_active_HALF_OPEN_owners": int(runtime_frame.active_HALF_OPEN_owners.max()) if not runtime_frame.empty else 0,
+            "max_active_VALIDATING_owners": int(runtime_frame.active_VALIDATING_owners.max()) if not runtime_frame.empty else 0,
+        },
     })
     continuity_ok = (
         orchestrator.counts["quote_events"] > 0
