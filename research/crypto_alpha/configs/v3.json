@@ -1,0 +1,16 @@
+{
+  "output": "../../outputs/crypto_alpha/v3",
+  "fit_start": "2024-07-01",
+  "validation_edges": ["2024-10-01","2025-01-01","2025-04-01","2025-07-01"],
+  "historical_end": "2026-07-01",
+  "fresh_start": "2026-07-01",
+  "fresh_end_exclusive": "2026-08-26",
+  "fresh_min_days": 28,
+  "embargo_minutes": 240,
+  "seed": 42,
+  "replicate_seeds": [17, 202],
+  "threads": 2,
+  "epochs": 10,
+  "disk_reserve_gib": 12,
+  "risk_buffer_bps": 1
+}

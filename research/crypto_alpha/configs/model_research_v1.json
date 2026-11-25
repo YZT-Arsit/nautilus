@@ -1,0 +1,23 @@
+{
+ "foundation": "../../outputs/crypto_alpha/foundation_v1",
+ "factor_research": "../../outputs/crypto_alpha/factor_research_v1",
+ "output": "../../outputs/crypto_alpha/model_research_v1",
+ "v3_coverage": "../../outputs/crypto_alpha/v3/data_coverage.csv",
+ "fold_edges": ["2025-01-01", "2025-03-01", "2025-05-01", "2025-07-01"],
+ "mode_b_cutoff": "2026-07-01",
+ "max_epochs": 5,
+ "patience": 2,
+ "seeds": [42, 17, 202],
+ "num_threads": 2,
+ "batch_sections": 192,
+ "learning_rate": 0.001,
+ "lookback": 8,
+ "lgb_rounds": 120,
+ "bootstrap_draws": 1000,
+ "block_days": 7,
+ "fresh_partition_start": "2026-10-01",
+ "fresh_start": "2026-10-09",
+ "fresh_end": "2026-11-01",
+ "fresh_min_days": 21,
+ "disk_reserve_gib": 12
+}

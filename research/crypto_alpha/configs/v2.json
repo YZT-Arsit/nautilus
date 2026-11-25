@@ -1,0 +1,31 @@
+{
+  "v1_config": "configs/v1.json",
+  "v1_results": "../../outputs/crypto_alpha/v1",
+  "output_root": "../../outputs/crypto_alpha/v2",
+  "fit_start": "2024-07-01",
+  "validation_start": "2025-04-01",
+  "annual_cutoff": "2025-07-01",
+  "evaluation_end": "2026-07-01",
+  "device": "cpu",
+  "threads": 2,
+  "seed": 42,
+  "epochs": 12,
+  "patience": 4,
+  "free_space_gib": 12,
+  "horizons_minutes": [30, 60, 120, 240, 480, 1440],
+  "frozen_portfolios": [
+    {"name":"v1_rank","rule":"rank"},
+    {"name":"raw","rule":"raw"},
+    {"name":"top2","rule":"top","k":2},
+    {"name":"top3","rule":"top","k":3},
+    {"name":"rank_buffer","rule":"buffer","k":2,"exit_rank":4},
+    {"name":"ema_025","rule":"ema","alpha":0.25},
+    {"name":"partial_025","rule":"partial","alpha":0.25},
+    {"name":"turnover_020","rule":"turnover","limit":0.20},
+    {"name":"turnover_050","rule":"turnover","limit":0.50},
+    {"name":"cost_risk_low","rule":"opt","risk":0.0008,"limit":0.35},
+    {"name":"cost_risk_high","rule":"opt","risk":0.0024,"limit":0.20},
+    {"name":"slow_4h","rule":"rank","rebalance_minutes":240},
+    {"name":"slow_8h","rule":"rank","rebalance_minutes":480}
+  ]
+}

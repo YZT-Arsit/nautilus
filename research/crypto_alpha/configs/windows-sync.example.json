@@ -1,0 +1,6 @@
+{
+  "host": "research@research-host.example",
+  "identity_file": "~/.ssh/id_ed25519",
+  "remote_module": "D:/nautilus/research/crypto_alpha",
+  "remote_outputs": "D:/nautilus/outputs/crypto_alpha"
+}

@@ -1,0 +1,6 @@
+{
+  "extends": "configs/v2.json",
+  "device": "cuda:0",
+  "output_root": "../../outputs/crypto_alpha/v2_cuda",
+  "epochs": 12
+}

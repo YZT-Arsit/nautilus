@@ -1,0 +1,14 @@
+Module,Existing source path,Existing function/class,Reused directly or adapted,New implementation required
+Historical dispatch,data_engine/loader.py,load_events,Reviewed mode routing and single-instrument API,Columnar batch adapter for cross section
+Trade events,data_engine/events.py;data_engine/sources/parquet_trades.py,TradeEvent;load_parquet_trades,Reviewed trade tick and aggressor semantics,No tick processing for the 1m baseline
+StandardBar,feature_engine/data_sources/binance_vision.py;data_engine/events.py,StandardBar;normalize_binance_klines;BarEvent,Read existing StandardBar fields and preserve trade-volume semantics,Use completed-minute UTC availability
+Hive data,data_engine/sources/hive_partitioning.py,matching_fragments;select_date_window_fragments,Direct partition and window selection,Single-symbol projection batched across configured pool
+Data gaps,scripts/ingest_binance_vision.py,BinanceVisionImporter.import_period,Called directly for explicitly missing daily partitions,Check both roots for an existing partition before calling importer
+Funding,data_engine/sources/parquet_funding.py;data_engine/events.py,ParquetFundingSource.stream;FundingRateEvent,Direct settlement reads,Join existing official marks by symbol and settlement minute with exact rate check
+Funding mark archive,research/skill_scan/public_funding_marks.py,PublicReader;funding_records.json,Reuse previously persisted official rate/time/mark records,Provenance and coverage audit per symbol
+Trade simulation,strategy_framework/backends/nautilus_simulation.py;strategy_framework/execution/intents.py,IntentFillSimulator.on_intent;OrderIntent,Direct simulated fill API,Portfolio-level delayed target sizing and delta-intent scheduling
+Spread and slippage,strategy_framework/execution/costs.py,apply_adverse_slippage,Direct execution price adjustment,Split spread from slippage in reporting
+Equity and funding,strategy_framework/execution/backtest_report.py,_Accountant.apply_fill;_Accountant.equity;_Accountant.mark;_Accountant.apply_funding;_max_drawdown,Direct use of Nautilus book and drawdown functions,Atomic timestamp-level rebalance and ledger row
+Turnover,strategy_framework/paper_trading/core.py,daily_turnover_summary,Direct pure metric function,Aggregate actual fill notional divided by pre-period equity
+Return and BE,strategy_framework/paper_trading/stable_v22.py,cost_capacity,Direct signed BE and incremental capacity on portfolio aggregate,Report fee-only and all-in scenarios with their bases
+Prediction exchange,NA,target weights export,Standalone and offline,Five clocks plus standardized predictions and one frozen Nautilus target stream

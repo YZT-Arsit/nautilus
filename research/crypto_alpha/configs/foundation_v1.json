@@ -1,0 +1,21 @@
+{
+  "base_config": "configs/v1.json",
+  "output": "../../outputs/crypto_alpha/foundation_v1",
+  "interval_minutes": 60,
+  "holding_minutes": null,
+  "delay_minutes": 10,
+  "evaluation_horizons_minutes": [30, 60, 120, 240, 480, 1440],
+  "factor_set": "all",
+  "target": "label_rank_zscore",
+  "models": {
+    "Ridge": {"alpha": 1.0},
+    "LightGBM": {"num_leaves": 15, "max_depth": 4, "n_estimators": 300},
+    "MLP-IC": {}
+  },
+  "portfolio": "rank",
+  "max_weight": 1.0,
+  "fit_years": 1,
+  "disk_reserve_gib": 12,
+  "epochs": 20,
+  "patience": 5
+}

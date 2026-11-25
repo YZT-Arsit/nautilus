@@ -1,0 +1,18 @@
+{
+  "foundation": "../../outputs/crypto_alpha/foundation_v1",
+  "foundation_commit": "c83d1ba6cbc4d7e0fb696c8e2a8f36324a62c66c",
+  "output": "../../outputs/crypto_alpha/factor_research_v1",
+  "horizons": [30, 60, 120, 240, 480, 1440],
+  "main_horizon": 60,
+  "block_days": 7,
+  "bootstrap_draws": 1000,
+  "cluster_abs_spearman": 0.85,
+  "stable_positive_month_fraction": 0.6666666666666666,
+  "minimum_factor_coverage": 0.60,
+  "stable_max_factors": 24,
+  "model_epochs": 8,
+  "lightgbm_round_limit": 100,
+  "fresh_metadata_start": "2026-08-26",
+  "disk_reserve_gib": 12,
+  "seed": 42
+}

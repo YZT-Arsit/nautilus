@@ -1,0 +1,17 @@
+{
+  "output": "../../outputs/crypto_alpha/portfolio_research_v1",
+  "cost_grid_bps": [0, 1, 2, 4, 6, 8, 10],
+  "primary_cost_bps": 6,
+  "gross": 1,
+  "single_asset_cap": 0.5,
+  "min_assets": 3,
+  "nonlinearity": {"kind": "identity"},
+  "risk_window_hours": 96,
+  "risk_min_history": 48,
+  "covariance_diagonal_mix": 0.25,
+  "covariance_eigen_floor_fraction": 0.10,
+  "methods": ["rank_l1", "raw_l1", "zscore_l1", "top2", "top3", "risk_adjusted"],
+  "extensions": ["partial_025", "ema_025", "turnover_020"],
+  "calibration_bins": 5,
+  "disk_reserve_gib": 12
+}

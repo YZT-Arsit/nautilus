@@ -1,0 +1,7 @@
+.venv/
+.venv-qlib/
+references/*/
+__pycache__/
+.pytest_cache/
+.venv-cpu/
+code_manifest.json

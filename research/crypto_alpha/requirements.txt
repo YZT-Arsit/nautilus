@@ -1,0 +1,12 @@
+numpy==2.5.5
+pandas==2.3.3
+pyarrow==26.0.1
+scipy==1.18.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+matplotlib==3.11.2
+pytest==9.2.0
+PyYAML==6.0.4
+torch==2.15.0+cpu; platform_system == "Windows"
+torch==2.15.0; platform_system == "Darwin"
+--extra-index-url https://download.pytorch.org/whl/cpu
